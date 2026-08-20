@@ -28,10 +28,19 @@ loops. `README.md` is the product description; `north-star.md` is the *why*
 - `examples/` — illustrations of configuration, never standards (see
   conventions below); kept honest by the core's `shipped_examples_stay_valid`
   test.
+- `skills/` — skills that **deploy with the product**, for actors *inside*
+  loops the engine referees (open `SKILL.md` format). Product artifacts with
+  `examples/`'s admission bar: a skill lands when a real loop consumes it.
+  **Write a skill here when it serves the loops FerroStep referees; a skill
+  that serves work *on* FerroStep itself is a working convention and belongs
+  in `workflow/skills/` instead** — which does not exist yet, deliberately,
+  and is created with its first real skill (owner, 2026-08-20). Do not
+  conflate the two: one ships, the other stays a repo convention.
 - `workflow/` — the working conventions: the persona files `config.yaml`
   routes to (an agent adopts the default entry's persona via `CLAUDE.md`,
-  which imports it). There is deliberately no second, reviewing persona and
-  no review lane — see the persona's §3.
+  which imports it), and eventually `skills/` for repo-working skills (see
+  above). There is deliberately no second, reviewing persona and no review
+  lane — see the persona's §3.
 - `config.yaml` — the single place this repo's configurable working values
   live: today, the agent roster (titles, identities, persona paths). **Prose
   points at a value here and never writes it out** (owner, 2026-08-20) — a
