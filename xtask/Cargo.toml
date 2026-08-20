@@ -1,0 +1,14 @@
+# Repo tooling, invoked as `cargo xtask` (alias in .cargo/config.toml).
+# Not a product crate: never published, no API stability promises.
+[package]
+name = "xtask"
+description = "FerroStep repo tooling (cargo xtask)"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_norway = "0.9"

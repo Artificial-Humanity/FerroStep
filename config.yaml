@@ -1,0 +1,22 @@
+# config.yaml — the single place this repo's configurable working values live.
+#
+# The standing rule (owner, 2026-08-20): a configurable value is SET here, and prose POINTS
+# here — a document that writes a value out is a second copy waiting to drift. That covers
+# the agent TITLES too: they are values ("the default agent", "your entry in config.yaml"),
+# never vocabulary a document hardcodes.
+#
+# Humans and agents read this file directly; `cargo xtask agent-env` is the reader that
+# turns an entry into shell variables for everything else.
+
+# The entry an unmarked session adopts. CLAUDE.md imports its persona.
+default_agent: developer
+
+# Every agent that works this repo, keyed by title. Identity is a CONVENTION, not a
+# mechanism — git will happily commit as whoever the repo is configured for, so each agent
+# carries the `-c` pair; the procedure and the after-commit check live in the persona's §1.
+# A persona file finds its own entry here: the one whose `persona` names that file.
+agents:
+  developer:
+    name: Cyndi
+    email: cyndi@artificialhumanity.io
+    persona: workflow/DEVELOPER.md

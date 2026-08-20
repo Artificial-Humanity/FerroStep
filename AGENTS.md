@@ -28,10 +28,20 @@ loops. `README.md` is the product description; `north-star.md` is the *why*
 - `examples/` — illustrations of configuration, never standards (see
   conventions below); kept honest by the core's `shipped_examples_stay_valid`
   test.
-- `workflow/` — the working conventions. `DEVELOPER.md` defines **Cyndi**, the
-  developer persona every agent here adopts by default (routed via `CLAUDE.md`,
-  which imports it). There is no reviewer persona and no review lane,
-  deliberately — see that file's §3.
+- `workflow/` — the working conventions: the persona files `config.yaml`
+  routes to (an agent adopts the default entry's persona via `CLAUDE.md`,
+  which imports it). There is deliberately no second, reviewing persona and
+  no review lane — see the persona's §3.
+- `config.yaml` — the single place this repo's configurable working values
+  live: today, the agent roster (titles, identities, persona paths). **Prose
+  points at a value here and never writes it out** (owner, 2026-08-20) — a
+  restated value, a *title* included, is a second copy waiting to drift.
+  `cargo xtask agent-env` is the reader that turns an entry into shell
+  variables.
+- `xtask/` — repo tooling, invoked as `cargo xtask` (alias in
+  `.cargo/config.toml`): the config reader today. Not a product crate, never
+  published; its test guards `config.yaml` (parses, default agent complete,
+  persona file exists).
 
 ## Conventions
 
@@ -48,12 +58,18 @@ loops. `README.md` is the product description; `north-star.md` is the *why*
   shape is a breaking change and needs a version bump and a changelog entry.
 - Python tooling is **uv only** (`uv venv`, `uv pip install ./ferrostep-py`);
   never introduce bare pip/venv or poetry.
-- License is Apache-2.0; new files need no per-file headers.
+- **Favor Rust when the choice of tool is ambiguous; otherwise pick the best
+  tool for the job** (owner, 2026-08-20). This is not a purity rule — the
+  Python bindings are a first-class citizen — it is a tiebreaker.
+- License is Apache-2.0; new files need no per-file headers. **Every
+  dependency and vendored tool must be license-compatible with Apache-2.0**
+  (owner, 2026-08-20) — check the license before adding it, and record the
+  check in the commit message that introduces it.
 
 ## Build & test
 
 ```sh
-cargo test -p ferrostep-core                    # fast, no Python needed
+cargo test -p ferrostep-core -p xtask           # fast, no Python needed
 cargo build -p ferrostep-py                     # checks the bridge compiles
 uv venv && uv pip install ./ferrostep-py pytest # build + install bindings
 .venv/bin/pytest ferrostep-py/tests

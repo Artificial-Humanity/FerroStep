@@ -1,5 +1,5 @@
 [workspace]
-members = ["ferrostep-core", "ferrostep-py"]
+members = ["ferrostep-core", "ferrostep-py", "xtask"]
 resolver = "3"
 
 # ferrostep-ts (NAPI-RS) is deliberately deferred until a TypeScript consumer
