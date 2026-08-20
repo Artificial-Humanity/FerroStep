@@ -53,7 +53,11 @@ loops. `README.md` is the product description; `north-star.md` is the *why*
   persona file exists).
 - `docs/` — true and proper documentation. **Write a document here when it is
   a deliverable**: finished, public-facing, something an outside reader is
-  meant to find and the README can link into (prior-art lives here).
+  meant to find and the README can link into (prior-art lives here). The
+  **deployment map** (`docs/deployment-map.md`) is the single place
+  deployment disposition is recorded — what ships, through which channel,
+  what never leaves — and the xtask test `deployment_map_covers_the_tree`
+  fails when a tracked top-level path is missing from it.
 - `notes/` — the long-term scratchpad (owner, 2026-08-20). **Write a document
   here when it serves the work rather than the reader**: working thoughts,
   investigations, drafts. A placeholder README keeps the location present

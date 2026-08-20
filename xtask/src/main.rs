@@ -148,4 +148,37 @@ mod tests {
     fn shell_quote_survives_embedded_quotes() {
         assert_eq!(shell_quote("O'Malley"), r"'O'\''Malley'");
     }
+
+    /// Every tracked top-level path must be mentioned in the deployment map,
+    /// so adding a directory forces classifying it (Ships or Never ships).
+    /// This is a MENTION check, not a truth check: green means "nothing is
+    /// unclassified", never "every classification is right". It reads the
+    /// git index, so an untracked path is invisible to it until `git add`.
+    #[test]
+    fn deployment_map_covers_the_tree() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let map = std::fs::read_to_string(root.join("docs/deployment-map.md"))
+            .expect("docs/deployment-map.md is missing");
+        let output = std::process::Command::new("git")
+            .arg("ls-files")
+            .current_dir(root)
+            .output()
+            .expect("could not run git ls-files");
+        assert!(output.status.success(), "git ls-files exited nonzero");
+        let listing = String::from_utf8(output.stdout).unwrap();
+        let top_level: std::collections::BTreeSet<&str> = listing
+            .lines()
+            .filter_map(|line| line.split('/').next())
+            .filter(|segment| !segment.is_empty())
+            .collect();
+        let missing: Vec<&str> = top_level
+            .into_iter()
+            .filter(|name| !map.contains(name))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "top-level paths with no mention in docs/deployment-map.md: {missing:?} — \
+             classify each under Ships or Never ships"
+        );
+    }
 }
