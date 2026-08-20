@@ -31,6 +31,13 @@ class Engine:
         """The validated, normalized workflow definition."""
         return json.loads(self._core.workflow_json())
 
+    @property
+    def purpose(self) -> str | None:
+        """The workflow's stated *why* (or a pointer to the document holding
+        it). Opaque to the engine — surfaced here so briefing code can hand it
+        to review-role actors. ``None`` when the definition names none."""
+        return self.workflow.get("purpose")
+
     def authorize(
         self, state: str, counters: dict[str, int], role: str, to: str
     ) -> dict:

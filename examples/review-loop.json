@@ -1,0 +1,19 @@
+{
+  "name": "review-loop",
+  "purpose": "north-star.md@main",
+  "roles": ["worker", "reviewer", "operator"],
+  "states": ["awaiting_worker", "working", "awaiting_review", "approved", "escalated"],
+  "initial": "awaiting_worker",
+  "terminal": ["approved", "escalated"],
+  "counters": [
+    { "name": "agent_passes", "max": 3, "on_exhausted": "escalated" }
+  ],
+  "transitions": [
+    { "from": "awaiting_worker", "to": "working", "role": "worker", "spends": ["agent_passes"] },
+    { "from": "working", "to": "awaiting_review", "role": "worker" },
+    { "from": "awaiting_review", "to": "awaiting_worker", "role": "reviewer" },
+    { "from": "awaiting_review", "to": "approved", "role": "reviewer" },
+    { "from": "awaiting_review", "to": "escalated", "role": "reviewer" },
+    { "from": "working", "to": "awaiting_worker", "role": "operator" }
+  ]
+}

@@ -37,6 +37,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkflowDef {
     pub name: String,
+    /// Optional statement of *why* this loop exists, or a pointer to the
+    /// document that states it (a north-star file at a ref, a mission
+    /// statement). Opaque to the engine: carried and serialized, never
+    /// interpreted. Briefing code typically hands it to review-role actors so
+    /// alignment is measured against a stated source, not tribal knowledge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
     /// Every state a record may occupy, including terminal ones.
     pub states: Vec<String>,
     /// The state a freshly created record starts in.
@@ -501,6 +508,39 @@ mod tests {
             def.validate().unwrap_err(),
             ValidationError::UnknownSpend { .. }
         ));
+    }
+
+    #[test]
+    fn shipped_examples_stay_valid() {
+        // The files in examples/ are illustrations, not standards — but they
+        // must never illustrate something the engine would reject.
+        for (path, src) in [
+            ("review-loop", include_str!("../../examples/review-loop.json")),
+            ("product-review", include_str!("../../examples/product-review.json")),
+        ] {
+            let def = WorkflowDef::from_json(src)
+                .unwrap_or_else(|e| panic!("examples/{path}.json does not parse: {e}"));
+            Engine::new(def)
+                .unwrap_or_else(|e| panic!("examples/{path}.json does not validate: {e}"));
+        }
+    }
+
+    #[test]
+    fn purpose_is_carried_but_never_interpreted() {
+        let mut def = review_loop();
+        def.purpose = Some("notes/north-star.md@main".to_string());
+        let with_purpose = Engine::new(def).unwrap();
+        let without = Engine::new(review_loop()).unwrap();
+        // Identical decisions either way: the field is opaque to the engine.
+        assert_eq!(
+            with_purpose.authorize(&snap("awaiting_worker", 0), "worker", "working"),
+            without.authorize(&snap("awaiting_worker", 0), "worker", "working"),
+        );
+        // It round-trips when present and stays absent (not null) when not.
+        let json = serde_json::to_value(with_purpose.def()).unwrap();
+        assert_eq!(json["purpose"], "notes/north-star.md@main");
+        let bare = serde_json::to_value(without.def()).unwrap();
+        assert!(bare.get("purpose").is_none());
     }
 
     #[test]

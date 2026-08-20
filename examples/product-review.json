@@ -1,0 +1,17 @@
+{
+  "name": "product-review",
+  "purpose": "north-star.md@main",
+  "roles": ["product_reviewer", "owner"],
+  "states": ["queued", "reviewing", "delivered", "acknowledged", "stalled"],
+  "initial": "queued",
+  "terminal": ["acknowledged", "stalled"],
+  "counters": [
+    { "name": "review_attempts", "max": 2, "on_exhausted": "stalled" }
+  ],
+  "transitions": [
+    { "from": "queued", "to": "reviewing", "role": "product_reviewer", "spends": ["review_attempts"] },
+    { "from": "reviewing", "to": "delivered", "role": "product_reviewer" },
+    { "from": "reviewing", "to": "queued", "role": "owner" },
+    { "from": "delivered", "to": "acknowledged", "role": "owner" }
+  ]
+}

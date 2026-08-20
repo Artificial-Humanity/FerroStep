@@ -59,6 +59,15 @@ def test_structural_defects_raise_at_load_time():
         Engine(broken)
 
 
+def test_purpose_is_carried_and_opaque(engine):
+    with_purpose = Engine({**REVIEW_LOOP, "purpose": "notes/north-star.md@main"})
+    assert with_purpose.purpose == "notes/north-star.md@main"
+    assert engine.purpose is None
+    # Decisions are identical either way: the field never reaches the referee.
+    args = ("awaiting_worker", {"agent_passes": 0}, "worker", "working")
+    assert with_purpose.authorize(*args) == engine.authorize(*args)
+
+
 def test_missing_counters_default_to_zero(engine):
     decision = engine.authorize("awaiting_worker", {}, "worker", "working")
     assert decision["kind"] == "allow"

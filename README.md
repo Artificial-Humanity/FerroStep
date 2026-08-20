@@ -36,6 +36,11 @@ The core encodes lessons from running real agent loops in production:
   resolves what it verifies" is expressible — and checked — per transition.
 - **Counters belong to the operator.** The engine spends them; it never resets
   or "corrects" them. A hand-zeroed counter is a deliberate re-arm.
+- **Purpose travels with the definition.** An optional, engine-opaque
+  `purpose` field names why the loop exists (or points at the document that
+  does — a north-star file, a mission statement), so review-role actors can be
+  briefed from a stated source instead of tribal knowledge. The engine carries
+  it and never interprets it.
 
 ## What FerroStep is not
 
@@ -105,6 +110,12 @@ decision = engine.authorize(
 ```
 
 The same loop runs from Rust via `ferrostep-core` directly.
+
+More shapes — including a product-alignment review whose ledger record is the
+product itself at a point in time — live in [`examples/`](examples/). They are
+illustrations, never standards: FerroStep ships **no canonical workflow**, and
+the engine knows nothing about any particular one. Fluid configuration is the
+product; the configurations are yours.
 
 ## Layout
 
