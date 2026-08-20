@@ -25,12 +25,24 @@ loops. `README.md` is the product description; `north-star.md` is the *why*
   the Python wrapper turns them into dicts. Keep new API in the wrapper thin.
 - `ferrostep-ts/` — does not exist yet, deliberately. It lands when a
   TypeScript consumer exists to drive its API. Don't scaffold it speculatively.
+- `examples/` — illustrations of configuration, never standards (see
+  conventions below); kept honest by the core's `shipped_examples_stay_valid`
+  test.
+- `workflow/` — the working conventions. `DEVELOPER.md` defines **Cyndi**, the
+  developer persona every agent here adopts by default (routed via `CLAUDE.md`,
+  which imports it). There is no reviewer persona and no review lane,
+  deliberately — see that file's §3.
 
 ## Conventions
 
 - **Workflow definitions are data.** Never encode a specific workflow's states
   as Rust enums in the core. The reference review-loop lives only in tests and
   docs, as a fixture.
+- **No blessed workflows** (owner, 2026-08-20: fluid configuration, not set
+  standards). `examples/` are illustrations; never present them as normative,
+  and never make the engine aware of any specific workflow. The `purpose`
+  field is engine-opaque and must stay so — the engine has no concept of what
+  a review, an alignment check, or any other workflow *means*.
 - **Decision JSON is a public contract.** `kind: allow | exhausted | deny` and
   their fields are what every binding and app layer switches on; changing the
   shape is a breaking change and needs a version bump and a changelog entry.
