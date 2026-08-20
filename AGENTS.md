@@ -42,6 +42,11 @@ loops. `README.md` is the product description; `north-star.md` is the *why*
   `.cargo/config.toml`): the config reader today. Not a product crate, never
   published; its test guards `config.yaml` (parses, default agent complete,
   persona file exists).
+- `docs/` — true and proper documentation: finished, public-facing documents
+  the README can link into (prior-art lives here).
+- `notes/` — the long-term scratchpad: working thoughts, not documentation
+  (owner, 2026-08-20). Empty right now, so the directory is absent until a
+  note exists. A document that graduates moves to `docs/`.
 
 ## Conventions
 
