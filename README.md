@@ -62,7 +62,7 @@ editing the database has no single program to resume; in-process state
 machines (Apache Burr) referee an application that owns them. FerroStep is the
 piece none of them ship: a **referee, not a runtime** — the ledger owns the
 loop, and every actor, human included, is just a client of the truth.
-[`notes/prior-art.md`](notes/prior-art.md) works this through tool by tool
+[`docs/prior-art.md`](docs/prior-art.md) works this through tool by tool
 against eight concrete requirements, and says honestly when to use the others
 instead.
 
