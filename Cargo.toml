@@ -1,0 +1,16 @@
+[workspace]
+members = ["ferrostep-core", "ferrostep-py"]
+resolver = "3"
+
+# ferrostep-ts (NAPI-RS) is deliberately deferred until a TypeScript consumer
+# exists — see AGENTS.md. The workspace layout already leaves room for it.
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/Artificial-Humanity/FerroStep"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

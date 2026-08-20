@@ -1,0 +1,17 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "ferrostep"
+version = "0.1.0"
+description = "Data-driven state-machine referee for database-ledger multi-agent loops"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+keywords = ["agents", "orchestration", "state-machine", "workflow"]
+
+[tool.maturin]
+python-source = "python"
+module-name = "ferrostep._core"
+features = ["pyo3/extension-module"]
