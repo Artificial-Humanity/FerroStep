@@ -140,13 +140,12 @@ uv venv && uv pip install ./ferrostep-py pytest
 
 ## Roadmap
 
-1. **Ledger adapters** — a minimal storage interface shaped by what the engine
-   actually needs (read snapshot, conditionally apply a decision, append an
-   event), with PocketBase first. Atomicity differs per backend and the adapter
-   is where that is made explicit, not papered over.
-2. **Rule compilation** — emit database-side enforcement (PocketBase API rules,
-   Postgres constraints) from the same `WorkflowDef` the engine validates.
-3. **TypeScript bindings** — NAPI-RS, mirroring the Python surface.
+[`docs/ROADMAP.md`](docs/ROADMAP.md) is the roadmap of record. In one breath:
+prove the referee on one real loop (a PocketBase ledger adapter first), then
+compile enforcement into the database itself, then expand by demand — the
+GitHub surface ([`docs/github-agents-roadmap.md`](docs/github-agents-roadmap.md)),
+more backends, more languages — until the engine referees its own
+development.
 
 ## License
 
