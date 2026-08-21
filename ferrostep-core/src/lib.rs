@@ -282,6 +282,15 @@ pub enum ValidationError {
     HaltedExitNotHuman { from: String, to: String, role: String },
     /// One transition both spending and clearing the same counter.
     SpendsAndResets { from: String, to: String, counter: String },
+    /// An automated role clearing a ceiling without paying for the privilege.
+    ///
+    /// A reset hands back a fresh budget. Where a person does that, the person
+    /// is the bound — they decided this work was worth continuing. Where an
+    /// agent does it for free, the ceiling has deleted itself: every recurrence
+    /// is granted a new allowance, and a defect that will not die never reaches
+    /// anybody. So an agent may re-arm a loop, but only by spending something
+    /// that itself runs out.
+    UnpaidAgentReset { from: String, to: String, role: String },
     /// A non-terminal state with no way out: records entering it strand forever.
     DeadEnd(String),
     /// A state nothing can reach. Usually the acceptance path someone forgot
@@ -334,6 +343,11 @@ impl fmt::Display for ValidationError {
             HaltedWithNoExit(s) => {
                 write!(f, "halted state '{s}' has no way back; make it terminal or give it one")
             }
+            UnpaidAgentReset { from, to, role } => write!(
+                f,
+                "transition '{from}' -> '{to}' clears a counter as non-human role '{role}' \
+                 without spending one; an agent may re-arm a loop only by paying for it"
+            ),
             HaltedExitNotHuman { from, to, role } => {
                 write!(f, "transition '{from}' -> '{to}' leaves a halted state as non-human role '{role}'")
             }
@@ -483,6 +497,18 @@ impl WorkflowDef {
                         from: t.from.clone(),
                         to: t.to.clone(),
                         counter: c.clone(),
+                    });
+                }
+            }
+            // A reset an agent gets for free is a ceiling deleting itself.
+            if !t.resets.is_empty() && !human.contains(t.role.as_str()) {
+                let pays = !t.spends.is_empty()
+                    || self.counters.iter().any(|c| c.spend_on_entry_to.contains(&t.to));
+                if !pays {
+                    return Err(UnpaidAgentReset {
+                        from: t.from.clone(),
+                        to: t.to.clone(),
+                        role: t.role.clone(),
                     });
                 }
             }
@@ -1340,6 +1366,65 @@ mod tests {
             .map(|(t, _)| t.to.as_str())
             .collect();
         assert!(offered.contains(&"open"), "got {offered:?}");
+    }
+
+    #[test]
+    fn an_agent_cannot_re_arm_a_loop_for_free() {
+        // The degradation this prevents is silent: keep the reset, drop what it
+        // costs, and every recurrence is granted a fresh allowance while the
+        // ceiling still looks present. A defect that will not die then never
+        // reaches anybody, because it never runs out of attempts.
+        let mut def = review_loop();
+        def.transitions.push(TransitionDef {
+            from: "working".to_string(),
+            to: "awaiting_worker".to_string(),
+            role: "reviewer".to_string(),
+            spends: Vec::new(),
+            resets: vec!["agent_passes".to_string()],
+            requires_note: false,
+        });
+        assert_eq!(
+            def.validate().unwrap_err(),
+            ValidationError::UnpaidAgentReset {
+                from: "working".to_string(),
+                to: "awaiting_worker".to_string(),
+                role: "reviewer".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn an_agent_may_re_arm_a_loop_by_paying_for_it() {
+        // Same move, now metered by a ceiling that itself runs out. This is the
+        // shape a two-level design needs: fresh attempts are purchased, and the
+        // thing they are purchased with is finite.
+        let mut def = review_loop();
+        def.counters.push(CounterDef {
+            name: "reopens".to_string(),
+            max: 2,
+            on_exhausted: "escalated".to_string(),
+            spend_on_entry_to: Vec::new(),
+        });
+        def.transitions.push(TransitionDef {
+            from: "working".to_string(),
+            to: "awaiting_worker".to_string(),
+            role: "reviewer".to_string(),
+            spends: vec!["reopens".to_string()],
+            resets: vec!["agent_passes".to_string()],
+            requires_note: false,
+        });
+        def.validate().expect("a paid re-arm is legitimate");
+    }
+
+    #[test]
+    fn a_person_re_arms_without_paying_because_they_are_the_bound() {
+        // Every reset this repo ships is on a human role, and none of them
+        // spends anything. That is not an oversight being grandfathered: a
+        // person deciding the work is worth continuing IS the ceiling.
+        let engine = Engine::new(review_loop()).unwrap();
+        let released = engine.def().transitions.iter().find(|t| t.from == "escalated").unwrap();
+        assert!(!released.resets.is_empty() && released.spends.is_empty());
+        assert!(engine.def().human_roles().any(|r| r == released.role));
     }
 
     #[test]
