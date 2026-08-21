@@ -57,10 +57,30 @@ class Engine:
         return json.loads(self._core.authorize_json(snapshot, role, to))
 
     def next_moves(self, state: str, counters: dict[str, int], role: str) -> list[dict]:
-        """The transitions ``role`` could attempt from ``state``.
+        """Every move ``role`` could attempt from ``state``, each carrying what
+        it would actually do.
 
-        Advisory: each still goes through :meth:`authorize` to commit, which is
-        where ceilings are checked.
+        Each entry is the transition's own fields plus ``decision``, holding
+        exactly what :meth:`authorize` would answer for that move right now::
+
+            {"from": ..., "to": ..., "role": ..., "spends": [...],
+             "resets": [...], "decision": {"kind": "exhausted", ...}}
+
+        Read ``decision`` before offering the move to anyone. A transition that
+        exists and a transition that would fire are different facts, and the
+        difference is invisible in the rest of the entry.
         """
         snapshot = json.dumps({"state": state, "counters": counters})
         return json.loads(self._core.next_moves_json(snapshot, role))
+
+    def status(self, state: str, counters: dict[str, int]) -> str:
+        """What can happen to this record next, as a whole.
+
+        One of ``"ended"``, ``"needs_person"``, ``"will_escalate"`` or
+        ``"live"``. Derived from what the moves would do rather than from which
+        state the record sits in — which is the only way ``"will_escalate"``
+        can be seen at all, since nothing about the state itself says a record
+        has run out of budget.
+        """
+        snapshot = json.dumps({"state": state, "counters": counters})
+        return json.loads(self._core.status_json(snapshot))

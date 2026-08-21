@@ -33,10 +33,32 @@ impl Engine {
         serde_json::to_string(&decision).map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
+    /// Each available move as one object: the transition's own fields, plus a
+    /// `decision` holding what `authorize` would answer for it. Flattened
+    /// rather than passed through as a pair, because a tuple crossing this
+    /// boundary arrives in Python as a bare list and every caller then indexes
+    /// it by position.
     fn next_moves_json(&self, snapshot_json: &str, role: &str) -> PyResult<String> {
         let snap = parse_snapshot(snapshot_json)?;
-        let moves = self.inner.next_moves(&snap, role);
+        let moves: Vec<serde_json::Value> = self
+            .inner
+            .next_moves(&snap, role)
+            .into_iter()
+            .map(|(transition, decision)| {
+                let mut value = serde_json::to_value(transition)?;
+                let object = value.as_object_mut().expect("a transition serializes as an object");
+                object.insert("decision".to_string(), serde_json::to_value(&decision)?);
+                Ok(value)
+            })
+            .collect::<Result<_, serde_json::Error>>()
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
         serde_json::to_string(&moves).map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    fn status_json(&self, snapshot_json: &str) -> PyResult<String> {
+        let snap = parse_snapshot(snapshot_json)?;
+        serde_json::to_string(&self.inner.status(&snap))
+            .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
     /// The validated definition, normalized, as JSON.

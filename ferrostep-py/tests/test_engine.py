@@ -1,26 +1,21 @@
 """Binding-level tests: the same reference loop the Rust core uses as its
 acceptance fixture, exercised through the Python surface."""
 
+import json
+from pathlib import Path
+
 import pytest
 
 from ferrostep import Engine
 
-REVIEW_LOOP = {
-    "name": "review-loop",
-    "roles": ["worker", "reviewer", "operator"],
-    "states": ["awaiting_worker", "working", "awaiting_review", "approved", "escalated"],
-    "initial": "awaiting_worker",
-    "terminal": ["approved", "escalated"],
-    "counters": [{"name": "agent_passes", "max": 3, "on_exhausted": "escalated"}],
-    "transitions": [
-        {"from": "awaiting_worker", "to": "working", "role": "worker", "spends": ["agent_passes"]},
-        {"from": "working", "to": "awaiting_review", "role": "worker"},
-        {"from": "awaiting_review", "to": "awaiting_worker", "role": "reviewer"},
-        {"from": "awaiting_review", "to": "approved", "role": "reviewer"},
-        {"from": "awaiting_review", "to": "escalated", "role": "reviewer"},
-        {"from": "working", "to": "awaiting_worker", "role": "operator"},
-    ],
-}
+# Loaded, not copied. This was a hand-written duplicate of the shipped example
+# and it silently fell behind by a whole design change — it still described
+# escalation as an ending with no way back, long after the core stopped
+# allowing that. Reading the real file means the drift cannot recur, and
+# `shipped_examples_stay_valid` in the core keeps the file itself honest.
+REVIEW_LOOP = json.loads(
+    (Path(__file__).resolve().parents[2] / "examples" / "review-loop.json").read_text()
+)
 
 
 @pytest.fixture
@@ -51,6 +46,25 @@ def test_worker_cannot_approve(engine):
 def test_next_moves(engine):
     moves = engine.next_moves("awaiting_review", {"agent_passes": 1}, "reviewer")
     assert [m["to"] for m in moves] == ["awaiting_worker", "approved", "escalated"]
+    # None of these spends anything, so all three would fire as offered.
+    assert all(m["decision"]["kind"] == "allow" for m in moves)
+
+
+def test_next_moves_carries_what_a_move_would_actually_do(engine):
+    # Same state, same role, budget spent: the move list is identical and only
+    # the decision differs. A caller reading the list alone cannot tell.
+    spent = engine.next_moves("awaiting_worker", {"agent_passes": 3}, "worker")
+    fresh = engine.next_moves("awaiting_worker", {"agent_passes": 0}, "worker")
+    assert [m["to"] for m in spent] == [m["to"] for m in fresh]
+    assert [m["decision"]["kind"] for m in spent] == ["exhausted"]
+    assert [m["decision"]["kind"] for m in fresh] == ["allow"]
+
+
+def test_status_sees_what_the_state_cannot(engine):
+    assert engine.status("awaiting_worker", {"agent_passes": 0}) == "live"
+    assert engine.status("awaiting_worker", {"agent_passes": 3}) == "will_escalate"
+    assert engine.status("escalated", {"agent_passes": 3}) == "needs_person"
+    assert engine.status("approved", {"agent_passes": 1}) == "ended"
 
 
 def test_structural_defects_raise_at_load_time():
@@ -60,12 +74,18 @@ def test_structural_defects_raise_at_load_time():
 
 
 def test_purpose_is_carried_and_opaque(engine):
-    with_purpose = Engine({**REVIEW_LOOP, "purpose": "notes/north-star.md@main"})
-    assert with_purpose.purpose == "notes/north-star.md@main"
-    assert engine.purpose is None
-    # Decisions are identical either way: the field never reaches the referee.
+    assert engine.purpose == REVIEW_LOOP["purpose"]
+
+    # Opaque means opaque: any string survives, and none is dereferenced.
+    rewritten = Engine({**REVIEW_LOOP, "purpose": "a sentence, not a path"})
+    assert rewritten.purpose == "a sentence, not a path"
+
+    without = Engine({k: v for k, v in REVIEW_LOOP.items() if k != "purpose"})
+    assert without.purpose is None
+
+    # Decisions are identical whichever it holds: it never reaches the referee.
     args = ("awaiting_worker", {"agent_passes": 0}, "worker", "working")
-    assert with_purpose.authorize(*args) == engine.authorize(*args)
+    assert engine.authorize(*args) == rewritten.authorize(*args) == without.authorize(*args)
 
 
 def test_missing_counters_default_to_zero(engine):
