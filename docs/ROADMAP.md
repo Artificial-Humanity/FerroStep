@@ -116,6 +116,24 @@ reviewing persona in the PR process.
 The baseline pair already proves the interface is not shaped around a single
 store, so a third is demand-gated like everything else in this tier.
 
+A ledger built for this shape of work — agent actors, a human peer, an
+append-only history — is a plausible sibling project rather than part of this
+one (owner, 2026-08-21). If one arrives it is **an adapter like any other and
+never the assumed deployment**: requirement 8 in [prior-art](prior-art.md) is a
+library plus the database you already run, and that stops being true of us the
+moment a server of ours is the default path. Optional and self-hosted keeps it
+clear of the non-goals below, which rule out running anything *for* a user, not
+shipping something they can run.
+
+⚠ **It carries a risk the external backends do not.** PocketBase and SQLite
+keep the interface honest precisely because we cannot change them — every
+awkwardness has to be absorbed on our side. A backend the same hands control
+can have the interface bent toward it instead, one convenience at a time, and
+nothing fails while that happens. A first-party ledger earns its adapter
+against the same interface as the others, with no privileges they lack; and
+because it would be built to serve this engine, the adapter interface is the
+requirements document it should be tracking.
+
 **E3 — TypeScript bindings** when a TypeScript consumer exists to drive the
 API. The workspace has left room since day one.
 
