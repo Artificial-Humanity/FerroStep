@@ -142,6 +142,35 @@ mod tests {
             "persona file '{}' does not exist",
             agent.persona
         );
+        // ⚠ Existing is not the requirement — being TRACKED is. The persona is
+        // what CLAUDE.md imports, so an untracked one works perfectly here and
+        // leaves a fresh clone with an agent that has no procedures. Those two
+        // questions are asked of different things: `is_file` reads the working
+        // tree, this reads the index, and they disagree in exactly the case
+        // worth catching. Measured elsewhere in this workspace: a full suite
+        // passed green while the file it depended on was untracked.
+        assert!(
+            tracked_files(root).contains(agent.persona.as_str()),
+            "persona file '{}' exists but is not tracked by git — it would be \
+             absent from a fresh clone, and CLAUDE.md imports it",
+            agent.persona
+        );
+    }
+
+    /// The repo's tracked paths, from the index rather than the working tree.
+    fn tracked_files(root: &std::path::Path) -> std::collections::BTreeSet<String> {
+        let output = std::process::Command::new("git")
+            .arg("ls-files")
+            .current_dir(root)
+            .output()
+            .expect("could not run git ls-files");
+        assert!(output.status.success(), "git ls-files exited nonzero");
+        String::from_utf8(output.stdout)
+            .expect("git ls-files returned non-utf8")
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(str::to_owned)
+            .collect()
     }
 
     #[test]
@@ -204,18 +233,22 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let map = std::fs::read_to_string(root.join("docs/deployment-map.md"))
             .expect("docs/deployment-map.md is missing");
-        let output = std::process::Command::new("git")
-            .arg("ls-files")
-            .current_dir(root)
-            .output()
-            .expect("could not run git ls-files");
-        assert!(output.status.success(), "git ls-files exited nonzero");
-        let listing = String::from_utf8(output.stdout).unwrap();
-        let top_level: std::collections::BTreeSet<&str> = listing
-            .lines()
+        let tracked = tracked_files(root);
+        let top_level: std::collections::BTreeSet<&str> = tracked
+            .iter()
             .filter_map(|line| line.split('/').next())
             .filter(|segment| !segment.is_empty())
             .collect();
+        // ⚠ An enumerating guard needs a floor, and the floor belongs on the
+        // population that MATTERS rather than on whatever list came before it.
+        // With nothing enumerated there is nothing to find missing, so this
+        // test reports success for the one input that proves it checked
+        // nothing at all.
+        assert!(
+            !top_level.is_empty(),
+            "no tracked top-level paths were enumerated — this guard checked \
+             nothing, which is not the same as finding nothing wrong"
+        );
         let missing: Vec<&str> = top_level
             .into_iter()
             .filter(|name| !map.contains(name))

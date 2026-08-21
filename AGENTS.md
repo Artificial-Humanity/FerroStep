@@ -131,6 +131,24 @@ to argue against, not a constraint — the section says so itself).
   frozen at filing while the tree keeps moving underneath it, which makes it the
   worst possible home for a hardcoded count and the last place anyone thinks to
   look.
+- ⚠ **A guard must ask the question it actually means, and must fail when it
+  checked nothing** (2026-08-21, both measured here). Two ways a green guard
+  lies, and neither is visible from its passing output:
+  - **Existence is a working-tree question; shipping is an index question.**
+    `Path::is_file` and `git ls-files` disagree in precisely the case worth
+    catching — a file present locally and never added, which works perfectly
+    for whoever wrote it and is absent from every fresh clone. Measured in a
+    sibling repo: a full suite passed green while the module a release step
+    imported was untracked. Ask the index when the requirement is "a stranger
+    gets this too". (Resist `--others --exclude-standard` as the discriminator
+    unless you need it: it also reads per-host, unshared exclude files, so it
+    can call a legitimate build output "forgotten".)
+  - **An enumerating guard needs a floor, on the population that MATTERS.** A
+    check over an empty collection reports success, having verified nothing —
+    and the outer list is the wrong thing to floor, because a filter can match
+    none of it while the list itself is healthy. Floor whatever the assertion
+    actually iterates. In the same family, and worse in Python: `parametrize`
+    over an empty list reports `1 skipped` and exits 0.
 - ⚠ **A concurrency or timing property needs repeated rounds and a failure
   count. One green run is not evidence, it is a coin landing your way.** A
   measurement of this shape was taken against a candidate backend and its first
