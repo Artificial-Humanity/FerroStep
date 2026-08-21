@@ -1,6 +1,6 @@
 {
   "name": "review-loop",
-  "purpose": "north-star.md@main",
+  "purpose": "docs/north-star.md@main",
   "roles": ["worker", "reviewer", { "name": "operator", "human": true }],
   "states": ["awaiting_worker", "working", "awaiting_review", "approved", "escalated"],
   "initial": "awaiting_worker",

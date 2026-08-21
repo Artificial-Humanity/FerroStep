@@ -11,7 +11,7 @@ by their home.
 ## What this is
 
 A Rust-core, polyglot-bindings engine that referees database-ledger multi-agent
-loops. `README.md` is the product description; `north-star.md` is the *why*
+loops. `README.md` is the product description; `docs/north-star.md` is the *why*
 (its Vision section is an unratified draft until the owner signs it).
 
 ## Layout

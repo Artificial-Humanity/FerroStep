@@ -996,7 +996,7 @@ mod tests {
     #[test]
     fn purpose_is_carried_but_never_interpreted() {
         let mut def = review_loop();
-        def.purpose = Some("notes/north-star.md@main".to_string());
+        def.purpose = Some("docs/north-star.md@main".to_string());
         let with_purpose = Engine::new(def).unwrap();
         let without = Engine::new(review_loop()).unwrap();
         // Identical decisions either way: the field is opaque to the engine.
@@ -1006,7 +1006,7 @@ mod tests {
         );
         // It round-trips when present and stays absent (not null) when not.
         let json = serde_json::to_value(with_purpose.def()).unwrap();
-        assert_eq!(json["purpose"], "notes/north-star.md@main");
+        assert_eq!(json["purpose"], "docs/north-star.md@main");
         let bare = serde_json::to_value(without.def()).unwrap();
         assert!(bare.get("purpose").is_none());
     }

@@ -41,6 +41,5 @@ it gets a row when the crate does.
 | `xtask/` | repo tooling; `publish = false` in its manifest is the mechanism |
 | `.cargo/` | the cargo alias that invokes xtask |
 | `notes/` | long-term scratchpad |
-| `north-star.md` | the why — public to read, not a deliverable |
 | `AGENTS.md`, `CLAUDE.md` | rules of record and persona routing |
 | `Cargo.toml`, `Cargo.lock`, `.gitignore` | repo plumbing |

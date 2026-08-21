@@ -1,6 +1,6 @@
 # FerroStep — roadmap
 
-The ordering of intent. [`north-star.md`](../north-star.md) is *why*, the
+The ordering of intent. [`north-star.md`](north-star.md) is *why*, the
 [README](../README.md) is *what*, this is *in what order and why that order*.
 It sequences; it does not re-legislate — the standing rules (fluid
 configuration, no speculative scenarios, the admission bar of a real consuming
