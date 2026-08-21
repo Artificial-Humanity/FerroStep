@@ -40,9 +40,10 @@ with a real database.
 
 **B2 — The decision surface.**
 Escalation routes a record to a human, and nothing today lets that human find
-it or see what they may do about it. This milestone answers one question —
-which records await someone, and which moves does their role have — and
-renders it for a person. A ledger browser shows a row; this shows a decision.
+it or see what they may do about it. This milestone answers the *blocking*
+question — which records await someone, and which moves does their role have
+— and renders it for a person. A ledger browser shows a row; this shows a
+decision.
 Both the rendered view and any agent that narrates an escalation are
 consumers of that one query rather than independent readers of state, so the
 presentation cannot drift from the ledger.
@@ -59,7 +60,18 @@ second adapter is a new implementation and not a rewrite.
 *Done when:* an escalation reaches a human who was not watching, through an
 adapter the engine knows nothing about.
 
-**B4 — First production loop.**
+**B4 — The audit report.**
+B2 answers what is blocked on a person; this answers what *happened* (owner,
+2026-08-21). A loop may let its agents finish at a resolved state and leave
+the final close to a human, in which case the merge is the audit point:
+whoever reviews it needs to see which records were resolved and by which path
+— including the ones that escalated and were released — without opening a
+database console. Informational rather than blocking, and a reader of the same
+enumeration B2 uses, so the two views cannot disagree about the ledger.
+*Done when:* a person reviews a real merge from the report alone, and closes
+records from it.
+
+**B5 — First production loop.**
 The author's existing hand-driven worker/reviewer lane moves onto the engine:
 the same actors (agent sessions and a human at the console), the same
 ceilings, the same escalation — refereed instead of remembered. Timing is the
@@ -67,7 +79,7 @@ owner's call; the engine earns the migration rather than demanding it.
 *Done when:* a real change ships through a FerroStep-refereed loop with a
 ceiling spent and an escalation exercised for real, not in a fixture.
 
-**B5 — Defense in depth: compile the rules into the database.**
+**B6 — Defense in depth: compile the rules into the database.**
 The engine is consulted, not in the write path — by design. This milestone
 emits database-side enforcement (API rules, constraints) from the same
 `WorkflowDef` the engine validates, so definition and enforcement cannot
@@ -75,9 +87,9 @@ drift apart.
 *Done when:* an illegal transition is blocked by the database itself with the
 engine bypassed entirely.
 
-**B6 — First shipped skill.**
+**B7 — First shipped skill.**
 The first entry in `skills/` lands with its first real consumer — the actor
-skill B4's worker loads, or the one that narrates B2's decision surface to a
+skill B5's worker loads, or the one that narrates B2's decision surface to a
 human, whichever arrives first. The skills distribution channel is decided
 then, with that consumer in hand and not before.
 
