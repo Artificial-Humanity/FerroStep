@@ -4,7 +4,8 @@
   "roles": ["product_reviewer", { "name": "owner", "human": true }],
   "states": ["queued", "reviewing", "delivered", "acknowledged", "stalled"],
   "initial": "queued",
-  "terminal": ["acknowledged", "stalled"],
+  "terminal": ["acknowledged"],
+  "halted": ["stalled"],
   "counters": [
     { "name": "review_attempts", "max": 2, "on_exhausted": "stalled" }
   ],
@@ -12,6 +13,7 @@
     { "from": "queued", "to": "reviewing", "role": "product_reviewer", "spends": ["review_attempts"] },
     { "from": "reviewing", "to": "delivered", "role": "product_reviewer" },
     { "from": "reviewing", "to": "queued", "role": "owner" },
-    { "from": "delivered", "to": "acknowledged", "role": "owner" }
+    { "from": "delivered", "to": "acknowledged", "role": "owner" },
+    { "from": "stalled", "to": "queued", "role": "owner", "resets": ["review_attempts"] }
   ]
 }

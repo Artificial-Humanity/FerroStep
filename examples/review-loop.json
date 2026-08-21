@@ -4,7 +4,8 @@
   "roles": ["worker", "reviewer", { "name": "operator", "human": true }],
   "states": ["awaiting_worker", "working", "awaiting_review", "approved", "escalated"],
   "initial": "awaiting_worker",
-  "terminal": ["approved", "escalated"],
+  "terminal": ["approved"],
+  "halted": ["escalated"],
   "counters": [
     { "name": "agent_passes", "max": 3, "on_exhausted": "escalated" }
   ],
@@ -14,6 +15,7 @@
     { "from": "awaiting_review", "to": "awaiting_worker", "role": "reviewer" },
     { "from": "awaiting_review", "to": "approved", "role": "reviewer" },
     { "from": "awaiting_review", "to": "escalated", "role": "reviewer" },
-    { "from": "working", "to": "awaiting_worker", "role": "operator" }
+    { "from": "working", "to": "awaiting_worker", "role": "operator" },
+    { "from": "escalated", "to": "awaiting_worker", "role": "operator", "resets": ["agent_passes"] }
   ]
 }

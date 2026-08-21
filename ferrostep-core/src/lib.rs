@@ -17,9 +17,15 @@
 //! * Counters spend on **entry** to work, not on completion: a pass that crashes
 //!   halfway has already been paid for, so a crash loop cannot become an infinite
 //!   loop. See [`TransitionDef::spends`].
-//! * The engine never resets or "corrects" a counter. Counter values live in the
-//!   ledger and belong to the operator; a hand-zeroed counter is a deliberate
-//!   re-arm, not corruption.
+//! * The engine never resets a counter on its own initiative. It clears one
+//!   only where the definition told it to, via a transition's `resets` — the
+//!   operator's instruction, validated up front, not the engine correcting
+//!   what it thinks is wrong. Values otherwise live in the ledger and belong
+//!   to the operator; a hand-zeroed counter is a deliberate re-arm.
+//! * An ending and a pause are different kinds of state. Nothing ever leaves
+//!   a `terminal` one. A `halted` one stops automation but must declare the
+//!   way back, and only a human role may take it — so "does this need a
+//!   person?" is answered from the definition rather than guessed at.
 //! * Exhaustion is a **routing decision**, not an error: when a ceiling is hit
 //!   the engine says which state (typically an escalate-to-human state) the
 //!   record must move to instead.
@@ -48,10 +54,16 @@ pub struct WorkflowDef {
     pub states: Vec<String>,
     /// The state a freshly created record starts in.
     pub initial: String,
-    /// States where automation stops. No transition may leave them; getting a
-    /// record out of one (e.g. re-arming an escalated item) is an operator
-    /// action on the ledger, outside the engine's authority.
+    /// Endings. The loop is over here and no transition may ever leave one.
     pub terminal: Vec<String>,
+    /// Pauses. Automation stops, but a person may send the record back into
+    /// the loop — the state a ceiling escalates to is usually one of these.
+    /// Every halted state must declare that way back, and only a human role
+    /// may take it; a halt an agent could undo is not a halt. Distinguishing
+    /// these from [`Self::terminal`] is what lets a caller ask "does this
+    /// need a person?" instead of inferring it from the transition table.
+    #[serde(default)]
+    pub halted: Vec<String>,
     /// The actors that may perform transitions ("worker", "reviewer", …).
     pub roles: Vec<RoleDef>,
     pub transitions: Vec<TransitionDef>,
@@ -118,10 +130,21 @@ pub struct TransitionDef {
     /// that completes it — that is what makes a crashed pass still cost one.
     #[serde(default)]
     pub spends: Vec<String>,
+    /// Counters returned to zero when this transition fires — the mirror of
+    /// [`Self::spends`], and how a person re-arms a loop they are releasing
+    /// from a pause. The state move and the clear come back in one decision
+    /// so the ledger takes both in a single write, or neither.
+    #[serde(default)]
+    pub resets: Vec<String>,
 }
 
 /// A loop ceiling. When a spending transition finds the counter at `max`, the
 /// engine routes the record to `on_exhausted` instead of allowing the move.
+///
+/// Routing to a halted state is the usual choice: a person decides and releases
+/// it. Routing to a terminal one is legal and means the opposite — spending the
+/// ceiling *ends* the work, with no way back for anybody. Both are real
+/// designs, so nothing here forbids either; pick on purpose.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CounterDef {
     pub name: String,
@@ -171,7 +194,19 @@ pub enum ValidationError {
     UnknownTransitionRole(String),
     TransitionOutOfTerminal { from: String, to: String },
     UnknownSpend { from: String, to: String, counter: String },
+    UnknownReset { from: String, to: String, counter: String },
     UnknownExhaustTarget { counter: String, state: String },
+    UnknownHalted(String),
+    /// A state listed as both an ending and a pause. It is one or the other.
+    HaltedAndTerminal(String),
+    /// A halted state with no way back: a terminal state wearing the wrong
+    /// label, and the trap this split exists to make unrepresentable.
+    HaltedWithNoExit(String),
+    /// A pause is left by a person. An automated role leaving one would make
+    /// the halt automation-recoverable, which is the opposite of a halt.
+    HaltedExitNotHuman { from: String, to: String, role: String },
+    /// One transition both spending and clearing the same counter.
+    SpendsAndResets { from: String, to: String, counter: String },
     /// A non-terminal state with no way out: records entering it strand forever.
     DeadEnd(String),
 }
@@ -198,8 +233,24 @@ impl fmt::Display for ValidationError {
             UnknownSpend { from, to, counter } => {
                 write!(f, "transition '{from}' -> '{to}' spends undefined counter '{counter}'")
             }
+            UnknownReset { from, to, counter } => {
+                write!(f, "transition '{from}' -> '{to}' resets undefined counter '{counter}'")
+            }
             UnknownExhaustTarget { counter, state } => {
                 write!(f, "counter '{counter}' routes exhaustion to unknown state '{state}'")
+            }
+            UnknownHalted(s) => write!(f, "halted state '{s}' is not in `states`"),
+            HaltedAndTerminal(s) => {
+                write!(f, "state '{s}' is both terminal and halted; it is one or the other")
+            }
+            HaltedWithNoExit(s) => {
+                write!(f, "halted state '{s}' has no way back; make it terminal or give it one")
+            }
+            HaltedExitNotHuman { from, to, role } => {
+                write!(f, "transition '{from}' -> '{to}' leaves a halted state as non-human role '{role}'")
+            }
+            SpendsAndResets { from, to, counter } => {
+                write!(f, "transition '{from}' -> '{to}' both spends and resets '{counter}'")
             }
             DeadEnd(s) => write!(f, "non-terminal state '{s}' has no outgoing transition"),
         }
@@ -260,6 +311,16 @@ impl WorkflowDef {
                 return Err(UnknownTerminal(t.to_string()));
             }
         }
+        let halted: BTreeSet<&str> = self.halted.iter().map(String::as_str).collect();
+        for h in &halted {
+            if !states.contains(h) {
+                return Err(UnknownHalted(h.to_string()));
+            }
+            if terminal.contains(h) {
+                return Err(HaltedAndTerminal(h.to_string()));
+            }
+        }
+        let human: BTreeSet<&str> = self.human_roles().collect();
 
         let mut seen = BTreeSet::new();
         for t in &self.transitions {
@@ -280,6 +341,13 @@ impl WorkflowDef {
                     to: t.to.clone(),
                 });
             }
+            if halted.contains(t.from.as_str()) && !human.contains(t.role.as_str()) {
+                return Err(HaltedExitNotHuman {
+                    from: t.from.clone(),
+                    to: t.to.clone(),
+                    role: t.role.clone(),
+                });
+            }
             if !seen.insert((t.from.as_str(), t.to.as_str(), t.role.as_str())) {
                 return Err(DuplicateTransition {
                     from: t.from.clone(),
@@ -296,12 +364,32 @@ impl WorkflowDef {
                     });
                 }
             }
+            for c in &t.resets {
+                if !counters.contains(c.as_str()) {
+                    return Err(UnknownReset {
+                        from: t.from.clone(),
+                        to: t.to.clone(),
+                        counter: c.clone(),
+                    });
+                }
+                if t.spends.contains(c) {
+                    return Err(SpendsAndResets {
+                        from: t.from.clone(),
+                        to: t.to.clone(),
+                        counter: c.clone(),
+                    });
+                }
+            }
         }
 
         for s in &self.states {
-            let is_terminal = terminal.contains(s.as_str());
             let has_exit = self.transitions.iter().any(|t| &t.from == s);
-            if !is_terminal && !has_exit {
+            if halted.contains(s.as_str()) {
+                // A pause nobody can release is an ending that lied about it.
+                if !has_exit {
+                    return Err(HaltedWithNoExit(s.clone()));
+                }
+            } else if !terminal.contains(s.as_str()) && !has_exit {
                 return Err(DeadEnd(s.clone()));
             }
         }
@@ -375,11 +463,24 @@ impl Engine {
             }
             counter_updates.insert(name.clone(), current + 1);
         }
+        for name in &transition.resets {
+            // Validation guarantees no counter is both spent and reset here,
+            // so these cannot contradict the spends above.
+            counter_updates.insert(name.clone(), 0);
+        }
 
         Decision::Allow {
             to: to.to_string(),
             counter_updates,
         }
+    }
+
+    /// Does this record need a person? True in a halted state — the
+    /// definition's own statement that automation has stopped here and only a
+    /// human may release it. An adapter enumerates the waiting records by
+    /// selecting on [`WorkflowDef::halted`]; the engine has no ledger to scan.
+    pub fn awaits_human(&self, snap: &Snapshot) -> bool {
+        self.def.halted.iter().any(|h| h == &snap.state)
     }
 
     /// The transitions `role` could attempt from the record's current state.
@@ -405,10 +506,11 @@ mod tests {
     fn review_loop() -> WorkflowDef {
         serde_json::from_value(json!({
             "name": "review-loop",
-            "roles": ["worker", "reviewer", "operator"],
+            "roles": ["worker", "reviewer", { "name": "operator", "human": true }],
             "states": ["awaiting_worker", "working", "awaiting_review", "approved", "escalated"],
             "initial": "awaiting_worker",
-            "terminal": ["approved", "escalated"],
+            "terminal": ["approved"],
+            "halted": ["escalated"],
             "counters": [
                 { "name": "agent_passes", "max": 3, "on_exhausted": "escalated" }
             ],
@@ -421,7 +523,10 @@ mod tests {
                 { "from": "awaiting_review", "to": "approved", "role": "reviewer" },
                 { "from": "awaiting_review", "to": "escalated", "role": "reviewer" },
                 // Operator re-queues a wedged pass; note: no refund.
-                { "from": "working", "to": "awaiting_worker", "role": "operator" }
+                { "from": "working", "to": "awaiting_worker", "role": "operator" },
+                // Releasing the halt: the only move out of it, and the clear
+                // rides along so the ledger takes both or neither.
+                { "from": "escalated", "to": "awaiting_worker", "role": "operator", "resets": ["agent_passes"] }
             ]
         }))
         .unwrap()
@@ -533,23 +638,90 @@ mod tests {
     }
 
     #[test]
-    fn next_moves_is_empty_exactly_for_terminal_states() {
+    fn every_state_offers_exactly_the_moves_its_kind_allows() {
         let engine = Engine::new(review_loop()).unwrap();
         let def = engine.def();
+        let human: Vec<&str> = def.human_roles().collect();
         for state in &def.states {
-            let is_terminal = def.terminal.contains(state);
-            let has_moves = def
+            let s = snap(state, 0);
+            let movers: Vec<&str> = def
                 .roles
                 .iter()
-                .any(|role| !engine.next_moves(&snap(state, 0), &role.name).is_empty());
-            // An empty move set across every role is the only signal that a
-            // record needs an out-of-band write to go anywhere. That signal is
-            // worth nothing unless no live state can also produce it.
-            assert_eq!(
-                has_moves, !is_terminal,
-                "state '{state}': terminal={is_terminal}, has_moves={has_moves}"
-            );
+                .filter(|r| !engine.next_moves(&s, &r.name).is_empty())
+                .map(|r| r.name.as_str())
+                .collect();
+            // These three shapes are what every caller reads to tell an ending
+            // from a pause from live work. If any two of them can look alike,
+            // the decision surface cannot be built on top of them.
+            if def.terminal.contains(state) {
+                assert!(movers.is_empty(), "ending '{state}' offered {movers:?}");
+                assert!(!engine.awaits_human(&s));
+            } else if def.halted.contains(state) {
+                assert!(!movers.is_empty(), "pause '{state}' offered nobody a way back");
+                assert!(
+                    movers.iter().all(|m| human.contains(m)),
+                    "pause '{state}' offered {movers:?}, not all of them people"
+                );
+                assert!(engine.awaits_human(&s));
+            } else {
+                assert!(!movers.is_empty(), "live '{state}' offered nobody");
+                assert!(!engine.awaits_human(&s));
+            }
         }
+    }
+
+    #[test]
+    fn releasing_a_halt_moves_the_state_and_clears_the_counter_together() {
+        let engine = Engine::new(review_loop()).unwrap();
+        let spent = snap("escalated", 3);
+        assert!(engine.awaits_human(&spent));
+
+        // The trap this replaces: zeroing the counter alone changed nothing,
+        // because no transition was ever found to go and consult it.
+        assert!(matches!(
+            engine.authorize(&spent, "worker", "working"),
+            Decision::Deny { .. }
+        ));
+
+        match engine.authorize(&spent, "operator", "awaiting_worker") {
+            Decision::Allow { to, counter_updates } => {
+                assert_eq!(to, "awaiting_worker");
+                assert_eq!(counter_updates.get("agent_passes"), Some(&0));
+            }
+            other => panic!("expected the halt to release, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_halt_an_agent_could_release_is_rejected() {
+        let mut def = review_loop();
+        def.transitions.push(TransitionDef {
+            from: "escalated".to_string(),
+            to: "awaiting_worker".to_string(),
+            role: "worker".to_string(),
+            spends: Vec::new(),
+            resets: Vec::new(),
+        });
+        assert_eq!(
+            def.validate().unwrap_err(),
+            ValidationError::HaltedExitNotHuman {
+                from: "escalated".to_string(),
+                to: "awaiting_worker".to_string(),
+                role: "worker".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn a_halt_with_no_way_back_is_rejected() {
+        // The original defect, now unrepresentable: a state a ceiling routes
+        // to, that nothing and nobody can leave, no longer validates.
+        let mut def = review_loop();
+        def.transitions.retain(|t| t.from != "escalated");
+        assert_eq!(
+            def.validate().unwrap_err(),
+            ValidationError::HaltedWithNoExit("escalated".to_string())
+        );
     }
 
     #[test]
@@ -599,6 +771,7 @@ mod tests {
             to: "awaiting_worker".to_string(),
             role: "reviewer".to_string(),
             spends: vec![],
+            resets: vec![],
         });
         assert!(matches!(
             def.validate().unwrap_err(),

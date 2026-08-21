@@ -31,16 +31,24 @@ The core encodes lessons from running real agent loops in production:
 
 - **Workflows are data, not code.** A definition is JSON (states, roles,
   transitions, counters), validated structurally at load time — unknown states,
-  dead ends, exits from terminal states all fail before the first record moves.
+  dead ends, exits from terminal states, and a pause nobody can release all
+  fail before the first record moves.
 - **Loop ceilings that survive crashes.** Counters spend on *entry* to work
   (claiming a pass costs it), so an agent that crashes mid-pass has already
   paid. A crash loop cannot become an infinite loop.
 - **Exhaustion is routing, not an error.** When a ceiling is spent the engine
   answers with the state to route to instead — typically escalate-to-human.
+- **An ending and a pause are different things.** A `terminal` state is final
+  and nothing ever leaves it. A `halted` state stops automation but must
+  declare a way back, and only a role marked `human` may take it. So "does
+  this record need a person?" is read from the definition rather than guessed
+  at — and a ceiling cannot strand work somewhere nobody can reach.
 - **Role-gated transitions.** "The worker never closes an issue; the reviewer
   resolves what it verifies" is expressible — and checked — per transition.
-- **Counters belong to the operator.** The engine spends them; it never resets
-  or "corrects" them. A hand-zeroed counter is a deliberate re-arm.
+- **Counters belong to the operator.** The engine spends them and never
+  corrects them; it clears one only where a transition's `resets` says to,
+  which is the operator's own instruction and comes back in the same decision
+  as the state move, so the ledger takes both or neither.
 - **Purpose travels with the definition.** An optional, engine-opaque
   `purpose` field names why the loop exists (or points at the document that
   does — a north-star file, a mission statement), so review-role actors can be
@@ -76,10 +84,11 @@ instead.
 ```json
 {
   "name": "review-loop",
-  "roles": ["worker", "reviewer", "operator"],
+  "roles": ["worker", "reviewer", { "name": "operator", "human": true }],
   "states": ["awaiting_worker", "working", "awaiting_review", "approved", "escalated"],
   "initial": "awaiting_worker",
-  "terminal": ["approved", "escalated"],
+  "terminal": ["approved"],
+  "halted": ["escalated"],
   "counters": [{ "name": "agent_passes", "max": 3, "on_exhausted": "escalated" }],
   "transitions": [
     { "from": "awaiting_worker", "to": "working", "role": "worker", "spends": ["agent_passes"] },
@@ -87,10 +96,15 @@ instead.
     { "from": "awaiting_review", "to": "awaiting_worker", "role": "reviewer" },
     { "from": "awaiting_review", "to": "approved", "role": "reviewer" },
     { "from": "awaiting_review", "to": "escalated", "role": "reviewer" },
-    { "from": "working", "to": "awaiting_worker", "role": "operator" }
+    { "from": "working", "to": "awaiting_worker", "role": "operator" },
+    { "from": "escalated", "to": "awaiting_worker", "role": "operator", "resets": ["agent_passes"] }
   ]
 }
 ```
+
+A role is a bare string until it needs an attribute. `escalated` is a pause
+rather than an ending, so the definition has to say who releases it and what
+that costs — here the operator, clearing the ceiling on the way out.
 
 From Python:
 
