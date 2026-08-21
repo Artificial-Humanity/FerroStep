@@ -91,3 +91,16 @@ def test_purpose_is_carried_and_opaque(engine):
 def test_missing_counters_default_to_zero(engine):
     decision = engine.authorize("awaiting_worker", {}, "worker", "working")
     assert decision["kind"] == "allow"
+
+
+def test_a_move_may_require_a_reason(engine):
+    # The shipped example requires none, so this exercises the plumbing rather
+    # than the rule: a note passes through and changes nothing it should not.
+    args = ("awaiting_worker", {"agent_passes": 0}, "worker", "working")
+    assert engine.authorize(*args) == engine.authorize(*args, note="claiming this")
+
+
+def test_filing_is_refused_when_the_workflow_does_not_define_it(engine):
+    decision = engine.authorize_create({}, "reviewer", "awaiting_worker", note="found one")
+    assert decision["kind"] == "deny"
+    assert "who may file" in decision["reason"]

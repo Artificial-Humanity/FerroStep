@@ -5,7 +5,7 @@
 //! in `python/ferrostep/__init__.py` turns those into dicts, so the bridge
 //! stays free of pyo3 <-> serde conversion machinery.
 
-use ferrostep_core::{Engine as CoreEngine, Snapshot, WorkflowDef};
+use ferrostep_core::{Attempt, Engine as CoreEngine, Snapshot, WorkflowDef};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -27,9 +27,32 @@ impl Engine {
         Ok(Engine { inner })
     }
 
-    fn authorize_json(&self, snapshot_json: &str, role: &str, to: &str) -> PyResult<String> {
+    #[pyo3(signature = (snapshot_json, role, to, note=None))]
+    fn authorize_json(
+        &self,
+        snapshot_json: &str,
+        role: &str,
+        to: &str,
+        note: Option<&str>,
+    ) -> PyResult<String> {
         let snap = parse_snapshot(snapshot_json)?;
-        let decision = self.inner.authorize(&snap, role, to);
+        let decision = self.inner.authorize(&snap, &Attempt { role, to, note });
+        serde_json::to_string(&decision).map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    #[pyo3(signature = (counters_json, role, to, note=None))]
+    fn authorize_create_json(
+        &self,
+        counters_json: &str,
+        role: &str,
+        to: &str,
+        note: Option<&str>,
+    ) -> PyResult<String> {
+        let counters = serde_json::from_str(counters_json)
+            .map_err(|e| PyValueError::new_err(format!("invalid counters JSON: {e}")))?;
+        let decision = self
+            .inner
+            .authorize_create(&Attempt { role, to, note }, &counters);
         serde_json::to_string(&decision).map_err(|e| PyValueError::new_err(e.to_string()))
     }
 

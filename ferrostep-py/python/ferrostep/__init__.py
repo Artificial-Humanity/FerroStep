@@ -39,7 +39,12 @@ class Engine:
         return self.workflow.get("purpose")
 
     def authorize(
-        self, state: str, counters: dict[str, int], role: str, to: str
+        self,
+        state: str,
+        counters: dict[str, int],
+        role: str,
+        to: str,
+        note: str | None = None,
     ) -> dict:
         """May ``role`` move a record in ``state`` to ``to``?
 
@@ -52,9 +57,34 @@ class Engine:
         On ``allow``, persist the state flip and ``counter_updates`` in one
         atomic write. On ``exhausted``, route the record to ``to`` (the
         counter's escalation state) instead; change no counters.
+
+        Some moves must carry a reason and are denied without one — sending
+        work back with no explanation spends an attempt on a guess, and an
+        escalation with no stated question cannot be answered. Pass ``note``.
         """
         snapshot = json.dumps({"state": state, "counters": counters})
-        return json.loads(self._core.authorize_json(snapshot, role, to))
+        return json.loads(self._core.authorize_json(snapshot, role, to, note))
+
+    def authorize_create(
+        self,
+        counters: dict[str, int],
+        role: str,
+        to: str,
+        note: str | None = None,
+    ) -> dict:
+        """May ``role`` file a new record, and what does filing cost?
+
+        ``counters`` are the values any filing ceiling is measured against, and
+        they need not belong to any record: a budget on how much work a round
+        may create is counted per branch or per cycle, which is what lets it
+        bound a loop whose every individual record is already bounded.
+
+        ``to`` must name the workflow's initial state. Requiring it rather than
+        filling it in catches a caller that believes it is filing elsewhere.
+        """
+        return json.loads(
+            self._core.authorize_create_json(json.dumps(counters), role, to, note)
+        )
 
     def next_moves(self, state: str, counters: dict[str, int], role: str) -> list[dict]:
         """Every move ``role`` could attempt from ``state``, each carrying what

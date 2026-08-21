@@ -69,6 +69,10 @@ pub struct WorkflowDef {
     pub transitions: Vec<TransitionDef>,
     #[serde(default)]
     pub counters: Vec<CounterDef>,
+    /// Who may file a new record, and what it costs. Absent means nobody does,
+    /// through this engine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creation: Option<CreationDef>,
 }
 
 /// An actor that may perform transitions. Written as a bare string for the
@@ -136,6 +140,67 @@ pub struct TransitionDef {
     /// so the ledger takes both in a single write, or neither.
     #[serde(default)]
     pub resets: Vec<String>,
+    /// Whether this move must carry a reason.
+    ///
+    /// Some moves are unusable without one. A record sent back for more work
+    /// with no explanation spends an attempt on a guess; an escalation with no
+    /// stated question cannot be answered by the person it is addressed to.
+    /// Both are rules a persona can hold and forget, so they are refusals here
+    /// instead.
+    #[serde(default)]
+    pub requires_note: bool,
+}
+
+/// What an actor is trying to do, and what they are saying about it.
+///
+/// Bundled rather than passed loose so the engine sees everything it is
+/// judging in one value — a note that is not on the attempt cannot be checked,
+/// and a check the engine cannot make becomes a rule somebody else has to
+/// remember.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Attempt<'a> {
+    pub role: &'a str,
+    pub to: &'a str,
+    pub note: Option<&'a str>,
+}
+
+impl<'a> Attempt<'a> {
+    /// A move carrying no reason.
+    pub fn new(role: &'a str, to: &'a str) -> Self {
+        Attempt { role, to, note: None }
+    }
+
+    /// The same move, with the reason attached.
+    pub fn saying(mut self, note: &'a str) -> Self {
+        self.note = Some(note);
+        self
+    }
+
+    fn has_note(&self) -> bool {
+        self.note.is_some_and(|n| !n.trim().is_empty())
+    }
+}
+
+/// Who may file a new record, and what filing one costs.
+///
+/// Absent from a definition means nobody files through the engine — which is
+/// the safe default, because a workflow that has not said who may create work
+/// should refuse rather than assume anyone may.
+///
+/// The cost is the interesting part. A loop whose reviewing role files findings
+/// can be individually bounded and collectively unbounded: every record honours
+/// its ceiling while the population grows without limit, because each fix pass
+/// produces new work to find. A counter spent here is what bounds that, and
+/// because counter values come from the snapshot the adapter builds, it can be
+/// scoped to a branch or a cycle rather than to any one record.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CreationDef {
+    /// Roles permitted to file.
+    pub roles: Vec<String>,
+    #[serde(default)]
+    pub spends: Vec<String>,
+    #[serde(default)]
+    pub requires_note: bool,
 }
 
 /// A loop ceiling. When a spending transition finds the counter at `max`, the
@@ -227,6 +292,8 @@ pub enum ValidationError {
     /// can never fire.
     UnspendableCounter(String),
     UnknownEntrySpendState { counter: String, state: String },
+    UnknownCreationRole(String),
+    UnknownCreationSpend(String),
     /// A counter metered both by state entry and by a transition: the same
     /// move would spend it twice.
     CounterSpentTwoWays(String),
@@ -282,6 +349,12 @@ impl fmt::Display for ValidationError {
             }
             UnknownEntrySpendState { counter, state } => {
                 write!(f, "counter '{counter}' spends on entry to unknown state '{state}'")
+            }
+            UnknownCreationRole(r) => {
+                write!(f, "creation names role '{r}', which is not in `roles`")
+            }
+            UnknownCreationSpend(c) => {
+                write!(f, "creation spends undefined counter '{c}'")
             }
             CounterSpentTwoWays(c) => {
                 write!(f, "counter '{c}' is spent both on state entry and by a transition")
@@ -425,10 +498,17 @@ impl WorkflowDef {
                 }
             }
             let by_transition = self.transitions.iter().any(|t| t.spends.contains(&c.name));
+            let by_creation = self
+                .creation
+                .as_ref()
+                .is_some_and(|c2| c2.spends.contains(&c.name));
             if by_transition && !c.spend_on_entry_to.is_empty() {
                 return Err(CounterSpentTwoWays(c.name.clone()));
             }
-            if !by_transition && c.spend_on_entry_to.is_empty() {
+            // Filing counts as spending. A budget on how much work a round may
+            // create is spent nowhere else, and rejecting it as inert would
+            // make the one ceiling that bounds a population unexpressible.
+            if !by_transition && !by_creation && c.spend_on_entry_to.is_empty() {
                 return Err(UnspendableCounter(c.name.clone()));
             }
         }
@@ -450,6 +530,22 @@ impl WorkflowDef {
         // counts as an edge here — a ceiling is a way into its escalation
         // state, and is often the only way in.
         let mut reached: BTreeSet<&str> = BTreeSet::from([self.initial.as_str()]);
+        if let Some(creation) = &self.creation {
+            for name in &creation.roles {
+                if !roles.contains(name.as_str()) {
+                    return Err(UnknownCreationRole(name.clone()));
+                }
+            }
+            for name in &creation.spends {
+                let Some(counter) = self.counters.iter().find(|c| &c.name == name) else {
+                    return Err(UnknownCreationSpend(name.clone()));
+                };
+                // Where a filing budget sends the matter when it is spent is a
+                // destination this workflow names, and is reachable by saying so
+                // — no record travels there, because none was created.
+                reached.insert(counter.on_exhausted.as_str());
+            }
+        }
         let mut grew = true;
         while grew {
             grew = false;
@@ -499,7 +595,8 @@ impl Engine {
 
     /// May `role` move this record to `to`? Pure function of the definition and
     /// the snapshot; the caller persists whatever the decision instructs.
-    pub fn authorize(&self, snap: &Snapshot, role: &str, to: &str) -> Decision {
+    pub fn authorize(&self, snap: &Snapshot, attempt: &Attempt<'_>) -> Decision {
+        let Attempt { role, to, .. } = *attempt;
         if !self.def.states.contains(&snap.state) {
             return Decision::Deny {
                 reason: format!(
@@ -530,6 +627,17 @@ impl Engine {
             return Decision::Deny { reason };
         };
 
+        // Before anything is spent: a move that must carry a reason and does
+        // not is refused, not charged.
+        if transition.requires_note && !attempt.has_note() {
+            return Decision::Deny {
+                reason: format!(
+                    "'{}' -> '{to}' requires a note saying why",
+                    snap.state
+                ),
+            };
+        }
+
         let mut counter_updates = BTreeMap::new();
         // What this move costs: what the transition names, plus whatever the
         // destination charges for being entered at all. Validation guarantees
@@ -555,6 +663,68 @@ impl Engine {
 
         Decision::Allow {
             to: to.to_string(),
+            counter_updates,
+        }
+    }
+
+    /// May `attempt`'s role file a new record, and what does filing cost?
+    ///
+    /// `counters` are the values the ceilings named by [`CreationDef::spends`]
+    /// are measured against. They need not belong to any record — an adapter
+    /// can compute them per branch, per cycle, per anything it can count — and
+    /// that is what lets a creation budget bound a loop whose every individual
+    /// record is already bounded.
+    ///
+    /// The attempt's `to` must name the workflow's initial state. Requiring it
+    /// rather than filling it in catches a caller that believes it is filing
+    /// somewhere else.
+    pub fn authorize_create(
+        &self,
+        attempt: &Attempt<'_>,
+        counters: &BTreeMap<String, u32>,
+    ) -> Decision {
+        let Some(creation) = &self.def.creation else {
+            return Decision::Deny {
+                reason: format!(
+                    "workflow '{}' does not say who may file a record",
+                    self.def.name
+                ),
+            };
+        };
+        if attempt.to != self.def.initial {
+            return Decision::Deny {
+                reason: format!(
+                    "a new record starts in '{}', not '{}'",
+                    self.def.initial, attempt.to
+                ),
+            };
+        }
+        if !creation.roles.iter().any(|r| r == attempt.role) {
+            return Decision::Deny {
+                reason: format!("role '{}' may not file a record", attempt.role),
+            };
+        }
+        if creation.requires_note && !attempt.has_note() {
+            return Decision::Deny {
+                reason: "filing a record requires a note saying why".to_string(),
+            };
+        }
+
+        let mut counter_updates = BTreeMap::new();
+        for name in &creation.spends {
+            // Validation guarantees the counter exists.
+            let counter = self.def.counters.iter().find(|c| &c.name == name).unwrap();
+            let current = counters.get(name).copied().unwrap_or(0);
+            if current >= counter.max {
+                return Decision::Exhausted {
+                    to: counter.on_exhausted.clone(),
+                    counter: counter.name.clone(),
+                };
+            }
+            counter_updates.insert(counter.name.clone(), current + 1);
+        }
+        Decision::Allow {
+            to: self.def.initial.clone(),
             counter_updates,
         }
     }
@@ -610,7 +780,14 @@ impl Engine {
             .transitions
             .iter()
             .filter(|t| t.from == snap.state && t.role == role)
-            .map(|t| (t, self.authorize(snap, role, &t.to)))
+            // Offered WITH a note, so a move that merely lacks one is not
+            // reported as impossible. What this answers is "could this happen",
+            // not "would this exact call succeed" — a surface showing a person
+            // their options must still show one that needs a reason attached.
+            .map(|t| {
+                let attempt = Attempt { role, to: &t.to, note: Some("…") };
+                (t, self.authorize(snap, &attempt))
+            })
             .collect()
     }
 }
@@ -686,7 +863,7 @@ mod tests {
     #[test]
     fn claiming_a_pass_spends_the_counter() {
         let engine = Engine::new(review_loop()).unwrap();
-        let decision = engine.authorize(&snap("awaiting_worker", 0), "worker", "working");
+        let decision = engine.authorize(&snap("awaiting_worker", 0), &Attempt::new("worker", "working"));
         assert_eq!(
             decision,
             Decision::Allow {
@@ -699,7 +876,7 @@ mod tests {
     #[test]
     fn ceiling_routes_to_escalation() {
         let engine = Engine::new(review_loop()).unwrap();
-        let decision = engine.authorize(&snap("awaiting_worker", 3), "worker", "working");
+        let decision = engine.authorize(&snap("awaiting_worker", 3), &Attempt::new("worker", "working"));
         assert_eq!(
             decision,
             Decision::Exhausted {
@@ -712,7 +889,7 @@ mod tests {
     #[test]
     fn worker_cannot_approve() {
         let engine = Engine::new(review_loop()).unwrap();
-        let decision = engine.authorize(&snap("awaiting_review", 1), "worker", "approved");
+        let decision = engine.authorize(&snap("awaiting_review", 1), &Attempt::new("worker", "approved"));
         assert!(matches!(decision, Decision::Deny { .. }));
     }
 
@@ -721,7 +898,7 @@ mod tests {
         let engine = Engine::new(review_loop()).unwrap();
         // Pass 1 claimed (counter -> 1), worker crashes in `working`.
         // Operator re-queues; no refund is offered anywhere.
-        let d = engine.authorize(&snap("working", 1), "operator", "awaiting_worker");
+        let d = engine.authorize(&snap("working", 1), &Attempt::new("operator", "awaiting_worker"));
         assert_eq!(
             d,
             Decision::Allow {
@@ -732,7 +909,10 @@ mod tests {
         // Two more claims spend 2 and 3, then the ceiling routes to escalation
         // even though only two passes ever produced work.
         for expected in [2u32, 3] {
-            let d = engine.authorize(&snap("awaiting_worker", expected - 1), "worker", "working");
+            let d = engine.authorize(
+                &snap("awaiting_worker", expected - 1),
+                &Attempt::new("worker", "working"),
+            );
             assert_eq!(
                 d,
                 Decision::Allow {
@@ -741,7 +921,7 @@ mod tests {
                 }
             );
         }
-        let d = engine.authorize(&snap("awaiting_worker", 3), "worker", "working");
+        let d = engine.authorize(&snap("awaiting_worker", 3), &Attempt::new("worker", "working"));
         assert!(matches!(d, Decision::Exhausted { .. }));
     }
 
@@ -750,21 +930,21 @@ mod tests {
         let engine = Engine::new(review_loop()).unwrap();
         // An operator zeroing the counter in the ledger is a deliberate re-arm;
         // the engine takes the snapshot at face value.
-        let d = engine.authorize(&snap("awaiting_worker", 0), "worker", "working");
+        let d = engine.authorize(&snap("awaiting_worker", 0), &Attempt::new("worker", "working"));
         assert!(matches!(d, Decision::Allow { .. }));
     }
 
     #[test]
     fn no_transitions_out_of_terminal_states() {
         let engine = Engine::new(review_loop()).unwrap();
-        let d = engine.authorize(&snap("approved", 3), "reviewer", "awaiting_worker");
+        let d = engine.authorize(&snap("approved", 3), &Attempt::new("reviewer", "awaiting_worker"));
         assert!(matches!(d, Decision::Deny { .. }));
     }
 
     #[test]
     fn unknown_record_state_is_denied_not_a_panic() {
         let engine = Engine::new(review_loop()).unwrap();
-        let d = engine.authorize(&snap("limbo", 0), "worker", "working");
+        let d = engine.authorize(&snap("limbo", 0), &Attempt::new("worker", "working"));
         assert!(matches!(d, Decision::Deny { .. }));
     }
 
@@ -854,11 +1034,11 @@ mod tests {
         // The trap this replaces: zeroing the counter alone changed nothing,
         // because no transition was ever found to go and consult it.
         assert!(matches!(
-            engine.authorize(&spent, "worker", "working"),
+            engine.authorize(&spent, &Attempt::new("worker", "working")),
             Decision::Deny { .. }
         ));
 
-        match engine.authorize(&spent, "operator", "awaiting_worker") {
+        match engine.authorize(&spent, &Attempt::new("operator", "awaiting_worker")) {
             Decision::Allow { to, counter_updates } => {
                 assert_eq!(to, "awaiting_worker");
                 assert_eq!(counter_updates.get("agent_passes"), Some(&0));
@@ -876,6 +1056,7 @@ mod tests {
             role: "worker".to_string(),
             spends: Vec::new(),
             resets: Vec::new(),
+            requires_note: false,
         });
         assert_eq!(
             def.validate().unwrap_err(),
@@ -942,6 +1123,7 @@ mod tests {
             role: "reviewer".to_string(),
             spends: Vec::new(),
             resets: Vec::new(),
+            requires_note: false,
         });
         assert_eq!(
             def.validate().unwrap_err(),
@@ -992,7 +1174,7 @@ mod tests {
                 state: door.to_string(),
                 counters: BTreeMap::from([("passes".to_string(), 1)]),
             };
-            match engine.authorize(&s, "worker", "working") {
+            match engine.authorize(&s, &Attempt::new("worker", "working")) {
                 Decision::Allow { counter_updates, .. } => {
                     assert_eq!(counter_updates.get("passes"), Some(&2), "door '{door}'");
                 }
@@ -1005,7 +1187,7 @@ mod tests {
             counters: BTreeMap::from([("passes".to_string(), 2)]),
         };
         assert!(matches!(
-            engine.authorize(&spent, "worker", "working"),
+            engine.authorize(&spent, &Attempt::new("worker", "working")),
             Decision::Exhausted { .. }
         ));
     }
@@ -1018,6 +1200,146 @@ mod tests {
             def.validate().unwrap_err(),
             ValidationError::CounterSpentTwoWays("agent_passes".to_string())
         );
+    }
+
+    /// A loop whose reviewer files findings, with both new rules in use.
+    fn filing_loop() -> WorkflowDef {
+        serde_json::from_value(json!({
+            "name": "filing-loop",
+            "roles": ["worker", "reviewer", { "name": "operator", "human": true }],
+            "states": ["open", "working", "review", "done", "escalated"],
+            "initial": "open",
+            "terminal": ["done"],
+            "halted": ["escalated"],
+            "counters": [
+                { "name": "passes",  "max": 3, "on_exhausted": "escalated",
+                  "spend_on_entry_to": ["working"] },
+                { "name": "filings", "max": 2, "on_exhausted": "escalated" }
+            ],
+            "creation": { "roles": ["reviewer"], "spends": ["filings"], "requires_note": true },
+            "transitions": [
+                { "from": "open", "to": "working", "role": "worker" },
+                { "from": "working", "to": "review", "role": "worker" },
+                { "from": "review", "to": "open", "role": "reviewer", "requires_note": true },
+                { "from": "review", "to": "done", "role": "reviewer" },
+                { "from": "working", "to": "escalated", "role": "worker", "requires_note": true },
+                { "from": "escalated", "to": "open", "role": "operator", "resets": ["passes"] }
+            ]
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_move_that_must_say_why_is_refused_when_it_does_not() {
+        let engine = Engine::new(filing_loop()).unwrap();
+        let at_review = Snapshot {
+            state: "review".to_string(),
+            counters: BTreeMap::from([("passes".to_string(), 1)]),
+        };
+
+        // Sending work back with no explanation spends an attempt on a guess.
+        match engine.authorize(&at_review, &Attempt::new("reviewer", "open")) {
+            Decision::Deny { reason } => assert!(reason.contains("requires a note"), "{reason}"),
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+        assert!(matches!(
+            engine.authorize(&at_review, &Attempt::new("reviewer", "open").saying("the guard still scans docstrings")),
+            Decision::Allow { .. }
+        ));
+
+        // Whitespace is not a reason.
+        assert!(matches!(
+            engine.authorize(&at_review, &Attempt::new("reviewer", "open").saying("   ")),
+            Decision::Deny { .. }
+        ));
+
+        // And a move that needs no reason is unaffected either way.
+        assert!(matches!(
+            engine.authorize(&at_review, &Attempt::new("reviewer", "done")),
+            Decision::Allow { .. }
+        ));
+    }
+
+    #[test]
+    fn the_note_is_checked_before_anything_is_spent() {
+        // A refusal must not cost what a success would have cost.
+        let engine = Engine::new(filing_loop()).unwrap();
+        let working = Snapshot {
+            state: "working".to_string(),
+            counters: BTreeMap::from([("passes".to_string(), 1)]),
+        };
+        match engine.authorize(&working, &Attempt::new("worker", "escalated")) {
+            Decision::Deny { .. } => {}
+            other => panic!("a note-less escalation must be refused, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn filing_is_role_gated_metered_and_bounded() {
+        let engine = Engine::new(filing_loop()).unwrap();
+        let none = BTreeMap::new();
+        let spent = BTreeMap::from([("filings".to_string(), 2)]);
+
+        // The worker does not file, whatever it says.
+        assert!(matches!(
+            engine.authorize_create(&Attempt::new("worker", "open").saying("found one"), &none),
+            Decision::Deny { .. }
+        ));
+        // Nor does the reviewer, silently.
+        assert!(matches!(
+            engine.authorize_create(&Attempt::new("reviewer", "open"), &none),
+            Decision::Deny { .. }
+        ));
+        // Filing into anywhere but the initial state is a caller that thinks
+        // it is doing something else.
+        assert!(matches!(
+            engine.authorize_create(&Attempt::new("reviewer", "review").saying("x"), &none),
+            Decision::Deny { .. }
+        ));
+
+        match engine.authorize_create(&Attempt::new("reviewer", "open").saying("the gate is unrun"), &none) {
+            Decision::Allow { to, counter_updates } => {
+                assert_eq!(to, "open");
+                assert_eq!(counter_updates.get("filings"), Some(&1));
+            }
+            other => panic!("expected the filing to be allowed, got {other:?}"),
+        }
+
+        // The budget runs out, and running out routes to a person. Every
+        // record this loop holds may still be well inside its own ceiling —
+        // that is the whole point of a bound at this scope.
+        assert_eq!(
+            engine.authorize_create(&Attempt::new("reviewer", "open").saying("and another"), &spent),
+            Decision::Exhausted { to: "escalated".to_string(), counter: "filings".to_string() }
+        );
+    }
+
+    #[test]
+    fn a_workflow_that_does_not_say_who_files_refuses_filing() {
+        // review_loop() names no creation, so nothing files through the engine.
+        let engine = Engine::new(review_loop()).unwrap();
+        assert!(matches!(
+            engine.authorize_create(&Attempt::new("reviewer", "awaiting_worker").saying("x"), &BTreeMap::new()),
+            Decision::Deny { .. }
+        ));
+    }
+
+    #[test]
+    fn a_move_needing_a_note_is_still_offered_as_an_option() {
+        // next_moves answers "could this happen", not "would this exact call
+        // succeed" — a surface must still show a person the move that needs a
+        // reason, or they can never take it.
+        let engine = Engine::new(filing_loop()).unwrap();
+        let at_review = Snapshot {
+            state: "review".to_string(),
+            counters: BTreeMap::from([("passes".to_string(), 1)]),
+        };
+        let offered: Vec<&str> = engine
+            .next_moves(&at_review, "reviewer")
+            .iter()
+            .map(|(t, _)| t.to.as_str())
+            .collect();
+        assert!(offered.contains(&"open"), "got {offered:?}");
     }
 
     #[test]
@@ -1052,6 +1374,7 @@ mod tests {
             role: "reviewer".to_string(),
             spends: vec![],
             resets: vec![],
+            requires_note: false,
         });
         assert!(matches!(
             def.validate().unwrap_err(),
@@ -1092,8 +1415,8 @@ mod tests {
         let without = Engine::new(review_loop()).unwrap();
         // Identical decisions either way: the field is opaque to the engine.
         assert_eq!(
-            with_purpose.authorize(&snap("awaiting_worker", 0), "worker", "working"),
-            without.authorize(&snap("awaiting_worker", 0), "worker", "working"),
+            with_purpose.authorize(&snap("awaiting_worker", 0), &Attempt::new("worker", "working")),
+            without.authorize(&snap("awaiting_worker", 0), &Attempt::new("worker", "working")),
         );
         // It round-trips when present and stays absent (not null) when not.
         let json = serde_json::to_value(with_purpose.def()).unwrap();
@@ -1105,7 +1428,7 @@ mod tests {
     #[test]
     fn decision_json_shape_is_stable() {
         let engine = Engine::new(review_loop()).unwrap();
-        let d = engine.authorize(&snap("awaiting_worker", 0), "worker", "working");
+        let d = engine.authorize(&snap("awaiting_worker", 0), &Attempt::new("worker", "working"));
         let value = serde_json::to_value(&d).unwrap();
         assert_eq!(
             value,

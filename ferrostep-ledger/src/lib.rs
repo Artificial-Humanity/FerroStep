@@ -66,7 +66,11 @@ pub struct Record {
 pub struct Event {
     pub actor: String,
     pub role: String,
-    pub from_state: String,
+    /// Where the record was. `None` when this event opened its history — a
+    /// record being filed came from nowhere, and an empty string would be a
+    /// state name that is merely blank.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_state: Option<String>,
     pub decision: Decision,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
@@ -195,6 +199,21 @@ pub trait Ledger {
     /// Read one record, with the token needed to move it.
     fn load(&self, id: &RecordId) -> Result<Record, LedgerError>;
 
+    /// File a new record into `scope`, in the state the decision names, and
+    /// open its history with `event`.
+    ///
+    /// ⚠ A filing decision's counter updates are **scope-level, not
+    /// record-level**. A budget on how much work a round may create belongs to
+    /// the branch or the cycle, never to the record being created — so an
+    /// adapter that persists them onto the new record has stored them where
+    /// nothing will find them again.
+    fn create(
+        &self,
+        scope: &Scope,
+        decision: &Decision,
+        event: &Event,
+    ) -> Result<Record, LedgerError>;
+
     /// Persist a decision and append its event, against the version the record
     /// was read at.
     ///
@@ -236,7 +255,7 @@ mod tests {
         let event = Event {
             actor: "ada".to_string(),
             role: "worker".to_string(),
-            from_state: "open".to_string(),
+            from_state: Some("open".to_string()),
             decision: allow(),
             note: Some("picked this up after the outage".to_string()),
         };
@@ -253,7 +272,7 @@ mod tests {
         let event = Event {
             actor: "worker-1".to_string(),
             role: "worker".to_string(),
-            from_state: "open".to_string(),
+            from_state: Some("open".to_string()),
             decision: allow(),
             note: None,
         };
@@ -269,7 +288,7 @@ mod tests {
             event: Event {
                 actor: "lmcfarlin".to_string(),
                 role: "operator".to_string(),
-                from_state: "escalated".to_string(),
+                from_state: Some("escalated".to_string()),
                 decision: allow(),
                 note: None,
             },
@@ -280,6 +299,23 @@ mod tests {
         assert_eq!(value["seq"], 12);
         assert_eq!(value["role"], "operator");
         assert_eq!(serde_json::from_value::<StoredEvent>(value).unwrap(), stored);
+    }
+
+    #[test]
+    fn a_filed_record_came_from_nowhere_rather_than_from_nothing() {
+        // A creation event has no prior state, and the difference between that
+        // and a blank one is the difference between "this began here" and "a
+        // state name went missing".
+        let filed = Event {
+            actor: "reviewer-1".to_string(),
+            role: "reviewer".to_string(),
+            from_state: None,
+            decision: allow(),
+            note: Some("the gate is enumerated by nothing".to_string()),
+        };
+        let value = serde_json::to_value(&filed).unwrap();
+        assert!(!value.as_object().unwrap().contains_key("from_state"));
+        assert_eq!(serde_json::from_value::<Event>(value).unwrap(), filed);
     }
 
     #[test]
