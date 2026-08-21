@@ -105,6 +105,12 @@ loops. `README.md` is the product description; `docs/north-star.md` is the *why*
   others, and the corner is only visible once you are in it. The standing test
   for any external surface is whether somebody could write a simple adapter for
   a target nobody here has thought of.
+  ⚠ **Shipping a default adapter is not the same as naming a vendor at
+  framework level** (owner, 2026-08-21), and over-applying the rule above is a
+  real risk — a stack has to function, so defaults ship and are maintained.
+  They hold the bar `examples/` holds: a worked example somebody copies to
+  write the next one, never a blessed one, and never granted standing in the
+  interface they implement.
 - **Decision JSON is a public contract.** `kind: allow | exhausted | deny` and
   their fields are what every binding and app layer switches on; changing the
   shape is a breaking change and needs a version bump and a changelog entry.

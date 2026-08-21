@@ -33,7 +33,9 @@ generic, and because it exposes what the first one hides: a backend with a
 console of its own answers "what needs me?" without the interface ever being
 asked, and SQLite has no console to hide behind (owner, 2026-08-21). The
 adapter is where each backend's real atomicity story is made explicit, never
-papered over.
+papered over. Both ship as maintained defaults, and doubling as the worked
+example for a third is part of the job — an adapter nobody could imitate has
+only half solved the problem.
 
 SQLite is also the **zero-install path**, which is a first-class concern and not
 a courtesy: a first loop on one developer's machine needs no server, no account
@@ -87,11 +89,13 @@ one.** Delivery mechanisms are genuinely unalike — one is a URL you post to,
 the next wants service credentials and a payload envelope, the next a device
 token and a key-signed request, the next is a program run on the local machine.
 An interface shaped around whichever gets written first quietly excludes the
-rest. So the target to design against is the one nobody has thought of yet, and
-any service named anywhere in this repo is an illustration rather than a
-commitment.
-*In use here:* ntfy — Apache-2.0, self-hostable, needs no account. Being the
-one we run buys it no standing in the interface.
+rest, so the target to design against is the one nobody has thought of yet.
+
+*The default:* an **ntfy** adapter ships and is maintained — Apache-2.0,
+self-hostable, no account needed. A stack has to actually function, and a
+default is how it does. What a default earns is the job of being the worked
+example somebody copies when they write the fourth one; what it does not earn
+is any standing in the interface.
 *Done when:* an escalation reaches a human who was not watching, through an
 adapter the engine knows nothing about.
 
