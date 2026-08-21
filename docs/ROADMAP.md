@@ -142,6 +142,14 @@ The author's existing hand-driven worker/reviewer lane moves onto the engine:
 the same actors (agent sessions and a human at the console), the same
 ceilings, the same escalation — refereed instead of remembered. Timing is the
 owner's call; the engine earns the migration rather than demanding it.
+⚠ **A loop being migrated already has enforcement somewhere, and moving it
+naively leaves two referees.** Where a store-side hook performs a transition
+today — releasing a paused record and clearing its counter in one save, say —
+and the loop then becomes a definition, that transition is enforced in two
+places free to disagree, with nothing comparing them. Same disease as a second
+chronology beside the log. Such a hook has to become the compiled output of the
+definition (see B6) or be retired into it; it must not survive as a
+hand-written peer. Worth deciding before a cutover rather than during one.
 *Done when:* a real change ships through a FerroStep-refereed loop with a
 ceiling spent and an escalation exercised for real, not in a fixture.
 

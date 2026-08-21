@@ -74,10 +74,14 @@ this list; so is a ledger built on purpose.
 
 ### It does not meet
 
-- **Cross-record atomicity (rest of 1).** The event log is a second record, so
-  applying a decision spans two writes. The transactional batch endpoint is
-  **disabled by default**; even enabled it is a capped batch (50 operations, a
-  short timeout), not a general transaction.
+- ~~**Cross-record atomicity (rest of 1).**~~ ⚠ **CORRECTED 2026-08-21 — this
+  was recorded as a gap and is not one.** The transactional batch endpoint is
+  disabled by default, which is what the original note keyed on. But a hook
+  runs *inside* the record's own save and the hook runtime exposes an explicit
+  run-in-transaction primitive, so record-plus-history in one atomic operation
+  is reachable **without any settings change**. The mistake mattered: an
+  adapter following the original note would have reported itself non-atomic,
+  and that field is exactly what a caller is meant to trust.
 - **Requirement 2, at all.** The REST API has no conditional update — no
   `If-Match`, no `WHERE version = n`. A compare-and-swap is simply not
   expressible through it. This is the sharpest gap, because a version-guarded
@@ -96,6 +100,27 @@ this list; so is a ledger built on purpose.
 - `perPage` defaults to **30** and caps at **500**. A query written against a
   small table silently truncates when the table grows, and the caller sees a
   successful response. Any enumeration must page and never trust one page.
+  ⚠ **The response carries a total count, so truncation is DETECTABLE** — an
+  adapter can assert it read as many as the store said existed, which is a
+  check rather than a discipline. There is also a flag that skips the count
+  query for speed, and skipping it is the one way to make truncation silent.
+  **At least one client in use defaults that flag on.** Set it explicitly;
+  never inherit it on an enumeration whose completeness matters.
+- **There is no native revision or etag**, and the store-maintained timestamp
+  fields are the obvious wrong substitute: they are set by the store rather
+  than the caller, and equality across two writes in the same instant is not a
+  safe comparison. A version token should be an integer the adapter owns and
+  increments — equality is the entire requirement, and an integer has no
+  precision question.
+- ⚠ **Each hook callback runs in its own isolated runtime, and file-scope
+  functions and constants are not visible inside it.** Shared logic factored
+  into a top-level helper produces a reference error on every call, surfacing
+  as a generic `400` with the real message only in the store's own log
+  endpoint — which returns oldest-first unless sorted. This is a landmine for
+  any milestone that *generates* store-side enforcement, because factoring
+  shared logic is what a generator naturally does. **Emit self-contained
+  handlers**, and expect the deliberate duplication to look like something a
+  later reader should tidy.
 - A `text` field caps at **5000 characters** by default, and `"max": 0` does
   **not** lift it — `0` means unset, so the default applies. It fails at insert
   time, not at schema time, so it surfaces as a partial migration.
