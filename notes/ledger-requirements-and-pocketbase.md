@@ -83,9 +83,35 @@ this list; so is a ledger built on purpose.
   adapter following the original note would have reported itself non-atomic,
   and that field is exactly what a caller is meant to trust.
 - **Requirement 2, at all.** The REST API has no conditional update — no
-  `If-Match`, no `WHERE version = n`. A compare-and-swap is simply not
-  expressible through it. This is the sharpest gap, because a version-guarded
-  write is a stated done-when for the first adapter milestone.
+  `If-Match`, no `WHERE version = n`. This is the sharpest gap, because a
+  version-guarded write is a stated done-when for the first adapter milestone.
+
+  ⚠ **The obvious workaround was measured and it does not work.** An access
+  rule can compare a submitted value against the stored record, which looks
+  like a conditional update and is the cheapest one available. Under concurrent
+  writers it is not a compare-and-swap: **two writers are enough**, and in a
+  repeated run most rounds produced more than one winner. The predicate is
+  evaluated before the write commits, so anyone arriving inside that window
+  passes a check that is already stale.
+
+  A control settles what kind of failure it is. With the predicate replaced by
+  an always-true rule, every writer won and the last one's value survived — a
+  textbook lost update. So the predicate's *semantics* are correct and its
+  *atomicity* is absent; only the second licenses the capability flag. Treat a
+  rule-level predicate as a cheap pre-filter and never as a ceiling.
+
+  ⚠ **An administrator bypasses it entirely** — not a window, an absence. A
+  write submitting a wildly wrong expected version succeeded and set the
+  version to whatever it claimed. So while agents authenticate as
+  administrators, a rule-level ceiling is not weak here, it is *absent*, and
+  requirements 2 and 6 are one finding rather than two.
+
+  **Untested and worth testing:** a hook-level compare, which runs inside the
+  request and can call an explicit run-in-transaction primitive — a different
+  write path from the rule filter. The storage layer underneath permits one
+  writer at a time, so the serialization exists; the only question is whether
+  the compare can be got inside it. Until that is answered, an adapter here
+  cannot honestly advertise an atomic counter spend.
 - **Requirement 3, through API rules.** Rules cannot make a collection
   append-only for the actors that matter, because **superusers bypass rules
   entirely** and agents typically authenticate as superusers. Rules are also

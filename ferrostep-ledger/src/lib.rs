@@ -135,6 +135,22 @@ pub struct Capabilities {
     /// A stale [`Version`] is refused rather than silently overwritten. Where
     /// this is false, two actors reading the same record can both succeed and
     /// one ceiling spend is lost — which turns a ceiling into a suggestion.
+    ///
+    /// ⚠ **Set this from a measurement under concurrent writers, never from
+    /// reading an API.** A store can evaluate a version predicate with
+    /// perfectly correct semantics and still have no serialization behind it:
+    /// if the check happens before the write commits, any writer arriving in
+    /// that window passes a predicate that is already stale. Measured on one
+    /// candidate backend: **two** concurrent writers were enough to produce two
+    /// winners, and a control with the predicate replaced by an always-true
+    /// rule showed a textbook lost update — so the mechanism was working and
+    /// its atomicity was not. Those are different properties and only the
+    /// second one licenses this flag.
+    ///
+    /// ⚠ **And run the measurement repeatedly.** In that same experiment the
+    /// first round passed cleanly — twelve writers, exactly one winner — which
+    /// was luck. A single green round of a concurrency test is not evidence;
+    /// what is evidence is many rounds and a failure count.
     pub compare_and_swap: bool,
     /// History cannot be rewritten or deleted by the actors that write it.
     /// Note what this does *not* claim: an administrator credential that can

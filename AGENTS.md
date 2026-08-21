@@ -119,6 +119,15 @@ loops. `README.md` is the product description; `docs/north-star.md` is the *why*
 - **Favor Rust when the choice of tool is ambiguous; otherwise pick the best
   tool for the job** (owner, 2026-08-20). This is not a purity rule — the
   Python bindings are a first-class citizen — it is a tiebreaker.
+- ⚠ **A concurrency or timing property needs repeated rounds and a failure
+  count. One green run is not evidence, it is a coin landing your way.** A
+  measurement of this shape was taken against a candidate backend and its first
+  round passed cleanly; running it again showed the property failing in most
+  rounds, with two writers enough to break it. Had it stopped at one round it
+  would have reported the opposite conclusion with a real measurement behind
+  it. This is the same family as *check the instrument ran before believing a
+  negative*, in the direction that flatters you: a passing probabilistic test
+  is the easier mistake to make and the harder one to notice.
 - License is Apache-2.0; new files need no per-file headers. **Every
   dependency and vendored tool must be license-compatible with Apache-2.0**
   (owner, 2026-08-20) — check the license before adding it, and record the
