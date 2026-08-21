@@ -53,10 +53,58 @@ pub struct WorkflowDef {
     /// action on the ledger, outside the engine's authority.
     pub terminal: Vec<String>,
     /// The actors that may perform transitions ("worker", "reviewer", …).
-    pub roles: Vec<String>,
+    pub roles: Vec<RoleDef>,
     pub transitions: Vec<TransitionDef>,
     #[serde(default)]
     pub counters: Vec<CounterDef>,
+}
+
+/// An actor that may perform transitions. Written as a bare string for the
+/// common case (`"worker"`), or as an object when it carries attributes
+/// (`{ "name": "operator", "human": true }`); both forms are accepted and a
+/// non-human role round-trips back to the bare string.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(from = "RoleRepr", into = "RoleRepr")]
+pub struct RoleDef {
+    pub name: String,
+    /// Whether a person performs this role. Configuration, never inference —
+    /// the engine cannot tell an operator from a worker by name, and this is
+    /// the difference between "a person must act" and "an agent that isn't
+    /// running", which look identical from the outside.
+    pub human: bool,
+}
+
+/// Wire shape for [`RoleDef`]: the shorthand and the long form.
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum RoleRepr {
+    Name(String),
+    Full {
+        name: String,
+        #[serde(default)]
+        human: bool,
+    },
+}
+
+impl From<RoleRepr> for RoleDef {
+    fn from(repr: RoleRepr) -> Self {
+        match repr {
+            RoleRepr::Name(name) => RoleDef { name, human: false },
+            RoleRepr::Full { name, human } => RoleDef { name, human },
+        }
+    }
+}
+
+impl From<RoleDef> for RoleRepr {
+    fn from(role: RoleDef) -> Self {
+        // Keep the shorthand shorthand: only a role with an attribute set
+        // needs the long form, so existing definitions survive a round trip.
+        if role.human {
+            RoleRepr::Full { name: role.name, human: true }
+        } else {
+            RoleRepr::Name(role.name)
+        }
+    }
 }
 
 /// One legal move: `role` may flip a record from `from` to `to`.
@@ -165,6 +213,13 @@ impl WorkflowDef {
         serde_json::from_str(json)
     }
 
+    /// The roles a person performs. The caller that asks "does this record
+    /// need someone, or just an agent that isn't running?" answers it by
+    /// splitting [`Engine::next_moves`] along this line.
+    pub fn human_roles(&self) -> impl Iterator<Item = &str> {
+        self.roles.iter().filter(|r| r.human).map(|r| r.name.as_str())
+    }
+
     /// Check every cross-reference in the definition. Returns the first defect
     /// found; a definition that passes cannot make the engine panic or strand a
     /// record in an undefined state.
@@ -179,8 +234,8 @@ impl WorkflowDef {
         }
         let mut roles = BTreeSet::new();
         for r in &self.roles {
-            if !roles.insert(r.as_str()) {
-                return Err(DuplicateRole(r.clone()));
+            if !roles.insert(r.name.as_str()) {
+                return Err(DuplicateRole(r.name.clone()));
             }
         }
         let mut counters = BTreeSet::new();
@@ -486,7 +541,7 @@ mod tests {
             let has_moves = def
                 .roles
                 .iter()
-                .any(|role| !engine.next_moves(&snap(state, 0), role).is_empty());
+                .any(|role| !engine.next_moves(&snap(state, 0), &role.name).is_empty());
             // An empty move set across every role is the only signal that a
             // record needs an out-of-band write to go anywhere. That signal is
             // worth nothing unless no live state can also produce it.
@@ -495,6 +550,37 @@ mod tests {
                 "state '{state}': terminal={is_terminal}, has_moves={has_moves}"
             );
         }
+    }
+
+    #[test]
+    fn a_role_is_a_bare_string_until_it_needs_an_attribute() {
+        let def: WorkflowDef = serde_json::from_value(json!({
+            "name": "mixed",
+            "roles": ["worker", { "name": "operator", "human": true }],
+            "states": ["queued", "done"],
+            "initial": "queued",
+            "terminal": ["done"],
+            "transitions": [{ "from": "queued", "to": "done", "role": "worker" }]
+        }))
+        .unwrap();
+        def.validate().unwrap();
+        assert_eq!(def.human_roles().collect::<Vec<_>>(), ["operator"]);
+
+        // Only an attributed role expands, so adding this field cannot churn
+        // the definitions that never use it.
+        let back = serde_json::to_value(&def).unwrap();
+        assert_eq!(back["roles"][0], json!("worker"));
+        assert_eq!(back["roles"][1], json!({ "name": "operator", "human": true }));
+    }
+
+    #[test]
+    fn duplicate_roles_are_caught_across_both_forms() {
+        let mut def = review_loop();
+        def.roles.push(RoleDef { name: "worker".into(), human: true });
+        assert_eq!(
+            def.validate().unwrap_err(),
+            ValidationError::DuplicateRole("worker".to_string())
+        );
     }
 
     #[test]

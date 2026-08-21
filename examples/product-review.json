@@ -1,7 +1,7 @@
 {
   "name": "product-review",
   "purpose": "north-star.md@main",
-  "roles": ["product_reviewer", "owner"],
+  "roles": ["product_reviewer", { "name": "owner", "human": true }],
   "states": ["queued", "reviewing", "delivered", "acknowledged", "stalled"],
   "initial": "queued",
   "terminal": ["acknowledged", "stalled"],
