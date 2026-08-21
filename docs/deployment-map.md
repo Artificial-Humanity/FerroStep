@@ -26,7 +26,7 @@ exists to build or govern the product — the repo is public, so everything is
 | `skills/` | actor skills (`SKILL.md` format) | with the product; channel decided with the first skill | empty by design |
 | `examples/` | workflow definitions, copy-and-edit | the repo itself | live |
 | `docs/` | project documentation | the public repo | live |
-| `assets/` | the project icon (SVG geometry + rendered PNG) | the public repo; uploaded as the GitHub App avatar at registration | live |
+| `assets/` | the project icon (SVG geometry + rendered PNG) | the public repo; copied into the org profile repo (`.github/assets/ferrostep-icon.png`); uploaded as the GitHub App avatar at registration | live |
 | `README.md`, `LICENSE` | the repo's public surface | the public repo | live |
 
 Planned but absent: `ferrostep-ts` (npm, when a TypeScript consumer exists) —

@@ -1,3 +1,8 @@
+<p align="center">
+  <img src="assets/icon.png" width="160"
+       alt="FerroStep: a stepped path from a hollow initial-state node to a glowing terminal-state node">
+</p>
+
 # FerroStep
 
 **A data-driven state-machine referee for multi-agent loops, with the ledger in
