@@ -478,6 +478,26 @@ mod tests {
     }
 
     #[test]
+    fn next_moves_is_empty_exactly_for_terminal_states() {
+        let engine = Engine::new(review_loop()).unwrap();
+        let def = engine.def();
+        for state in &def.states {
+            let is_terminal = def.terminal.contains(state);
+            let has_moves = def
+                .roles
+                .iter()
+                .any(|role| !engine.next_moves(&snap(state, 0), role).is_empty());
+            // An empty move set across every role is the only signal that a
+            // record needs an out-of-band write to go anywhere. That signal is
+            // worth nothing unless no live state can also produce it.
+            assert_eq!(
+                has_moves, !is_terminal,
+                "state '{state}': terminal={is_terminal}, has_moves={has_moves}"
+            );
+        }
+    }
+
+    #[test]
     fn validation_rejects_dead_ends() {
         let mut def = review_loop();
         def.states.push("oubliette".to_string());
