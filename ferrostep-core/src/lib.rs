@@ -150,6 +150,16 @@ pub struct CounterDef {
     pub name: String,
     pub max: u32,
     pub on_exhausted: String,
+    /// States whose *entry* spends this counter, by whichever door the record
+    /// came through. Declare the cost against the thing being metered — being
+    /// worked on — rather than against each transition that leads to it, and a
+    /// path added later cannot silently arrive free.
+    ///
+    /// A counter is metered one way or the other: naming states here and also
+    /// listing it in a transition's `spends` is a load-time error, because the
+    /// two would both fire on the same move.
+    #[serde(default)]
+    pub spend_on_entry_to: Vec<String>,
 }
 
 /// A record's current position, as read from the ledger. Counters absent from
@@ -213,9 +223,13 @@ pub enum ValidationError {
     /// to write, and it reads as a working design right up until no record
     /// ever arrives.
     Unreachable(String),
-    /// A ceiling no transition spends. It looks like a guard in the
-    /// definition and can never fire.
+    /// A ceiling nothing spends. It looks like a guard in the definition and
+    /// can never fire.
     UnspendableCounter(String),
+    UnknownEntrySpendState { counter: String, state: String },
+    /// A counter metered both by state entry and by a transition: the same
+    /// move would spend it twice.
+    CounterSpentTwoWays(String),
 }
 
 impl fmt::Display for ValidationError {
@@ -264,7 +278,13 @@ impl fmt::Display for ValidationError {
                 write!(f, "state '{s}' cannot be reached from '{{initial}}' by any path")
             }
             UnspendableCounter(c) => {
-                write!(f, "counter '{c}' is never spent by any transition, so its ceiling cannot fire")
+                write!(f, "counter '{c}' is never spent, so its ceiling cannot fire")
+            }
+            UnknownEntrySpendState { counter, state } => {
+                write!(f, "counter '{counter}' spends on entry to unknown state '{state}'")
+            }
+            CounterSpentTwoWays(c) => {
+                write!(f, "counter '{c}' is spent both on state entry and by a transition")
             }
         }
     }
@@ -396,7 +416,19 @@ impl WorkflowDef {
         }
 
         for c in &self.counters {
-            if !self.transitions.iter().any(|t| t.spends.contains(&c.name)) {
+            for s in &c.spend_on_entry_to {
+                if !states.contains(s.as_str()) {
+                    return Err(UnknownEntrySpendState {
+                        counter: c.name.clone(),
+                        state: s.clone(),
+                    });
+                }
+            }
+            let by_transition = self.transitions.iter().any(|t| t.spends.contains(&c.name));
+            if by_transition && !c.spend_on_entry_to.is_empty() {
+                return Err(CounterSpentTwoWays(c.name.clone()));
+            }
+            if !by_transition && c.spend_on_entry_to.is_empty() {
                 return Err(UnspendableCounter(c.name.clone()));
             }
         }
@@ -426,10 +458,13 @@ impl WorkflowDef {
                     continue;
                 }
                 grew |= reached.insert(t.to.as_str());
-                for c in &t.spends {
+                for c in &self.counters {
                     // The lookup is guaranteed by the spend check above.
-                    let counter = self.counters.iter().find(|d| &d.name == c).unwrap();
-                    grew |= reached.insert(counter.on_exhausted.as_str());
+                    let spent_here =
+                        t.spends.contains(&c.name) || c.spend_on_entry_to.contains(&t.to);
+                    if spent_here {
+                        grew |= reached.insert(c.on_exhausted.as_str());
+                    }
                 }
             }
         }
@@ -496,17 +531,21 @@ impl Engine {
         };
 
         let mut counter_updates = BTreeMap::new();
-        for name in &transition.spends {
-            // Validation guarantees the counter exists.
-            let counter = self.def.counters.iter().find(|c| &c.name == name).unwrap();
-            let current = snap.counters.get(name).copied().unwrap_or(0);
+        // What this move costs: what the transition names, plus whatever the
+        // destination charges for being entered at all. Validation guarantees
+        // no counter appears in both, so neither can double-charge the other.
+        let spends = self.def.counters.iter().filter(|c| {
+            transition.spends.contains(&c.name) || c.spend_on_entry_to.contains(&transition.to)
+        });
+        for counter in spends {
+            let current = snap.counters.get(&counter.name).copied().unwrap_or(0);
             if current >= counter.max {
                 return Decision::Exhausted {
                     to: counter.on_exhausted.clone(),
-                    counter: name.clone(),
+                    counter: counter.name.clone(),
                 };
             }
-            counter_updates.insert(name.clone(), current + 1);
+            counter_updates.insert(counter.name.clone(), current + 1);
         }
         for name in &transition.resets {
             // Validation guarantees no counter is both spent and reset here,
@@ -831,12 +870,73 @@ mod tests {
     }
 
     #[test]
+    fn entering_a_state_costs_the_same_by_every_door() {
+        let def: WorkflowDef = serde_json::from_value(json!({
+            "name": "two-doors",
+            "roles": ["worker", { "name": "operator", "human": true }],
+            "states": ["open", "working", "reopened", "done", "escalated"],
+            "initial": "open",
+            "terminal": ["done"],
+            "halted": ["escalated"],
+            "counters": [
+                { "name": "passes", "max": 2, "on_exhausted": "escalated",
+                  "spend_on_entry_to": ["working"] }
+            ],
+            "transitions": [
+                { "from": "open", "to": "working", "role": "worker" },
+                { "from": "working", "to": "done", "role": "worker" },
+                { "from": "working", "to": "reopened", "role": "worker" },
+                { "from": "reopened", "to": "working", "role": "worker" },
+                { "from": "escalated", "to": "open", "role": "operator", "resets": ["passes"] }
+            ]
+        }))
+        .unwrap();
+        let engine = Engine::new(def).unwrap();
+
+        // No transition names the counter. The destination charges regardless
+        // of which door was used, which is the point: a door added later
+        // cannot arrive free by being forgotten.
+        for door in ["open", "reopened"] {
+            let s = Snapshot {
+                state: door.to_string(),
+                counters: BTreeMap::from([("passes".to_string(), 1)]),
+            };
+            match engine.authorize(&s, "worker", "working") {
+                Decision::Allow { counter_updates, .. } => {
+                    assert_eq!(counter_updates.get("passes"), Some(&2), "door '{door}'");
+                }
+                other => panic!("door '{door}' should charge: {other:?}"),
+            }
+        }
+
+        let spent = Snapshot {
+            state: "reopened".to_string(),
+            counters: BTreeMap::from([("passes".to_string(), 2)]),
+        };
+        assert!(matches!(
+            engine.authorize(&spent, "worker", "working"),
+            Decision::Exhausted { .. }
+        ));
+    }
+
+    #[test]
+    fn a_counter_metered_two_ways_is_rejected() {
+        let mut def = review_loop();
+        def.counters[0].spend_on_entry_to.push("working".to_string());
+        assert_eq!(
+            def.validate().unwrap_err(),
+            ValidationError::CounterSpentTwoWays("agent_passes".to_string())
+        );
+    }
+
+    #[test]
     fn a_counter_nothing_spends_is_rejected() {
         let mut def = review_loop();
         def.counters.push(CounterDef {
             name: "review_rounds".to_string(),
             max: 2,
             on_exhausted: "escalated".to_string(),
+            spend_on_entry_to: Vec::new(),
         });
         assert_eq!(
             def.validate().unwrap_err(),
