@@ -559,24 +559,79 @@ impl Engine {
         }
     }
 
-    /// Does this record need a person? True in a halted state — the
-    /// definition's own statement that automation has stopped here and only a
-    /// human may release it. An adapter enumerates the waiting records by
-    /// selecting on [`WorkflowDef::halted`]; the engine has no ledger to scan.
-    pub fn awaits_human(&self, snap: &Snapshot) -> bool {
-        self.def.halted.iter().any(|h| h == &snap.state)
+    /// What can happen to this record next, taken as a whole.
+    ///
+    /// Derived from what the moves would actually do rather than from which
+    /// state the record sits in, which is the only way [`Status::WillEscalate`]
+    /// can be seen at all.
+    pub fn status(&self, snap: &Snapshot) -> Status {
+        if !self.def.states.contains(&snap.state) {
+            // Outside the workflow's own vocabulary. Nothing automated can be
+            // said about it and somebody should look.
+            return Status::NeedsPerson;
+        }
+        if self.def.terminal.iter().any(|t| t == &snap.state) {
+            return Status::Ended;
+        }
+        let mut automated_can_act = false;
+        let mut person_can_act = false;
+        for role in &self.def.roles {
+            for (_, decision) in self.next_moves(snap, &role.name) {
+                if matches!(decision, Decision::Allow { .. }) {
+                    if role.human {
+                        person_can_act = true;
+                    } else {
+                        automated_can_act = true;
+                    }
+                }
+            }
+        }
+        if automated_can_act {
+            Status::Live
+        } else if person_can_act {
+            Status::NeedsPerson
+        } else {
+            // Validation guarantees a non-terminal state has a way out, so
+            // moves exist here; none of them would be allowed.
+            Status::WillEscalate
+        }
     }
 
-    /// The transitions `role` could attempt from the record's current state.
-    /// Advisory: each still goes through [`Engine::authorize`] to commit, which
-    /// is where ceilings are checked.
-    pub fn next_moves(&self, snap: &Snapshot, role: &str) -> Vec<&TransitionDef> {
+    /// Every move `role` could attempt from the record's current state, each
+    /// paired with what [`Engine::authorize`] would answer for it right now.
+    ///
+    /// The pairing is the whole point. "This transition exists" and "this
+    /// transition would fire" are different facts, and a surface built on the
+    /// first offers a person a move that quietly routes the record somewhere
+    /// else. [`Decision::Deny`] never appears here: only moves this role may
+    /// make from this state are enumerated in the first place.
+    pub fn next_moves(&self, snap: &Snapshot, role: &str) -> Vec<(&TransitionDef, Decision)> {
         self.def
             .transitions
             .iter()
             .filter(|t| t.from == snap.state && t.role == role)
+            .map(|t| (t, self.authorize(snap, role, &t.to)))
             .collect()
     }
+}
+
+/// What can happen to a record next. See [`Engine::status`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Status {
+    /// A terminal state. Nothing moves it, ever.
+    Ended,
+    /// No automated role can make progress, but a person can — either because
+    /// the record is paused, or because every ceiling automation would spend
+    /// is gone while a human's route out is not.
+    NeedsPerson,
+    /// Moves remain and every one of them would spend a spent ceiling, so the
+    /// next actor to try will route the record away instead of doing what it
+    /// asked. Nothing about the record's *state* says this, which is why the
+    /// condition has a name: it reads as healthy right up until someone acts.
+    WillEscalate,
+    /// At least one automated role can still make progress.
+    Live,
 }
 
 #[cfg(test)]
@@ -717,8 +772,10 @@ mod tests {
     fn next_moves_lists_role_options() {
         let engine = Engine::new(review_loop()).unwrap();
         let moves = engine.next_moves(&snap("awaiting_review", 1), "reviewer");
-        let targets: Vec<&str> = moves.iter().map(|t| t.to.as_str()).collect();
+        let targets: Vec<&str> = moves.iter().map(|(t, _)| t.to.as_str()).collect();
         assert_eq!(targets, ["awaiting_worker", "approved", "escalated"]);
+        // None of these spends anything, so all three would fire as offered.
+        assert!(moves.iter().all(|(_, d)| matches!(d, Decision::Allow { .. })));
     }
 
     #[test]
@@ -739,26 +796,60 @@ mod tests {
             // the decision surface cannot be built on top of them.
             if def.terminal.contains(state) {
                 assert!(movers.is_empty(), "ending '{state}' offered {movers:?}");
-                assert!(!engine.awaits_human(&s));
+                assert_eq!(engine.status(&s), Status::Ended);
             } else if def.halted.contains(state) {
                 assert!(!movers.is_empty(), "pause '{state}' offered nobody a way back");
                 assert!(
                     movers.iter().all(|m| human.contains(m)),
                     "pause '{state}' offered {movers:?}, not all of them people"
                 );
-                assert!(engine.awaits_human(&s));
+                assert_eq!(engine.status(&s), Status::NeedsPerson);
             } else {
                 assert!(!movers.is_empty(), "live '{state}' offered nobody");
-                assert!(!engine.awaits_human(&s));
+                assert_eq!(engine.status(&s), Status::Live);
             }
         }
+    }
+
+    #[test]
+    fn a_record_whose_only_moves_would_exhaust_says_so() {
+        // Measured in the hand-driven loop this engine succeeds: a cycle
+        // ceiling was spent while every per-item counter still had headroom,
+        // so the work read as healthy and the surface offered moves that
+        // could not fire. The state alone cannot tell you this.
+        let engine = Engine::new(review_loop()).unwrap();
+        let spent = snap("awaiting_worker", 3);
+
+        let moves = engine.next_moves(&spent, "worker");
+        assert!(!moves.is_empty(), "the transition still exists");
+        assert!(
+            moves.iter().all(|(_, d)| matches!(d, Decision::Exhausted { .. })),
+            "every move offered would route away instead of firing"
+        );
+        assert_eq!(engine.status(&spent), Status::WillEscalate);
+
+        // Same state, same role, budget intact: indistinguishable by state,
+        // opposite by disposition. That difference is the whole feature.
+        let fresh = snap("awaiting_worker", 0);
+        assert_eq!(
+            engine.next_moves(&fresh, "worker").len(),
+            moves.len(),
+            "the move list is identical; only what it would do differs"
+        );
+        assert_eq!(engine.status(&fresh), Status::Live);
+    }
+
+    #[test]
+    fn a_record_outside_the_workflow_needs_a_person() {
+        let engine = Engine::new(review_loop()).unwrap();
+        assert_eq!(engine.status(&snap("limbo", 0)), Status::NeedsPerson);
     }
 
     #[test]
     fn releasing_a_halt_moves_the_state_and_clears_the_counter_together() {
         let engine = Engine::new(review_loop()).unwrap();
         let spent = snap("escalated", 3);
-        assert!(engine.awaits_human(&spent));
+        assert_eq!(engine.status(&spent), Status::NeedsPerson);
 
         // The trap this replaces: zeroing the counter alone changed nothing,
         // because no transition was ever found to go and consult it.

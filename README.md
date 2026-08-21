@@ -47,6 +47,12 @@ The core encodes lessons from running real agent loops in production:
   at — and a ceiling cannot strand work somewhere nobody can reach.
 - **Role-gated transitions.** "The worker never closes an issue; the reviewer
   resolves what it verifies" is expressible — and checked — per transition.
+- **A move that exists and a move that would fire are different facts.** Asking
+  what a role may do next returns each option with what it would actually do
+  right now, so a surface can never offer a person a button that quietly routes
+  the record elsewhere. It also names the condition no state can show you: every
+  remaining move spent, nothing stopping automation from *trying*, and the work
+  reading as healthy until someone does.
 - **Counters belong to the operator.** The engine spends them and never
   corrects them; it clears one only where a transition's `resets` says to,
   which is the operator's own instruction and comes back in the same decision
