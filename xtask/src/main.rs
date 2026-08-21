@@ -149,6 +149,51 @@ mod tests {
         assert_eq!(shell_quote("O'Malley"), r"'O'\''Malley'");
     }
 
+    /// The emitted text is `eval`ed by the caller's shell, so config becomes
+    /// executable text and quoting is the only thing between the two. Asserting
+    /// the quoted *form* only tests what we believe a shell does with it; this
+    /// hands it to a real one and reads the value back.
+    #[test]
+    fn a_value_reaches_the_shell_as_itself_whatever_is_in_it() {
+        for hostile in [
+            "O'Malley",
+            "; rm -rf /",
+            "$(id)",
+            "`id`",
+            "a\nb",
+            "$HOME",
+            r#"double " and single ' together"#,
+            "",
+        ] {
+            let script = format!("V={}; printf %s \"$V\"", shell_quote(hostile));
+            let out = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(&script)
+                .output()
+                .expect("sh is available");
+            assert!(out.status.success(), "sh refused: {script}");
+            assert_eq!(
+                String::from_utf8_lossy(&out.stdout),
+                hostile,
+                "value did not survive: {script}"
+            );
+        }
+    }
+
+    /// Key injection is unreachable rather than filtered: the emitter writes
+    /// four literal names and never derives one from the file, so a config
+    /// cannot introduce an identifier into the caller's shell.
+    #[test]
+    fn the_emitted_keys_are_fixed_not_derived() {
+        let src = include_str!("main.rs");
+        let emitted = src.matches("println!(\"AGENT_").count();
+        assert_eq!(emitted, 4, "a fifth emitted key needs a fixed name too");
+        assert!(
+            !src.contains("println!(\"{}=") && !src.contains("println!(\"{key}"),
+            "an emitted key must never be interpolated from config"
+        );
+    }
+
     /// Every tracked top-level path must be mentioned in the deployment map,
     /// so adding a directory forces classifying it (Ships or Never ships).
     /// This is a MENTION check, not a truth check: green means "nothing is
