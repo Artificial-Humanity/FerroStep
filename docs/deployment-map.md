@@ -21,6 +21,7 @@ exists to build or govern the product — the repo is public, so everything is
 | artifact | ships as | channel | status (2026-08-20) |
 |---|---|---|---|
 | `ferrostep-core/` | Rust crate `ferrostep-core` | crates.io | not yet published |
+| `ferrostep-ledger/` | Rust crate `ferrostep-ledger` — the interface an adapter implements | crates.io | interface only; nothing implements it yet |
 | `ferrostep-py/` | Python package `ferrostep` | PyPI | not yet published |
 | `ferrostep-github/` | Rust crate/binary `ferrostep-github`, and a registered GitHub App instance per org | crates.io; the App via GitHub registration | scaffold; no App registered yet |
 | `skills/` | actor skills (`SKILL.md` format) | with the product; channel decided with the first skill | empty by design |

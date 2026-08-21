@@ -25,6 +25,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferrostep-ledger"
+version = "0.1.0"
+dependencies = [
+ "ferrostep-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "ferrostep-py"
 version = "0.1.0"
 dependencies = [
