@@ -36,3 +36,19 @@ push to the default branch deploys anything.
 Phased in [`docs/github-agents-roadmap.md`](../docs/github-agents-roadmap.md)
 — token minting and push-as-App, attribution hardening, and eventually
 GitHub-side agents. Deliberately absent until their phase arrives.
+
+## Language and tooling
+
+This sub-project is Rust, and the phases above stay Rust. **Prefer Rust over
+Python unless a specific choice clearly favors Python.** Worth saying here
+rather than leaving to the repo-wide default, because GitHub-App territory
+pulls harder toward Python and JavaScript than anywhere else in this
+codebase — Probot, Octokit and PyGithub are the well-worn paths, and a
+well-worn path is not by itself a reason.
+
+Where a choice *does* clearly favor Python, it runs under
+[uv](https://docs.astral.sh/uv/) — `uv venv`, `uv pip install` — never bare
+pip, venv or poetry.
+
+[`AGENTS.md`](../AGENTS.md) holds both as repo-wide conventions. This section
+says how they land on this sub-project; it does not override them.
