@@ -77,14 +77,21 @@ emits a notification when something needs a person; it never polls, never
 schedules, and never decides when work runs — which is what keeps this on the
 right side of the non-goals below.
 
-The first two adapters name no vendor, which is the point. An outbound
-**webhook** is already what ntfy, Slack, Teams and Discord each are, so one
-implementation reaches all of them; and a local **command** is how a
-workstation with no service running gets told anything at all. Named targets
-are then documentation rather than integrations — ntfy (Apache-2.0,
-self-hostable, no account needed) is the one we run, and it needs no code of
-its own. The interface is defined so a richer adapter later is a new
-implementation and not a rewrite.
+**The message is defined here; delivering it is somebody else's problem.** A
+message says which record needs a person, why, how urgently, and how to get
+back to it. That much is ours and does not vary. Everything past it is an
+adapter.
+
+⚠ **This milestone is not a list of services to support, and must not become
+one.** Delivery mechanisms are genuinely unalike — one is a URL you post to,
+the next wants service credentials and a payload envelope, the next a device
+token and a key-signed request, the next is a program run on the local machine.
+An interface shaped around whichever gets written first quietly excludes the
+rest. So the target to design against is the one nobody has thought of yet, and
+any service named anywhere in this repo is an illustration rather than a
+commitment.
+*In use here:* ntfy — Apache-2.0, self-hostable, needs no account. Being the
+one we run buys it no standing in the interface.
 *Done when:* an escalation reaches a human who was not watching, through an
 adapter the engine knows nothing about.
 

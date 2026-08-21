@@ -97,6 +97,14 @@ loops. `README.md` is the product description; `docs/north-star.md` is the *why*
   never something the core knows about. This is what keeps the north star's
   organizing principle affordable — the engine stays a pure function because
   every side effect it implies lives on the far side of an adapter boundary.
+  ⚠ **Shape each interface around what the thing IS, not around how one target
+  happens to deliver it** (owner, 2026-08-21). Message transports are not
+  alike: one takes a URL, the next needs service credentials and a payload
+  envelope, the next a device token and a signed key, the next is a local
+  program. An interface modelled on any single one of them cannot reach the
+  others, and the corner is only visible once you are in it. The standing test
+  for any external surface is whether somebody could write a simple adapter for
+  a target nobody here has thought of.
 - **Decision JSON is a public contract.** `kind: allow | exhausted | deny` and
   their fields are what every binding and app layer switches on; changing the
   shape is a breaking change and needs a version bump and a changelog entry.
