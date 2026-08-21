@@ -15,15 +15,17 @@ once, validated, and enforced consistently, while keeping prompts, network
 calls, and agent runtimes in their own language and stack.
 
 Instead of hiding orchestration state inside an in-memory graph, FerroStep
-treats an external database (PocketBase, SQLite, Postgres, …) as the single
-source of truth. Every record carries a `state` string and counters; the engine
-is a pure function that answers one question:
+treats a store you already run as the single source of truth — relational,
+document or embedded key-value; a record is an object, and how it is stored is
+the adapter's business. Every record carries a `state` and its counters; the
+engine is a pure function that answers one question:
 
 > *May this role move this record to that state — and what does that cost?*
 
 Your application reads a record, asks the engine, and persists what the
 decision instructs. The runtime stays stateless, crash-recovery is "read the
-ledger", and the whole system is inspectable with a database browser.
+ledger", and the state stays in something you can open — a database browser
+where your store has one, and never a framework's private checkpoint format.
 
 ## What the engine guarantees
 
@@ -59,9 +61,9 @@ The core encodes lessons from running real agent loops in production:
 
 It is honest about its position in your stack: the engine is *consulted*, not
 in the write path. A buggy caller could skip it and write state directly —
-hard enforcement belongs in your database's own access rules (row-level
-security, PocketBase API rules), which express the same constraints. Defining
-both from one `WorkflowDef` is on the roadmap. FerroStep gives you a single,
+hard enforcement belongs in whatever your store can enforce for itself —
+row-level security, API rules, a hook, a constraint — where it can enforce
+anything at all. Emitting that from the same `WorkflowDef` is on the roadmap. FerroStep gives you a single,
 tested, shared implementation of the loop logic across every language in your
 stack; your database gives you the lock.
 

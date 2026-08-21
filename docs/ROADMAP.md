@@ -37,6 +37,18 @@ papered over. Both ship as maintained defaults, and doubling as the worked
 example for a third is part of the job — an adapter nobody could imitate has
 only half solved the problem.
 
+⚠ **The interface is defined over records as objects, never rows** (owner,
+2026-08-21). A snapshot is a state and a set of counters; an event is a value.
+Serialization, and whatever shape the store wants it in, belongs to the
+adapter, and nothing above the adapter may assume tables, columns, a query
+language or a schema at all. Relational, document and embedded key-value stores
+are all in range — an interface that quietly assumes the first cannot reach the
+third, and the two written first are both relational, which is exactly the way
+to acquire that assumption without noticing. The operation this bites hardest
+is enumeration: a store with no query language can only answer "which records
+await someone" from an index the adapter maintains itself, and that cost is the
+adapter's to carry rather than the caller's to know about.
+
 SQLite is also the **zero-install path**, which is a first-class concern and not
 a courtesy: a first loop on one developer's machine needs no server, no account
 and no configuration, because every actor is a separate process on the same host
@@ -52,7 +64,7 @@ An event carries the actor, the move, the counter changes, and an opaque note
 (owner, 2026-08-21). The note matters because a record can be released from a
 pause more than once, and a human's reasoning for each release has to survive
 the next one — a single field on the record is overwritten by the second
-decision. It belongs in the event log rather than in a decisions table beside
+decision. It belongs in the event log rather than in a decisions store beside
 it, which would be a second chronology of the same record, free to disagree
 with the first. A *comment* is discussion that moves nothing and stays its own
 thing; a *decision* is a move with a reason attached, and the log is where
@@ -120,11 +132,14 @@ ceiling spent and an escalation exercised for real, not in a fixture.
 
 **B6 — Defense in depth: compile the rules into the database.**
 The engine is consulted, not in the write path — by design. This milestone
-emits database-side enforcement (API rules, constraints) from the same
-`WorkflowDef` the engine validates, so definition and enforcement cannot
-drift apart.
-*Done when:* an illegal transition is blocked by the database itself with the
-engine bypassed entirely.
+emits store-side enforcement from the same `WorkflowDef` the engine validates,
+so definition and enforcement cannot drift apart. What that enforcement *is*
+varies by store and is not always its access rules — a hook, a constraint, a
+trigger, a rule expression. ⚠ Some stores can enforce nothing at all, and for
+those the engine is the only gate; that is a fact to state plainly in the
+adapter rather than a milestone to fake.
+*Done when:* an illegal transition is blocked by the store itself with the
+engine bypassed entirely, on a store capable of it.
 
 **B7 — First shipped skill.**
 The first entry in `skills/` lands with its first real consumer — the actor
