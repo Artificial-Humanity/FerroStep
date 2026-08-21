@@ -56,8 +56,9 @@ loops. `README.md` is the product description; `north-star.md` is the *why*
   `.cargo/config.toml`): the config reader today. Not a product crate, never
   published; its test guards `config.yaml` (parses, default agent complete,
   persona file exists).
-- `assets/` — project identity. `icon.png` (1024px, alpha) is the icon, used
-  as the GitHub App avatar at registration; `icon.svg` holds the canonical
+- `assets/` — project identity. `icon.png` (1024px, alpha) is the icon, and
+  the GitHub App avatar (a manual upload — `ferrostep-github/README.md` says
+  why registration cannot do it); `icon.svg` holds the canonical
   geometry (a state path climbing steps: hollow initial state, ferrous
   treads, filled terminal state) and was the generation reference. The PNG
   is a Lucida (google-lane) refinement composited onto clean geometry, and

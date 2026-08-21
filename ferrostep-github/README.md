@@ -22,6 +22,12 @@ Emits the App manifest (narrow by design: `contents: write`,
 to GitHub's registration endpoint. The App's name is the owner's choice at
 registration — deployment configuration, never code.
 
+⚠ Registration does not set the App's avatar. GitHub's manifest carries no
+logo field, so the badge stays the generated default until someone uploads
+one by hand under the App's Settings → Display information. Use
+[`assets/icon.png`](../assets/icon.png): GitHub accepts PNG, JPG or GIF
+under 1 MB, so `icon.svg` cannot serve here however much it would like to.
+
 ⚠ Install the App per-repo and deliberately: never on a repository where a
 push to the default branch deploys anything.
 
