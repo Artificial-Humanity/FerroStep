@@ -89,6 +89,14 @@ loops. `README.md` is the product description; `north-star.md` is the *why*
   and never make the engine aware of any specific workflow. The `purpose`
   field is engine-opaque and must stay so — the engine has no concept of what
   a review, an alignment check, or any other workflow *means*.
+- **Everything outside the engine is an adapter** (owner, 2026-08-21). Define
+  the thing internally first — the ledger record, the issue log, the
+  notification, the agent interface — then reach the world through an adapter
+  for it. No vendor, product or service name belongs at framework level: a
+  store, a notifier or a coding agent is something an adapter speaks to,
+  never something the core knows about. This is what keeps the north star's
+  organizing principle affordable — the engine stays a pure function because
+  every side effect it implies lives on the far side of an adapter boundary.
 - **Decision JSON is a public contract.** `kind: allow | exhausted | deny` and
   their fields are what every binding and app layer switches on; changing the
   shape is a breaking change and needs a version bump and a changelog entry.
@@ -100,7 +108,10 @@ loops. `README.md` is the product description; `north-star.md` is the *why*
 - License is Apache-2.0; new files need no per-file headers. **Every
   dependency and vendored tool must be license-compatible with Apache-2.0**
   (owner, 2026-08-20) — check the license before adding it, and record the
-  check in the commit message that introduces it.
+  check in the commit message that introduces it. ⚠ **That strictness is
+  about what we BUNDLE** (owner, 2026-08-21). What an adapter merely talks to
+  — a service reached over HTTP, a binary it shells out to — is not vendored
+  and is not held to that bar, unless the licence is unusually onerous.
 
 ## Build & test
 

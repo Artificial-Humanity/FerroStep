@@ -23,17 +23,43 @@ on the engine daily**, and **a stranger can read this repo and run their own
 loop on their own database by imitation**. Everything in this tier serves one
 of those two sentences.
 
-**B1 — First ledger adapter (PocketBase).**
+**B1 — Baseline ledger adapters (PocketBase and SQLite).**
 Derive the minimal ledger interface from what the engine actually needs —
 load a snapshot, apply a decision atomically (state flip + counter spends in
-one guarded write), append an event — and implement it once, honestly, for
-the backend the first production loop lives on. The adapter is where each
-backend's real atomicity story is made explicit, never papered over.
-*Done when:* the reference review loop runs end-to-end against a live
-instance, with a version-guarded write proving the crash-accounting promise
-survives contact with a real database.
+one guarded write), append an event, and enumerate the records awaiting
+someone — then implement it twice, honestly. Two from the start rather than
+one, because a second implementation is the only proof the interface is
+generic, and because it exposes what the first one hides: a backend with a
+console of its own answers "what needs me?" without the interface ever being
+asked, and SQLite has no console to hide behind (owner, 2026-08-21). The
+adapter is where each backend's real atomicity story is made explicit, never
+papered over.
+*Done when:* the reference review loop runs end-to-end on both, with a
+version-guarded write proving the crash-accounting promise survives contact
+with a real database.
 
-**B2 — First production loop.**
+**B2 — The decision surface.**
+Escalation routes a record to a human, and nothing today lets that human find
+it or see what they may do about it. This milestone answers one question —
+which records await someone, and which moves does their role have — and
+renders it for a person. A ledger browser shows a row; this shows a decision.
+Both the rendered view and any agent that narrates an escalation are
+consumers of that one query rather than independent readers of state, so the
+presentation cannot drift from the ledger.
+*Done when:* a human resolves a real escalation from the rendered view
+without opening a database console.
+
+**B3 — Notifications, as an adapter.**
+A decision surface nobody looks at is a record that waits forever. FerroStep
+emits a notification when something needs a person; it never polls, never
+schedules, and never decides when work runs — which is what keeps this on the
+right side of the non-goals below. First adapter is ntfy (owner, 2026-08-21):
+HTTP, self-hostable, no account required. The interface is defined so that a
+second adapter is a new implementation and not a rewrite.
+*Done when:* an escalation reaches a human who was not watching, through an
+adapter the engine knows nothing about.
+
+**B4 — First production loop.**
 The author's existing hand-driven worker/reviewer lane moves onto the engine:
 the same actors (agent sessions and a human at the console), the same
 ceilings, the same escalation — refereed instead of remembered. Timing is the
@@ -41,7 +67,7 @@ owner's call; the engine earns the migration rather than demanding it.
 *Done when:* a real change ships through a FerroStep-refereed loop with a
 ceiling spent and an escalation exercised for real, not in a fixture.
 
-**B3 — Defense in depth: compile the rules into the database.**
+**B5 — Defense in depth: compile the rules into the database.**
 The engine is consulted, not in the write path — by design. This milestone
 emits database-side enforcement (API rules, constraints) from the same
 `WorkflowDef` the engine validates, so definition and enforcement cannot
@@ -49,10 +75,11 @@ drift apart.
 *Done when:* an illegal transition is blocked by the database itself with the
 engine bypassed entirely.
 
-**B4 — First shipped skill.**
-The actor skill that B2's worker actually loads becomes the first entry in
-`skills/`, and the skills distribution channel is decided then — with a real
-consumer, not before.
+**B6 — First shipped skill.**
+The first entry in `skills/` lands with its first real consumer — the actor
+skill B4's worker loads, or the one that narrates B2's decision surface to a
+human, whichever arrives first. The skills distribution channel is decided
+then, with that consumer in hand and not before.
 
 ---
 
@@ -63,10 +90,9 @@ plan ([`github-agents-roadmap.md`](github-agents-roadmap.md)): push-as-App,
 verified attribution, then GitHub-side agents — expected first case, a
 reviewing persona in the PR process.
 
-**E2 — Second ledger backend** (SQLite or Postgres) when a real loop needs
-one. The adapter interface is only proven generic by its second
-implementation; writing it against one backend and calling it general would
-be a claim without a test.
+**E2 — Further ledger backends** (Postgres first) when a real loop needs one.
+The baseline pair already proves the interface is not shaped around a single
+store, so a third is demand-gated like everything else in this tier.
 
 **E3 — TypeScript bindings** when a TypeScript consumer exists to drive the
 API. The workspace has left room since day one.
@@ -93,4 +119,6 @@ product becoming able to end it, not by process arriving early.
 
 No runtime, scheduler, queue, or hosted anything. No blessed workflows. No
 feature without a consuming loop. No competing with actor-layer frameworks —
-agents built on them are actors *in* FerroStep loops, not rivals to it.
+agents built on them are actors *in* FerroStep loops, not rivals to it. And
+no vendor's agent tooling gets framework-level support (owner, 2026-08-21):
+it is reached through an agent adapter or it is not reached at all.

@@ -146,8 +146,9 @@ uv venv && uv pip install ./ferrostep-py pytest
 ## Roadmap
 
 [`docs/ROADMAP.md`](docs/ROADMAP.md) is the roadmap of record. In one breath:
-prove the referee on one real loop (a PocketBase ledger adapter first), then
-compile enforcement into the database itself, then expand by demand — the
+prove the referee on one real loop (two baseline ledger adapters, a surface a
+human can decide from, and notifications that reach them), then compile
+enforcement into the database itself, then expand by demand — the
 GitHub surface ([`docs/github-agents-roadmap.md`](docs/github-agents-roadmap.md)),
 more backends, more languages — until the engine referees its own
 development.
