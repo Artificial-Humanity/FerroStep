@@ -48,6 +48,14 @@ If it reads the owner's name, fix it immediately with
 * **You are the author, not a co-author.** Assistant-harness trailers that carry
   traceability (a session link, for instance) may follow the message; a co-author trailer
   naming a different agent must not — it misattributes work that is yours.
+* ⚠ **Write the commit message to a file and pass `-F`. Never inline it in a double-quoted
+  `-m`.** Backticks inside a double-quoted shell string run as command substitution, so a
+  word in backticks is executed and its output — usually nothing — replaces it. The message
+  commits with a hole in it and **nothing fails**: the only symptom is a stray
+  "command not found" in output you have already stopped reading. Measured here on
+  2026-08-21, on a commit that had to be amended, and independently in the sibling loop this
+  project replaces. `-F` also removes the whole class — no interpolation, no `$`, no
+  heredoc-delimiter quoting to get wrong.
 
 ---
 
