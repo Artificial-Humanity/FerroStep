@@ -34,6 +34,16 @@ console of its own answers "what needs me?" without the interface ever being
 asked, and SQLite has no console to hide behind (owner, 2026-08-21). The
 adapter is where each backend's real atomicity story is made explicit, never
 papered over.
+
+An event carries the actor, the move, the counter changes, and an opaque note
+(owner, 2026-08-21). The note matters because a record can be released from a
+pause more than once, and a human's reasoning for each release has to survive
+the next one — a single field on the record is overwritten by the second
+decision. It belongs in the event log rather than in a decisions table beside
+it, which would be a second chronology of the same record, free to disagree
+with the first. A *comment* is discussion that moves nothing and stays its own
+thing; a *decision* is a move with a reason attached, and the log is where
+moves already live.
 *Done when:* the reference review loop runs end-to-end on both, with a
 version-guarded write proving the crash-accounting promise survives contact
 with a real database.
