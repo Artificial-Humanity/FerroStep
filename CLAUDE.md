@@ -16,7 +16,7 @@ sentence — no flag, no pre-prompt, and no decision on your part.
 ⚠ The `@import` above is a literal path — imports cannot read `config.yaml` — so it is the
 one deliberate second copy of the default agent's `persona` value. Change the two together.
 
-**`config.yaml` lists every agent that works this repo, and today it lists one.** Sonora's
+**`config.yaml` lists every agent that works this repo.** Sonora's
 full review cycle is deliberately not adopted here (owner, 2026-08-20) — no second persona
 reviews the first, and no lane automates it. This project is generalizing the engine such
 loops run on, and will dog-food its own once it can; until then, work is owner-directed.

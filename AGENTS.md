@@ -119,6 +119,17 @@ loops. `README.md` is the product description; `docs/north-star.md` is the *why*
 - **Favor Rust when the choice of tool is ambiguous; otherwise pick the best
   tool for the job** (owner, 2026-08-20). This is not a purity rule — the
   Python bindings are a first-class citizen — it is a tiebreaker.
+- ⚠ **Derive counts; never state them in prose** (2026-08-21). "Every call site
+  of X" ages well. "Five places" is stale the moment someone adds a sixth, and
+  unlike a wrong number in code, **nothing will ever go red**. The distinction
+  that makes this usable rather than pious: a count in a *test* is fine,
+  because it fails when reality moves — `the_emitted_keys_are_fixed_not_derived`
+  asserts a number precisely so a fifth key cannot appear quietly. Prose has no
+  such property, so prose does not get to hold one. ⚠ This applies to issue and
+  finding text as much as to documents, and more urgently: tracker text is
+  frozen at filing while the tree keeps moving underneath it, which makes it the
+  worst possible home for a hardcoded count and the last place anyone thinks to
+  look.
 - ⚠ **A concurrency or timing property needs repeated rounds and a failure
   count. One green run is not evidence, it is a coin landing your way.** A
   measurement of this shape was taken against a candidate backend and its first
