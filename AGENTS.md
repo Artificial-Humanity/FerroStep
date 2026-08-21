@@ -56,6 +56,12 @@ loops. `README.md` is the product description; `north-star.md` is the *why*
   `.cargo/config.toml`): the config reader today. Not a product crate, never
   published; its test guards `config.yaml` (parses, default agent complete,
   persona file exists).
+- `assets/` — project identity. `icon.png` (1024px, alpha) is the icon, for
+  the repo and as the GitHub App avatar at registration; `icon.svg` holds the
+  canonical geometry (a state path climbing steps: hollow initial state,
+  ferrous treads, filled terminal state) and was the generation reference.
+  The PNG is a Lucida (google-lane) refinement composited onto clean
+  geometry, and carries an invisible SynthID watermark.
 - `docs/` — true and proper documentation. **Write a document here when it is
   a deliverable**: finished, public-facing, something an outside reader is
   meant to find and the README can link into (prior-art lives here). The

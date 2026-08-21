@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- FerroStep: a state path climbing a staircase — hollow initial state,
+       ferrous (rust-orange) iron-beam treads, filled terminal state. -->
+  <defs>
+    <linearGradient id="fe" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F26B21"/>
+      <stop offset="1" stop-color="#B23A0E"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="58" fill="#14181F"/>
+  <path d="M52 188 H112 V130 H172 V72 H204" fill="none" stroke="url(#fe)"
+        stroke-width="26" stroke-linejoin="miter" stroke-linecap="butt"/>
+  <circle cx="52" cy="188" r="15" fill="#14181F" stroke="#B23A0E" stroke-width="10"/>
+  <circle cx="204" cy="72" r="17" fill="#F58A3C"/>
+</svg>
