@@ -52,6 +52,15 @@ role, the rules apply, history is append-only without special machinery, and
 the role the engine gates on is the role the store authenticates. That last
 equivalence is what makes B6 possible at all.
 
+⚠ **Measured since (2026-08-21): a store's rule layer and its extension layer
+answer this differently, and the ruling above is now depth rather than the only
+defence.** On the first backend, an administrator bypasses access rules and does
+*not* bypass server-side extension code — the same wrongful claim was refused
+from both an ordinary and an administrator credential. So enforcement that
+survives an administrator is reachable before the identity model changes. This
+moves *when* the identity work is needed, never *whether*: an adapter that
+depends on one layer alone should say which, and B6 is where the second lands.
+
 ⚠ **The interface is defined over records as objects, never rows** (owner,
 2026-08-21). A snapshot is a state and a set of counters; an event is a value.
 Serialization, and whatever shape the store wants it in, belongs to the
@@ -86,7 +95,12 @@ thing; a *decision* is a move with a reason attached, and the log is where
 moves already live.
 *Done when:* the reference review loop runs end-to-end on both, with a
 version-guarded write proving the crash-accounting promise survives contact
-with a real database.
+with a real database. ✅ **The guarantee that done-when depends on is measured
+and present on the first backend** (2026-08-21) — a compare performed inside
+the store's own transaction held over 43 rounds at up to sixteen concurrent
+writers, including for administrator credentials. The milestone is now an
+implementation rather than an open question, and the adapter's write path is a
+generated server-side handler rather than a sequence of REST calls.
 
 **B2 — The decision surface.**
 Escalation routes a record to a human, and nothing today lets that human find

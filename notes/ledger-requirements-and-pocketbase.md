@@ -82,9 +82,10 @@ this list; so is a ledger built on purpose.
   is reachable **without any settings change**. The mistake mattered: an
   adapter following the original note would have reported itself non-atomic,
   and that field is exactly what a caller is meant to trust.
-- **Requirement 2, at all.** The REST API has no conditional update — no
-  `If-Match`, no `WHERE version = n`. This is the sharpest gap, because a
-  version-guarded write is a stated done-when for the first adapter milestone.
+- **Requirement 2, through the REST API.** There is no conditional update — no
+  `If-Match`, no `WHERE version = n`. ⚠ **This was the sharpest gap and it is
+  now closed, but only on one specific write path** (measured 2026-08-21; see
+  the resolution at the end of this bullet).
 
   ⚠ **The obvious workaround was measured and it does not work.** An access
   rule can compare a submitted value against the stored record, which looks
@@ -106,17 +107,44 @@ this list; so is a ledger built on purpose.
   administrators, a rule-level ceiling is not weak here, it is *absent*, and
   requirements 2 and 6 are one finding rather than two.
 
-  **Untested and worth testing:** a hook-level compare, which runs inside the
-  request and can call an explicit run-in-transaction primitive — a different
-  write path from the rule filter. The storage layer underneath permits one
-  writer at a time, so the serialization exists; the only question is whether
-  the compare can be got inside it. Until that is answered, an adapter here
-  cannot honestly advertise an atomic counter spend.
+  ✅ **RESOLVED 2026-08-21: a hook-level compare inside an explicit transaction
+  IS a compare-and-swap here.** 43 rounds across four independent runs, zero
+  failures — 2, 4 and 16 concurrent writers, one winner every round, the losers
+  refused cleanly rather than erroring. It holds for **administrator
+  credentials too**, which was tested deliberately rather than assumed. So an
+  adapter on this backend *can* advertise the flag, and the write path that
+  earns it is a generated handler rather than a REST call.
+
+  ⚠ **The distinction the measurement isolates is the whole finding: the
+  compare must be inside the TRANSACTION, not merely inside the REQUEST.** The
+  same check, run in a hook that then lets the ordinary write proceed, fails —
+  and fails in the worst available way. At 16 writers it produced 1, 2, 7, 6,
+  1, 7 winners across six rounds: **two of those six rounds look perfectly
+  correct.** In every failing round the version advanced by exactly one while
+  several writers were told they had succeeded, which is a silent lost update
+  wearing a `200`. At two writers it failed every round, making it *worse* than
+  the rule-level predicate rather than an improvement on it.
+
+  That is the practical argument for [`AGENTS.md`'s repeated-rounds
+  rule](../AGENTS.md) stated as a number: a single-round test of this variant
+  had two chances in six of certifying it as working. Testing the failing
+  variant alongside the passing one is what produced that number, and it cost
+  minutes — **run the design you rejected, not just the one you hope for.**
 - **Requirement 3, through API rules.** Rules cannot make a collection
   append-only for the actors that matter, because **superusers bypass rules
   entirely** and agents typically authenticate as superusers. Rules are also
   per-operation, not per-field, so "only a human may write this column" has no
   expression either.
+
+  ⚠ **Hooks are a different layer and superusers do NOT bypass them** (measured
+  2026-08-21: an administrator's deliberately wrong claim was refused, same as
+  an ordinary account's, with the stored value unchanged after both). This is
+  the opposite of the rule layer's behaviour, and it is worth stating next to
+  it because the two are easy to reason about as one thing. So requirement 3
+  is reachable at the hook layer even before the identity model changes — which
+  **relaxes** the sequencing rather than hardening it: role-scoped accounts stop
+  being the only thing standing between an administrator and a ceiling, and
+  become defence in depth.
 - **Requirement 6.** Identity is user/superuser, not role. Roles can be carried
   in a column, but the store cannot enforce them, so role-gating stays advisory
   at the database layer.
@@ -147,6 +175,33 @@ this list; so is a ledger built on purpose.
   shared logic is what a generator naturally does. **Emit self-contained
   handlers**, and expect the deliberate duplication to look like something a
   later reader should tidy.
+- ⚠ **A refusal message is normalized before it reaches the caller.** A thrown
+  `"cas_conflict: … again"` came back as `"Cas_conflict: … again."` — first
+  letter capitalized, trailing period appended. **An adapter matching a literal
+  prefix will classify every conflict as unretryable**, silently and in the
+  direction that looks like a broken store. Match case-insensitively, and do
+  not depend on the tail of the string at all.
+- **A refusal can carry the actual stored value**, so a caller can re-read and
+  decide from the error body without a second round trip. Worth designing the
+  handler's message around deliberately, since it is free at the point the
+  handler already knows both numbers.
+- **A server-computed field a hook owns cannot be set by the caller, only
+  advanced by it** (measured: a caller submitting an absurd version alongside a
+  correct expected-version still advanced the record by exactly one — the hook
+  computes the next value and discards what it was sent). ⚠ **The measurement is
+  about the version token, not about workflow counters**, and the two must not
+  be conflated in an adapter's claims. What it establishes is the *pattern*: a
+  value the store computes is enforced where a value the client submits is only
+  trusted, and that is the shape a spend-on-entry counter wants. It also means
+  a **reset** cannot travel this path — a monotonic handler has no way to
+  express one, so re-arming a ceiling needs a distinct authorized operation
+  rather than a smaller number in the same call.
+- ⚠ **Writing a hook file auto-restarts the service** (the watch flag defaults
+  on), so an install needs no explicit restart — and a health check fired
+  immediately after the write can answer *before the restart begins*, reporting
+  healthy and then dropping the next connection. **A check that runs before the
+  event it is meant to observe is not evidence**, which is the same family as
+  checking the instrument ran before believing a negative.
 - A `text` field caps at **5000 characters** by default, and `"max": 0` does
   **not** lift it — `0` means unset, so the default applies. It fails at insert
   time, not at schema time, so it surfaces as a partial migration.
@@ -178,6 +233,14 @@ not merely their history, so guarding the log against it never protected
 anything. **The append-only property is a defence against mistakes, and the
 identity model is the defence against everything else.**
 
+⚠ **Update, 2026-08-21: the ruling stands and its urgency does not.** Hooks
+turned out to constrain administrators where rules do not (§2), so the identity
+model is no longer the *only* thing between an administrator and a ceiling. It
+is now the second layer rather than the first, which changes when it has to be
+built, not whether. Keep the distinction visible: enforcement that survives an
+administrator lives at the hook layer, and everything the identity model adds
+on top of that is depth.
+
 What still needs `pb_hooks`, the embedded JavaScript runtime, is the part the
 REST API genuinely cannot express:
 
@@ -189,7 +252,16 @@ REST API genuinely cannot express:
   of REST calls — and it is where compare-and-swap lives, since the handler can
   re-read the record inside the transaction and refuse a stale snapshot. A
   custom route is invoked deliberately by the caller, so unlike a request hook
-  it raises no question about which credentials it fires for.
+  it raises no question about which credentials it fires for. ✅ **The
+  compare-inside-the-transaction half is now measured and holds** (§2); what
+  remains for the adapter is the shape of the payload, not whether the
+  guarantee exists.
+
+⚠ **One failure class is untested and must not be quietly assumed covered:**
+field-validation failure through either variant. Both compute the guarded value
+server-side and discard the caller's, which is exactly why it could not be
+provoked — so an adapter's error mapping is measured for conflicts and
+not-founds, and inferred for validation. Say so where the mapping is written.
 
 So the PocketBase story is *stock instance, plus a role-scoped account per
 agent, plus a generated route for applying decisions*. The adapter detects at

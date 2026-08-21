@@ -151,6 +151,18 @@ pub struct Capabilities {
     /// first round passed cleanly — twelve writers, exactly one winner — which
     /// was luck. A single green round of a concurrency test is not evidence;
     /// what is evidence is many rounds and a failure count.
+    ///
+    /// ⚠ **The line that decides this flag is whether the compare happens
+    /// inside the store's transaction, not inside its request.** On that same
+    /// backend both were built and measured against each other. Compare and
+    /// write within one transaction: 43 rounds, up to sixteen concurrent
+    /// writers, zero failures, and the losers refused cleanly. Compare, then
+    /// let the ordinary write proceed: at sixteen writers it returned 1, 2, 7,
+    /// 6, 1 and 7 winners over six rounds — **two of the six looked perfectly
+    /// correct**, and every failing round advanced the version once while
+    /// telling several writers they had succeeded. That is a lost update
+    /// wearing a success code, and it is the reason a passing round of the
+    /// wrong design is more dangerous than an outright failure.
     pub compare_and_swap: bool,
     /// History cannot be rewritten or deleted by the actors that write it.
     /// Note what this does *not* claim: an administrator credential that can
@@ -302,7 +314,7 @@ mod tests {
             seq: 12,
             at: "2026-08-21 14:02:11.412Z".to_string(),
             event: Event {
-                actor: "lmcfarlin".to_string(),
+                actor: "a-person".to_string(),
                 role: "operator".to_string(),
                 from_state: Some("escalated".to_string()),
                 decision: allow(),
