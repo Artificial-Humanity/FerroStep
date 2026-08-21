@@ -12,7 +12,8 @@ by their home.
 
 A Rust-core, polyglot-bindings engine that referees database-ledger multi-agent
 loops. `README.md` is the product description; `docs/north-star.md` is the *why*
-(its Vision section is an unratified draft until the owner signs it).
+(its Vision is owner-ratified; its "ours vs rented" section is a stated default
+to argue against, not a constraint — the section says so itself).
 
 ## Layout
 

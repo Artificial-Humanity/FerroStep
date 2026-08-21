@@ -2,12 +2,9 @@
 
 ## 1. Vision
 
-> ⚠ **Owner-stated, awaiting read-back** (2026-08-21). This is the owner's own
-> position, given in conversation and transcribed here — not an agent's
-> inference, which both previous drafts were and neither of which was ever
-> signed. The **tiebreaker** is the agent's phrasing of two things the owner
-> said separately, and is the part to check hardest. Remove this notice once
-> the owner has read it back.
+> **Ratified by the owner, 2026-08-21.** The owner's own position, given in
+> conversation and read back — not an agent's inference, which both previous
+> drafts were and neither of which was ever signed.
 
 **The target client is the author, who uses this product.** FerroStep exists so
 its own operator can run serious multi-agent loops — worker/reviewer cycles, QC
@@ -45,17 +42,29 @@ could reconfigure over the one that hardcodes our arrangement.
 
 ## 2. Ours vs rented
 
+> **A philosophical outset, not a rulebook** (owner, 2026-08-21). This section
+> says where effort belongs *today*, in a young product. It is a default to
+> start from and argue against, not a wall to build around — where a real need
+> says otherwise, the need decides.
+
 **Ours:** the workflow definition format, the validation and decision
 semantics, the crash-accounting model (spend-on-entry), the bindings.
 **Rented:** the database, the agent runtimes, the LLM providers, the transport
-— reached through adapters, never named at framework level.
+— reached through adapters rather than named at framework level.
 
-A ledger built by the same hands does not change that column. It would be one
-more adapter and one more choice, never the assumed deployment, and it is the
-**third**, not the first: PocketBase and SQLite come first, and PocketBase is in
-live use and expected to stay that way (owner, 2026-08-21). The terms are in
-[ROADMAP.md](ROADMAP.md) §E2; the permanent non-goals live there too and are
-deliberately not restated here.
+That preference is practical rather than principled, which is what makes it
+worth stating and also what makes it movable. An interface shaped around the
+first target somebody writes tends not to reach the second, and the corner is
+usually invisible until you are standing in it; adapters are how a small
+project stays cheap to point somewhere new. When that stops being the cheaper
+answer for something, it stops being the answer.
+
+A ledger built by the same hands sits on the rented side for the same reason:
+it would be one more adapter and one more choice. The sequencing is PocketBase
+and SQLite first — PocketBase is in live use and expected to stay that way
+(owner, 2026-08-21) — because a store nobody here controls is what keeps the
+interface honest. The terms are in [ROADMAP.md](ROADMAP.md) §E2, along with the
+non-goals, and are deliberately not restated here.
 
 ## 3. The one organizing principle
 
