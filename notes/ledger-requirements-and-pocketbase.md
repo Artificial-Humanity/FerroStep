@@ -112,34 +112,42 @@ this list; so is a ledger built on purpose.
 
 ## 3. What the adapter can do about it
 
-The escape hatch is **`pb_hooks`**, the embedded JavaScript runtime, not the
-REST API. It closes three of the four gaps:
+**Start by not being a superuser** (owner, 2026-08-21). Requirements 3 and 6 both
+looked unreachable while agents held administrator credentials, and both were
+unreachable for the same reason rather than two — an administrator bypasses the
+store's access rules, so no rule constrains the actor that matters. Give each
+agent an account scoped to its workflow role and the rules apply again: the
+event collection permits create and refuses update and delete, which is
+append-only with no special machinery, and the role the engine gates on becomes
+the role the store authenticates.
+
+⚠ That reframing is worth keeping even where it feels like belt-and-braces. An
+actor holding an administrator credential can rewrite the records themselves,
+not merely their history, so guarding the log against it never protected
+anything. **The append-only property is a defence against mistakes, and the
+identity model is the defence against everything else.**
+
+What still needs `pb_hooks`, the embedded JavaScript runtime, is the part the
+REST API genuinely cannot express:
 
 - `$app.runInTransaction((txApp) => { … })` gives a real transaction, so the
-  record update and the event append land together.
+  record update and the event append land together — closing the gap that
+  otherwise leaves the history able to disagree with the record.
 - `routerAdd("POST", "/api/…", handler)` gives a custom endpoint. One call
-  carrying a decision, applied transactionally server-side, is a better shape
-  than any sequence of REST calls — and it is where a compare-and-swap can
-  live, since the hook can re-read the record inside the transaction and refuse
-  if the caller's snapshot is stale.
-- `onRecordUpdateRequest` / `onRecordDeleteRequest` on the event collection can
-  refuse outright. Hooks sit on the request path rather than being access
-  rules, which is why they are expected to apply where rules do not.
+  carrying a decision, applied transactionally server-side, beats any sequence
+  of REST calls — and it is where compare-and-swap lives, since the handler can
+  re-read the record inside the transaction and refuse a stale snapshot. A
+  custom route is invoked deliberately by the caller, so unlike a request hook
+  it raises no question about which credentials it fires for.
 
-⚠ **Verify that last point before building on it.** That hooks fire for
-superuser-authenticated requests is the assumption the whole append-only story
-rests on, and it is exactly the kind of thing that is easy to believe and
-expensive to be wrong about. One throwaway hook settles it.
+So the PocketBase story is *stock instance, plus a role-scoped account per
+agent, plus a generated route for applying decisions*. The adapter detects at
+startup what it has and **says which mode it is running in** rather than
+degrading quietly.
 
-So the adapter ships hooks as part of its scaffold rather than being a pure
-client. That is consistent with generating deployment artifacts instead of
-bundling a server, and it means the PocketBase story is: *stock instance plus
-generated hooks*, with the adapter detecting at startup which capabilities are
-present and **saying which mode it is running in** rather than degrading
-quietly.
-
-Remaining, genuinely: role-as-identity. A hook can check a role column, but the
-role is still not what the caller authenticated as.
+Remaining honestly: immutable history here is enforced by rules that a store
+administrator can still step around, and the adapter should say so rather than
+let the audit report imply more than the store delivers.
 
 ---
 

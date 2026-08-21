@@ -37,6 +37,21 @@ papered over. Both ship as maintained defaults, and doubling as the worked
 example for a third is part of the job — an adapter nobody could imitate has
 only half solved the problem.
 
+**An adapter states what it cannot guarantee, not only how it achieves what it
+can** (owner, 2026-08-21). Immutable history is the case in point: it is a
+per-store property rather than an interface-wide promise, and an adapter able
+to offer it only by convention says so, rather than letting the audit report
+imply more than the store delivers.
+
+⚠ **Agents authenticate as role-scoped accounts, never as store administrators**
+(owner, 2026-08-21). An administrator credential bypasses a store's own access
+rules, which makes every enforcement story collapse into a promise: the actor
+can edit the history it just wrote, and the records besides — so guarding the
+log against it was never meaningful in the first place. With an account per
+role, the rules apply, history is append-only without special machinery, and
+the role the engine gates on is the role the store authenticates. That last
+equivalence is what makes B6 possible at all.
+
 ⚠ **The interface is defined over records as objects, never rows** (owner,
 2026-08-21). A snapshot is a state and a set of counters; an event is a value.
 Serialization, and whatever shape the store wants it in, belongs to the
