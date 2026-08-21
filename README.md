@@ -123,6 +123,7 @@ product; the configurations are yours.
 |---|---|
 | `ferrostep-core` | Pure Rust engine: definitions, validation, decisions. No IO, no async, no database. |
 | `ferrostep-py` | PyO3/maturin bindings; installs as the `ferrostep` Python package. |
+| `ferrostep-github` | Represents an agent roster to GitHub as a GitHub App; today it emits the registration manifest ([roadmap](docs/github-agents-roadmap.md)). |
 
 TypeScript bindings (NAPI-RS) are planned and the workspace leaves room for
 them; they land when there is a TypeScript consumer to drive their API.

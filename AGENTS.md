@@ -25,6 +25,11 @@ loops. `README.md` is the product description; `north-star.md` is the *why*
   the Python wrapper turns them into dicts. Keep new API in the wrapper thin.
 - `ferrostep-ts/` — does not exist yet, deliberately. It lands when a
   TypeScript consumer exists to drive its API. Don't scaffold it speculatively.
+- `ferrostep-github/` — the GitHub App sub-project: represents a repo's agent
+  roster to GitHub. v0 emits the App manifest for one-step registration and
+  nothing more; the phased plan (through GitHub-side agents, e.g. a reviewing
+  persona in the PR process) is `docs/github-agents-roadmap.md`, and later
+  phases are deliberately absent until they arrive.
 - `examples/` — illustrations of configuration, never standards (see
   conventions below); kept honest by the core's `shipped_examples_stay_valid`
   test.

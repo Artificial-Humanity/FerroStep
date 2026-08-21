@@ -22,6 +22,7 @@ exists to build or govern the product — the repo is public, so everything is
 |---|---|---|---|
 | `ferrostep-core/` | Rust crate `ferrostep-core` | crates.io | not yet published |
 | `ferrostep-py/` | Python package `ferrostep` | PyPI | not yet published |
+| `ferrostep-github/` | Rust crate/binary `ferrostep-github`, and a registered GitHub App instance per org | crates.io; the App via GitHub registration | scaffold; no App registered yet |
 | `skills/` | actor skills (`SKILL.md` format) | with the product; channel decided with the first skill | empty by design |
 | `examples/` | workflow definitions, copy-and-edit | the repo itself | live |
 | `docs/` | project documentation | the public repo | live |
