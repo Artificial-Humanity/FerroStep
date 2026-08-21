@@ -209,6 +209,13 @@ pub enum ValidationError {
     SpendsAndResets { from: String, to: String, counter: String },
     /// A non-terminal state with no way out: records entering it strand forever.
     DeadEnd(String),
+    /// A state nothing can reach. Usually the acceptance path someone forgot
+    /// to write, and it reads as a working design right up until no record
+    /// ever arrives.
+    Unreachable(String),
+    /// A ceiling no transition spends. It looks like a guard in the
+    /// definition and can never fire.
+    UnspendableCounter(String),
 }
 
 impl fmt::Display for ValidationError {
@@ -253,6 +260,12 @@ impl fmt::Display for ValidationError {
                 write!(f, "transition '{from}' -> '{to}' both spends and resets '{counter}'")
             }
             DeadEnd(s) => write!(f, "non-terminal state '{s}' has no outgoing transition"),
+            Unreachable(s) => {
+                write!(f, "state '{s}' cannot be reached from '{{initial}}' by any path")
+            }
+            UnspendableCounter(c) => {
+                write!(f, "counter '{c}' is never spent by any transition, so its ceiling cannot fire")
+            }
         }
     }
 }
@@ -382,6 +395,12 @@ impl WorkflowDef {
             }
         }
 
+        for c in &self.counters {
+            if !self.transitions.iter().any(|t| t.spends.contains(&c.name)) {
+                return Err(UnspendableCounter(c.name.clone()));
+            }
+        }
+
         for s in &self.states {
             let has_exit = self.transitions.iter().any(|t| &t.from == s);
             if halted.contains(s.as_str()) {
@@ -391,6 +410,32 @@ impl WorkflowDef {
                 }
             } else if !terminal.contains(s.as_str()) && !has_exit {
                 return Err(DeadEnd(s.clone()));
+            }
+        }
+
+        // Reachability, last: a state with no way *out* is the worse defect and
+        // is reported first, since a state with neither is both. Exhaustion
+        // counts as an edge here — a ceiling is a way into its escalation
+        // state, and is often the only way in.
+        let mut reached: BTreeSet<&str> = BTreeSet::from([self.initial.as_str()]);
+        let mut grew = true;
+        while grew {
+            grew = false;
+            for t in &self.transitions {
+                if !reached.contains(t.from.as_str()) {
+                    continue;
+                }
+                grew |= reached.insert(t.to.as_str());
+                for c in &t.spends {
+                    // The lookup is guaranteed by the spend check above.
+                    let counter = self.counters.iter().find(|d| &d.name == c).unwrap();
+                    grew |= reached.insert(counter.on_exhausted.as_str());
+                }
+            }
+        }
+        for s in &self.states {
+            if !reached.contains(s.as_str()) {
+                return Err(Unreachable(s.clone()));
             }
         }
 
@@ -752,6 +797,50 @@ mod tests {
         assert_eq!(
             def.validate().unwrap_err(),
             ValidationError::DuplicateRole("worker".to_string())
+        );
+    }
+
+    #[test]
+    fn a_state_nothing_enters_is_rejected() {
+        // The acceptance path someone forgot to write: the state has exits, so
+        // every other check passes, and no record ever arrives to use them.
+        let mut def = review_loop();
+        def.states.push("resolved".to_string());
+        def.transitions.push(TransitionDef {
+            from: "resolved".to_string(),
+            to: "approved".to_string(),
+            role: "reviewer".to_string(),
+            spends: Vec::new(),
+            resets: Vec::new(),
+        });
+        assert_eq!(
+            def.validate().unwrap_err(),
+            ValidationError::Unreachable("resolved".to_string())
+        );
+    }
+
+    #[test]
+    fn reaching_a_state_only_by_exhaustion_still_counts() {
+        // `escalated` is entered by a reviewer transition AND by the ceiling.
+        // Remove the transition and the ceiling alone must keep it reachable,
+        // or the check would reject every workflow that escalates by budget.
+        let mut def = review_loop();
+        def.transitions
+            .retain(|t| !(t.from == "awaiting_review" && t.to == "escalated"));
+        def.validate().expect("exhaustion routing is a way in");
+    }
+
+    #[test]
+    fn a_counter_nothing_spends_is_rejected() {
+        let mut def = review_loop();
+        def.counters.push(CounterDef {
+            name: "review_rounds".to_string(),
+            max: 2,
+            on_exhausted: "escalated".to_string(),
+        });
+        assert_eq!(
+            def.validate().unwrap_err(),
+            ValidationError::UnspendableCounter("review_rounds".to_string())
         );
     }
 
