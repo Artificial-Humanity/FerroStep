@@ -35,6 +35,17 @@ asked, and SQLite has no console to hide behind (owner, 2026-08-21). The
 adapter is where each backend's real atomicity story is made explicit, never
 papered over.
 
+SQLite is also the **zero-install path**, which is a first-class concern and not
+a courtesy: a first loop on one developer's machine needs no server, no account
+and no configuration, because every actor is a separate process on the same host
+and that is exactly the case SQLite's WAL mode supports — readers and writers
+concurrent, one writer at a time. ⚠ It stops there, by SQLite's own rule: WAL
+needs shared memory between processes, so **all of them must be on one host, and
+a database file on a network share is corruption waiting rather than a
+small-team deployment.** The moment actors span machines the ledger has to be
+something reachable over a network, and that is the line the other adapters
+exist on the far side of.
+
 An event carries the actor, the move, the counter changes, and an opaque note
 (owner, 2026-08-21). The note matters because a record can be released from a
 pause more than once, and a human's reasoning for each release has to survive
@@ -64,9 +75,16 @@ without opening a database console.
 A decision surface nobody looks at is a record that waits forever. FerroStep
 emits a notification when something needs a person; it never polls, never
 schedules, and never decides when work runs — which is what keeps this on the
-right side of the non-goals below. First adapter is ntfy (owner, 2026-08-21):
-HTTP, self-hostable, no account required. The interface is defined so that a
-second adapter is a new implementation and not a rewrite.
+right side of the non-goals below.
+
+The first two adapters name no vendor, which is the point. An outbound
+**webhook** is already what ntfy, Slack, Teams and Discord each are, so one
+implementation reaches all of them; and a local **command** is how a
+workstation with no service running gets told anything at all. Named targets
+are then documentation rather than integrations — ntfy (Apache-2.0,
+self-hostable, no account needed) is the one we run, and it needs no code of
+its own. The interface is defined so a richer adapter later is a new
+implementation and not a rewrite.
 *Done when:* an escalation reaches a human who was not watching, through an
 adapter the engine knows nothing about.
 

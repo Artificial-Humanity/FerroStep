@@ -26,6 +26,15 @@ people, what a loop costs, which store holds the truth. Where the engine has
 already decided something on a user's behalf, that is an assumption to remove
 rather than a feature to defend.
 
+**There are two deployment contexts, and they pull opposite ways** (owner,
+2026-08-21). One is a loop already running against a store that is installed and
+staying, which wants an adapter for what is already there. The other is a team
+that will not point an agent harness at their existing data systems at all, and
+that evaluates at the scale of a single developer's workstation before anything
+else — which wants nothing to install. Serving both is another reason the ledger
+sits behind an adapter instead of being assumed, and it is why the zero-install
+path is a first-class concern rather than a courtesy to newcomers.
+
 What does not change: the ledger is the memory, the engine is a referee rather
 than a runtime, and the human stays the authority the loop escalates to.
 
