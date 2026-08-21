@@ -1,6 +1,6 @@
 <p align="center">
-  <img src="assets/icon.png" width="160"
-       alt="FerroStep: a stepped path from a hollow initial-state node to a glowing terminal-state node">
+  <img src="assets/social-preview.png" width="720"
+       alt="FerroStep — the referee for multi-agent loops: a stepped path climbing from a hollow initial-state node to a glowing terminal-state node, beside the project wordmark">
 </p>
 
 # FerroStep
