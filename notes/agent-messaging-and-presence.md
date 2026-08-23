@@ -129,11 +129,13 @@ another record kind, so this work sits behind B1 wherever it is placed.
 ## 7. Open for the owner
 
 1. Roadmap placement — **answered** (owner, 2026-08-23): inter-agent
-   messaging is a **public-release item**, not necessary for in-house
-   dogfooding. It never gates the baseline; it lives in the expansion tier
-   as ROADMAP E5. §1's argument from the live gap was made and did not
-   carry the whole item: the gap is real, but what the in-house loop needs
-   from this note is *presence*, not messaging.
+   messaging is a **public-release item**, refined the same day to mean a
+   *polish level*, never a venue — agent-to-agent is tested in-house like
+   everything else, but its finish belongs to the 1.0.0 line and it does
+   not gate the internal MVP (0.1.0). It lives in the expansion tier as
+   ROADMAP E5. §1's argument from the live gap was made and did not carry
+   the whole item: the gap is real, but what the in-house loop needs
+   *first* from this note is presence, not messaging.
 2. Presence placement — the sharper half the ruling split off: presence
    fixes the in-house gap (§1), is a deployment aspect (§6), and has an
    in-house consumer today. Does it proceed as its own small piece ahead

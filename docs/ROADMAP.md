@@ -20,7 +20,7 @@ The versions below are defined by outcome, never by date (owner,
 2026-08-23). [`CHANGELOG.md`](../CHANGELOG.md) records what each release
 carried once it is cut.
 
-**0.1.0 — the replacement release.** Cut when the author judges the engine
+**0.1.0 — the internal MVP.** Cut when the author judges the engine
 deployable as the replacement for the hand-driven worker/reviewer lane it
 generalizes — the cutover B5 describes. Which baseline items that takes,
 and how much of each, is judged then against the lane's real needs rather
@@ -32,6 +32,12 @@ expansion tiers done, with demand-gating intact — expansion items still
 land in whatever order demand arrives, and 1.0.0 arrives when the last of
 them has. An item admitted to the roadmap after this ruling states at
 admission whether it sits inside 1.0.0 or beyond it.
+
+The road between them is incremental (owner, 2026-08-23): versions climb
+from the MVP as features come in, each landing at the polish its release
+line asks of it. "Public-release item" on an entry names that polish bar,
+never a testing venue — everything here, the expansion tier included, is
+exercised in-house before it is anyone else's.
 
 Until the replacement release is cut, the workspace version in `Cargo.toml`
 carries a pre-release marker, so the tree never claims a release that has
@@ -245,9 +251,10 @@ API. The workspace has left room since day one.
 the engine it builds. The current "no review lane" state is ended by the
 product becoming able to end it, not by process arriving early.
 
-**E5 — Inter-agent messaging.** A public-release item (owner, 2026-08-23):
-not necessary for in-house dogfooding, so it never gates the baseline and is
-demand-gated like the rest of this tier. Deliberately discrete from B3 — the
+**E5 — Inter-agent messaging.** A public-release item (owner, 2026-08-23) —
+a polish level, not a venue: it is tested in-house like everything else, but
+its finish belongs to the 1.0.0 line, so it never gates the internal MVP.
+Deliberately discrete from B3 — the
 drafted shape, and why the two items must not blur, is
 [`notes/agent-messaging-and-presence.md`](../notes/agent-messaging-and-presence.md),
 which graduates to `docs/` with the item. Presence — the identity-to-address
