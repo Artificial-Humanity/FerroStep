@@ -222,6 +222,15 @@ API. The workspace has left room since day one.
 the engine it builds. The current "no review lane" state is ended by the
 product becoming able to end it, not by process arriving early.
 
+**E5 — Inter-agent messaging.** A public-release item (owner, 2026-08-23):
+not necessary for in-house dogfooding, so it never gates the baseline and is
+demand-gated like the rest of this tier. Deliberately discrete from B3 — the
+drafted shape, and why the two items must not blur, is
+[`notes/agent-messaging-and-presence.md`](../notes/agent-messaging-and-presence.md),
+which graduates to `docs/` with the item. Presence — the identity-to-address
+claim the messaging routes over — has an in-house consumer of its own and is
+sequenced independently of it.
+
 ---
 
 ## Horizon — the ambitions that order the road

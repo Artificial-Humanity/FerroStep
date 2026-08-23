@@ -3,8 +3,10 @@
 Working notes, not a deliverable. The direction is the owner's (2026-08-23):
 an adapter-based routing system; our own take on inter-agent messaging; the
 agent harness never assumed, because it has already varied and will again —
-possibly to a local model. Every shape below marked *proposal* is the
-resident developer's and unratified.
+possibly to a local model. **Classed a public-release item** (owner,
+2026-08-23): not necessary for in-house dogfooding — ROADMAP E5 is the
+placement, and §7 records what that ruling settled. Every shape below
+marked *proposal* is the resident developer's and unratified.
 
 ---
 
@@ -126,10 +128,18 @@ another record kind, so this work sits behind B1 wherever it is placed.
 
 ## 7. Open for the owner
 
-1. Roadmap placement: a peer of B3 in the baseline, or expansion? The
-   consuming loop already exists (§1), which argues baseline.
-2. Does presence live in the same store as the workflow ledger (proposal:
+1. Roadmap placement — **answered** (owner, 2026-08-23): inter-agent
+   messaging is a **public-release item**, not necessary for in-house
+   dogfooding. It never gates the baseline; it lives in the expansion tier
+   as ROADMAP E5. §1's argument from the live gap was made and did not
+   carry the whole item: the gap is real, but what the in-house loop needs
+   from this note is *presence*, not messaging.
+2. Presence placement — the sharper half the ruling split off: presence
+   fixes the in-house gap (§1), is a deployment aspect (§6), and has an
+   in-house consumer today. Does it proceed as its own small piece ahead
+   of E5, or wait with it?
+3. Does presence live in the same store as the workflow ledger (proposal:
    yes — one truth, one reach) or may a deployment split them?
-3. Is a message ever something the *engine* reasons about, or purely
+4. Is a message ever something the *engine* reasons about, or purely
    actor-side data in the shared store? (Proposal: actor-side only — the
    engine referees workflows, not conversations.)
