@@ -62,8 +62,9 @@ what a message means.
 
 **Store-and-nudge — the load-bearing proposal.** The canonical act of
 sending is *appending the message to the ledger*; a transport delivers only
-a nudge — "you have mail" — to the address presence claims. Each
-consequence earns its keep:
+a nudge — "you have mail" — to the address presence claims. (A nudge is a
+delivery detail of this item, not a B3 notification; the items stay
+discrete, §5.) Each consequence earns its keep:
 
 - A message survives a dead, absent, or mis-claimed recipient: the nudge
   fails, the record waits. Stale presence degrades to latency.
@@ -98,12 +99,21 @@ every other transport degrades to when its nudge fails), then an adapter
 for the harness the author's own sessions actually run in — the one whose
 absence §1 measured.
 
-## 5. Relationship to B3
+## 5. Relationship to B3 — two discrete items, on purpose
 
-The same delivery problem with different endpoints: B3 is engine→human on
-escalation, this is actor→actor. One delivery boundary should serve both —
-but nothing pre-builds the unification. Whichever lands first defines the
-boundary and the second is the honesty test, exactly B1's two-stores logic.
+⚠ **These are separate items and stay that way** (owner, 2026-08-23). A
+**notification** (B3) is the engine telling a *person* that a record needs
+them: one-way, no reply path, its content fixed by B3. A **message** (this
+note) is one *actor* addressing another through the roster: ledgered,
+replyable, engine-opaque. Neither is a kind of the other, and a plan that
+says "messaging" without qualification has not yet said which item it
+means.
+
+They do share the *shape* of the delivery problem — transports genuinely
+unalike — so when the second of the two lands, its delivery boundary is
+measured against the first's as a possible economy, exactly B1's
+two-stores logic. Nothing pre-builds that unification, and sharing
+machinery would not merge the items.
 
 ## 6. The deployment aspect
 
