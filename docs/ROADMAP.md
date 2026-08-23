@@ -14,6 +14,29 @@ mechanized; the GitHub App sub-project emits its registration manifest.
 Nothing is published to a registry yet, and no production loop runs on the
 engine. Everything below is ordered around changing that last fact first.
 
+## Releases — the named points on the road
+
+The versions below are defined by outcome, never by date (owner,
+2026-08-23). [`CHANGELOG.md`](../CHANGELOG.md) records what each release
+carried once it is cut.
+
+**0.1.0 — the replacement release.** Cut when the author judges the engine
+deployable as the replacement for the hand-driven worker/reviewer lane it
+generalizes — the cutover B5 describes. Which baseline items that takes,
+and how much of each, is judged then against the lane's real needs rather
+than enumerated now. Deployability to that lane is the bar; registry
+publication is its own decision and not implied by it.
+
+**1.0.0 — the planned road, complete.** The goal release: the baseline and
+expansion tiers done, with demand-gating intact — expansion items still
+land in whatever order demand arrives, and 1.0.0 arrives when the last of
+them has. An item admitted to the roadmap after this ruling states at
+admission whether it sits inside 1.0.0 or beyond it.
+
+Until the replacement release is cut, the workspace version in `Cargo.toml`
+carries a pre-release marker, so the tree never claims a release that has
+not happened.
+
 ---
 
 ## Baseline — the product proving itself
