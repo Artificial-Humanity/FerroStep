@@ -1,0 +1,16 @@
+[package]
+name = "ferrostep-sqlite"
+description = "SQLite ledger adapter for FerroStep — the zero-install path: one host, one file, no server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ferrostep-core = { path = "../ferrostep-core", version = "0.1.0-dev" }
+ferrostep-ledger = { path = "../ferrostep-ledger", version = "0.1.0-dev" }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

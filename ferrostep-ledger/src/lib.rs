@@ -117,6 +117,41 @@ impl Scope {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+
+    /// Whether a record labelled with `labels` falls inside this scope: every
+    /// filter key present, with an equal value. An empty scope matches
+    /// everything, which is what [`Scope::all`] means. Adapters whose store
+    /// cannot filter server-side apply this after reading — correctness first,
+    /// and the cost is the adapter's to carry rather than the caller's to know
+    /// about.
+    pub fn matches(&self, labels: &BTreeMap<String, String>) -> bool {
+        self.0.iter().all(|(key, value)| labels.get(key) == Some(value))
+    }
+}
+
+/// The snapshot a decision leaves behind, or `None` for a denial.
+///
+/// One implementation, shared by every adapter, because two copies of "what
+/// does applying mean" would be free to disagree. An [`Decision::Allow`] moves
+/// the state and lays its counter updates over the existing counters; an
+/// [`Decision::Exhausted`] moves the state and touches no counter — the spend
+/// never happened, the record is being routed instead; a [`Decision::Deny`]
+/// changes nothing and has nothing to persist.
+pub fn decided_snapshot(current: &Snapshot, decision: &Decision) -> Option<Snapshot> {
+    match decision {
+        Decision::Allow { to, counter_updates } => {
+            let mut counters = current.counters.clone();
+            for (name, value) in counter_updates {
+                counters.insert(name.clone(), *value);
+            }
+            Some(Snapshot { state: to.clone(), counters })
+        }
+        Decision::Exhausted { to, .. } => Some(Snapshot {
+            state: to.clone(),
+            counters: current.counters.clone(),
+        }),
+        Decision::Deny { .. } => None,
+    }
 }
 
 /// What an adapter can actually promise.
@@ -352,6 +387,43 @@ mod tests {
         let scope = Scope::all().with("repo", "example/thing").with("branch", "main");
         assert_eq!(scope.filters().len(), 2);
         assert_eq!(scope.filters()["branch"], "main");
+    }
+
+    #[test]
+    fn a_decision_becomes_the_snapshot_it_promised() {
+        let current = Snapshot {
+            state: "awaiting_worker".to_string(),
+            counters: BTreeMap::from([("passes".to_string(), 2), ("filings".to_string(), 1)]),
+        };
+        // Allow: state moves, named counters take their new values, unnamed
+        // counters survive untouched.
+        let next = decided_snapshot(&current, &allow()).unwrap();
+        assert_eq!(next.state, "working");
+        assert_eq!(next.counters["passes"], 1);
+        assert_eq!(next.counters["filings"], 1);
+        // Exhausted: the record is routed, and nothing is spent by routing.
+        let routed = decided_snapshot(
+            &current,
+            &Decision::Exhausted { to: "escalated".to_string(), counter: "passes".to_string() },
+        )
+        .unwrap();
+        assert_eq!(routed.state, "escalated");
+        assert_eq!(routed.counters, current.counters);
+        // Deny: nothing to persist.
+        let denied = Decision::Deny { reason: "not yours".to_string() };
+        assert_eq!(decided_snapshot(&current, &denied), None);
+    }
+
+    #[test]
+    fn a_scope_matches_on_every_filter_and_an_empty_one_matches_all() {
+        let labels = BTreeMap::from([
+            ("repo".to_string(), "example/thing".to_string()),
+            ("branch".to_string(), "main".to_string()),
+        ]);
+        assert!(Scope::all().matches(&labels));
+        assert!(Scope::all().with("branch", "main").matches(&labels));
+        assert!(!Scope::all().with("branch", "other").matches(&labels));
+        assert!(!Scope::all().with("cycle", "7").matches(&labels), "an absent key is not a match");
     }
 
     #[test]

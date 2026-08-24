@@ -21,6 +21,12 @@ to argue against, not a constraint — the section says so itself).
   no database, no network. It takes a definition and a snapshot and returns a
   decision. If a change needs a side effect, it belongs in an adapter crate or
   the binding layer, not here.
+- `ferrostep-ledger/` — the interface a ledger adapter implements: records as
+  objects, capabilities stated honestly, one write path. The contract adapters
+  are judged against; it holds no IO of its own.
+- `ferrostep-sqlite/` — the SQLite ledger adapter, and the zero-install path:
+  one host, one WAL-mode file, no server. Compare-and-swap and the atomic
+  apply are by construction; append-only history is trigger-enforced.
 - `ferrostep-py/` — PyO3/maturin bindings, mixed layout: Rust bridge in `src/`,
   pure-Python surface in `python/ferrostep/`. The bridge speaks JSON strings;
   the Python wrapper turns them into dicts. Keep new API in the wrapper thin.
