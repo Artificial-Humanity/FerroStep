@@ -39,6 +39,9 @@ COMMON:
   --store <target>      sqlite:<path> or pocketbase:<url>
   --token <token>       auth token for pocketbase: stores
                         (or the FERROSTEP_POCKETBASE_TOKEN environment variable)
+  --map <path>          collection-mapping JSON for a pocketbase: store that
+                        referees an existing collection instead of the
+                        generic ferrostep ones
   --scope <key=value>   narrow to records labelled key=value (repeatable)
 
 move:
@@ -99,7 +102,7 @@ fn run(args: &[String]) -> Result<String, String> {
     };
     let flags = Flags::parse(&args[1..])?;
     let engine = load_engine(flags.require("workflow")?)?;
-    let ledger = open_ledger(flags.require("store")?, flags.get("token"))?;
+    let ledger = open_ledger(flags.require("store")?, flags.get("token"), flags.get("map"))?;
     let mut scope = Scope::all();
     for pair in flags.all("scope") {
         let (key, value) = pair
@@ -148,8 +151,15 @@ fn load_engine(path: &str) -> Result<Engine, String> {
     Engine::new(def).map_err(|e| format!("workflow '{path}' does not validate: {e}"))
 }
 
-fn open_ledger(store: &str, token: Option<&str>) -> Result<Box<dyn Ledger>, String> {
+fn open_ledger(
+    store: &str,
+    token: Option<&str>,
+    map: Option<&str>,
+) -> Result<Box<dyn Ledger>, String> {
     if let Some(path) = store.strip_prefix("sqlite:") {
+        if map.is_some() {
+            return Err("--map applies to pocketbase: stores only".to_string());
+        }
         return Ok(Box::new(
             ferrostep_sqlite::SqliteLedger::open(path).map_err(|e| e.to_string())?,
         ));
@@ -160,10 +170,18 @@ fn open_ledger(store: &str, token: Option<&str>) -> Result<Box<dyn Ledger>, Stri
             .map(str::to_string)
             .or(env_token)
             .ok_or("a pocketbase: store needs --token or FERROSTEP_POCKETBASE_TOKEN")?;
-        return Ok(Box::new(
-            ferrostep_pocketbase::PocketBaseLedger::connect(url, &token)
-                .map_err(|e| e.to_string())?,
-        ));
+        let ledger = match map {
+            Some(path) => {
+                let source = std::fs::read_to_string(path)
+                    .map_err(|e| format!("cannot read map '{path}': {e}"))?;
+                let map: ferrostep_pocketbase::CollectionMap = serde_json::from_str(&source)
+                    .map_err(|e| format!("map '{path}' does not parse: {e}"))?;
+                ferrostep_pocketbase::PocketBaseLedger::connect_mapped(url, &token, map)
+            }
+            None => ferrostep_pocketbase::PocketBaseLedger::connect(url, &token),
+        }
+        .map_err(|e| e.to_string())?;
+        return Ok(Box::new(ledger));
     }
     Err(format!("--store must be sqlite:<path> or pocketbase:<url>, got '{store}'"))
 }
@@ -657,9 +675,13 @@ mod tests {
 
     #[test]
     fn the_store_argument_names_its_own_remedy() {
-        let Err(refused) = open_ledger("postgres:somewhere", None) else {
+        let Err(refused) = open_ledger("postgres:somewhere", None, None) else {
             panic!("an unknown store scheme must be refused");
         };
         assert!(refused.contains("sqlite:<path> or pocketbase:<url>"), "{refused}");
+        let Err(refused) = open_ledger("sqlite:/tmp/x.db", None, Some("map.json")) else {
+            panic!("a map on a sqlite store must be refused");
+        };
+        assert!(refused.contains("pocketbase: stores only"), "{refused}");
     }
 }

@@ -28,10 +28,14 @@ to argue against, not a constraint — the section says so itself).
   one host, one WAL-mode file, no server. Compare-and-swap and the atomic
   apply are by construction; append-only history is trigger-enforced.
 - `ferrostep-pocketbase/` — the PocketBase ledger adapter: a stock instance
-  plus generated files (a migration and a transactional apply/create route).
-  Two modes, said out loud: Full when the routes answer, ReadOnly otherwise —
-  writes are then refused by name, never approximated, because the REST-only
-  write path is the design the measured record rejected.
+  plus generated files (a migration and transactional, collection-scoped
+  apply/create routes). Two shapes: generic (the adapter's own collections)
+  and mapped (an existing collection's own columns become the refereed
+  record, so the console stays the human view of the one truth; filing stays
+  with the collection's own procedure). Two modes, said out loud: Full when
+  the routes answer, ReadOnly otherwise — writes are then refused by name,
+  never approximated, because the REST-only write path is the design the
+  measured record rejected.
 - `ferrostep-notify/` — the notification: what FerroStep says when something
   needs a person (which record, why, how urgently, how to get back), and the
   `Notifier` adapter boundary it is delivered through. ntfy is the maintained

@@ -9,26 +9,36 @@
 //! route whose compare runs **inside the store's own transaction**, beside
 //! the record write and the event append.
 //!
-//! Consequently the adapter has two modes, detected at connect time, and it
-//! **says which it is in** rather than degrading quietly:
+//! Two deployment shapes, one wire contract:
 //!
-//! * **Full** — the generated hooks answer; reads and writes work and the
+//! * **Generic** ([`PocketBaseLedger::connect`]) — the adapter's own
+//!   collections, created by the generated migration: a records collection
+//!   with `counters`/`scope` as JSON, and an events collection.
+//! * **Mapped** ([`PocketBaseLedger::connect_mapped`]) — an existing
+//!   collection the deployment already lives in becomes the refereed record:
+//!   a [`CollectionMap`] names which columns hold the state, the version
+//!   token, the counters and the scope labels. The store's console stays the
+//!   human view of the same rows — one record, one truth, no second
+//!   chronology beside the first. Filing stays with the collection's own
+//!   procedure, so `create` is refused by name in this shape.
+//!
+//! Generated routes are **collection-scoped**
+//! (`/api/ferrostep/<records>/…`), so one instance can carry more than one
+//! refereed collection without the routes colliding.
+//!
+//! The adapter has two modes, detected at connect time, and it **says which
+//! it is in** rather than degrading quietly:
+//!
+//! * **Full** — the generated routes answer; reads and writes work and the
 //!   capability flags hold as measured.
-//! * **ReadOnly** — the hooks are not installed. Loads, enumeration and
+//! * **ReadOnly** — the routes are not installed. Loads, enumeration and
 //!   history work over plain REST; `apply` and `create` are refused with
 //!   [`LedgerError::Unsupported`] naming the remedy. Refusing beats
-//!   approximating: the write path that a REST-only adapter would need is
-//!   the design the measurement rejected, so it is not shipped at all.
-//!
-//! Install is two generated files, written by [`install_files`]: a migration
-//! that creates the collections (rules deliberately `null`, never `""` — an
-//! empty-string rule means *public*, and the two read rules require an
-//! authenticated actor) and the hook file with the routes. ⚠ Writing a hook
-//! file makes a watching server restart itself; a health check fired
-//! immediately after the write can answer before the restart begins.
+//!   approximating: the write path a REST-only adapter would need is the
+//!   design the measurement rejected, so it is not shipped at all.
 //!
 //! Error mapping is measured for conflicts and not-founds, and **inferred**
-//! for field-validation failures — both generated routes compute the guarded
+//! for field-validation failures — the generated routes compute the guarded
 //! values server-side and discard the caller's, which is exactly why a
 //! validation failure could not be provoked. A refusal message arrives
 //! normalized (first letter capitalized, period appended), so mapping matches
@@ -42,9 +52,10 @@ use ferrostep_ledger::{
     decided_snapshot, Capabilities, Event, Ledger, LedgerError, Record, RecordId, Scope,
     StoredEvent, Version,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-/// Collection names the generated migration creates and every query uses.
+/// Collection names the generated migration creates for the generic shape.
 pub const RECORDS_COLLECTION: &str = "ferrostep_records";
 pub const EVENTS_COLLECTION: &str = "ferrostep_events";
 
@@ -62,12 +73,68 @@ pub enum Mode {
     ReadOnly,
 }
 
+/// How an existing collection maps onto the ledger's record shape.
+///
+/// Column names double as ledger names: a counter column called
+/// `agent_passes` is the counter `agent_passes` in every snapshot, and a
+/// scope column called `branch_name` answers `Scope::with("branch_name", …)`.
+/// The mapping is deployment configuration — it travels as a JSON file beside
+/// the workflow definition, never as code.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CollectionMap {
+    /// The collection whose rows are the refereed records.
+    pub records: String,
+    /// The event collection beside it (the generic event shape).
+    pub events: String,
+    /// The column holding the record's state.
+    pub state_field: String,
+    /// The integer column holding the compare-and-swap token. Its default of
+    /// `0` on rows that predate the mapping is a valid starting token — no
+    /// backfill is required.
+    pub version_field: String,
+    /// Integer columns that are counters, each under its own name.
+    pub counter_fields: Vec<String>,
+    /// Text columns that are scope labels, each under its own name.
+    pub scope_fields: Vec<String>,
+}
+
+/// A store-side release: writing a decision field *is* taking a transition,
+/// so the console's one-save flow survives the cutover with the referee's
+/// bookkeeping attached. Generated into the hooks file from the definition's
+/// own release transition — maintained *with* the definition, never beside
+/// it, which is what keeps this one referee rather than two.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReleaseHook {
+    /// The field whose (changed, non-empty) write fires the release.
+    pub decision_field: String,
+    /// The paused state the release leaves.
+    pub from_state: String,
+    /// Where the release sends the record.
+    pub to_state: String,
+    /// Counters returned to zero by the release — and by a re-arm, a changed
+    /// decision written while the record already sits in `to_state`.
+    pub reset_counters: Vec<String>,
+    /// Who may write the decision field. An allowlist, fail-closed: an
+    /// account added to the store later is refused here until somebody
+    /// deliberately adds it.
+    pub writers: Vec<String>,
+    /// The role the release event records — the definition's human role.
+    pub role: String,
+}
+
+#[derive(Debug, Clone)]
+enum Shape {
+    Generic,
+    Mapped(CollectionMap),
+}
+
 /// A FerroStep ledger on a PocketBase instance.
 pub struct PocketBaseLedger {
     base: String,
     token: String,
     agent: ureq::Agent,
     mode: Mode,
+    shape: Shape,
 }
 
 fn agent() -> ureq::Agent {
@@ -98,14 +165,33 @@ fn refusal(body: &Value) -> String {
 }
 
 impl PocketBaseLedger {
-    /// Connect to `base_url` with a PocketBase auth token (a role-scoped
-    /// account's, ideally — an administrator's works but bypasses the
-    /// collection rules). Probes the generated routes and records the mode.
+    /// Connect to `base_url` with a PocketBase auth token, using the generic
+    /// collections the generated migration creates. Probes the generated
+    /// routes and records the mode.
     pub fn connect(base_url: &str, token: &str) -> Result<Self, LedgerError> {
+        Self::open(base_url, token, Shape::Generic)
+    }
+
+    /// Connect to `base_url`, refereeing the existing collection `map`
+    /// describes. The console stays the human view of the same rows; filing
+    /// stays with the collection's own procedure.
+    pub fn connect_mapped(
+        base_url: &str,
+        token: &str,
+        map: CollectionMap,
+    ) -> Result<Self, LedgerError> {
+        Self::open(base_url, token, Shape::Mapped(map))
+    }
+
+    fn open(base_url: &str, token: &str, shape: Shape) -> Result<Self, LedgerError> {
         let base = base_url.trim_end_matches('/').to_string();
         let agent = agent();
+        let records = match &shape {
+            Shape::Generic => RECORDS_COLLECTION,
+            Shape::Mapped(map) => &map.records,
+        };
         let resp = agent
-            .get(format!("{base}/api/ferrostep/ping"))
+            .get(format!("{base}/api/ferrostep/{records}/ping"))
             .call()
             .map_err(transport)?;
         let (status, body) = read(resp);
@@ -114,13 +200,27 @@ impl PocketBaseLedger {
         } else {
             Mode::ReadOnly
         };
-        Ok(PocketBaseLedger { base, token: token.to_string(), agent, mode })
+        Ok(PocketBaseLedger { base, token: token.to_string(), agent, mode, shape })
     }
 
     /// Which write path answered at connect time. Callers that surface
     /// guarantees to a person should surface this beside them.
     pub fn mode(&self) -> Mode {
         self.mode
+    }
+
+    fn records_collection(&self) -> &str {
+        match &self.shape {
+            Shape::Generic => RECORDS_COLLECTION,
+            Shape::Mapped(map) => &map.records,
+        }
+    }
+
+    fn events_collection(&self) -> &str {
+        match &self.shape {
+            Shape::Generic => EVENTS_COLLECTION,
+            Shape::Mapped(map) => &map.events,
+        }
     }
 
     /// Obtain a token the way an actor does: password auth against an auth
@@ -155,29 +255,75 @@ impl PocketBaseLedger {
             value.get("id").and_then(Value::as_str).unwrap_or_default().to_string(),
         );
         let malformed = |detail: String| LedgerError::Malformed { id: id.clone(), detail };
-        let state = value
-            .get("state")
-            .and_then(Value::as_str)
-            .ok_or_else(|| malformed("no state field".to_string()))?
-            .to_string();
-        let version = value
-            .get("version")
-            .and_then(Value::as_i64)
-            .ok_or_else(|| malformed("no integer version field".to_string()))?;
-        let mut counters = BTreeMap::new();
-        if let Some(map) = value.get("counters").and_then(Value::as_object) {
-            for (name, v) in map {
-                let n = v
-                    .as_u64()
-                    .ok_or_else(|| malformed(format!("counter '{name}' is not an integer")))?;
-                counters.insert(name.clone(), n as u32);
+        match &self.shape {
+            Shape::Generic => {
+                let state = value
+                    .get("state")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| malformed("no state field".to_string()))?
+                    .to_string();
+                let version = value
+                    .get("version")
+                    .and_then(Value::as_i64)
+                    .ok_or_else(|| malformed("no integer version field".to_string()))?;
+                let mut counters = BTreeMap::new();
+                if let Some(map) = value.get("counters").and_then(Value::as_object) {
+                    for (name, v) in map {
+                        let n = v.as_u64().ok_or_else(|| {
+                            malformed(format!("counter '{name}' is not an integer"))
+                        })?;
+                        counters.insert(name.clone(), n as u32);
+                    }
+                }
+                Ok(Record {
+                    id,
+                    snapshot: Snapshot { state, counters },
+                    version: Version(version.to_string()),
+                })
+            }
+            Shape::Mapped(map) => {
+                let state = value
+                    .get(&map.state_field)
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| malformed(format!("no '{}' field", map.state_field)))?
+                    .to_string();
+                // An integer column absent from the row (or predating the
+                // mapping) reads 0 — a valid starting token and a valid
+                // never-spent counter.
+                let version = value.get(&map.version_field).and_then(Value::as_i64).unwrap_or(0);
+                let mut counters = BTreeMap::new();
+                for name in &map.counter_fields {
+                    let held = value.get(name).and_then(Value::as_u64).unwrap_or(0);
+                    counters.insert(name.clone(), held as u32);
+                }
+                Ok(Record {
+                    id,
+                    snapshot: Snapshot { state, counters },
+                    version: Version(version.to_string()),
+                })
             }
         }
-        Ok(Record {
-            id,
-            snapshot: Snapshot { state, counters },
-            version: Version(version.to_string()),
-        })
+    }
+
+    fn scope_labels(&self, value: &Value) -> BTreeMap<String, String> {
+        let mut labels = BTreeMap::new();
+        match &self.shape {
+            Shape::Generic => {
+                if let Some(map) = value.get("scope").and_then(Value::as_object) {
+                    for (k, v) in map {
+                        labels.insert(k.clone(), v.as_str().unwrap_or_default().to_string());
+                    }
+                }
+            }
+            Shape::Mapped(map) => {
+                for name in &map.scope_fields {
+                    if let Some(v) = value.get(name).and_then(Value::as_str) {
+                        labels.insert(name.clone(), v.to_string());
+                    }
+                }
+            }
+        }
+        labels
     }
 
     /// One collection enumeration, paged to completion and checked against
@@ -285,8 +431,10 @@ impl Ledger for PocketBaseLedger {
         let resp = self
             .agent
             .get(format!(
-                "{}/api/collections/{RECORDS_COLLECTION}/records/{}",
-                self.base, id.0
+                "{}/api/collections/{}/records/{}",
+                self.base,
+                self.records_collection(),
+                id.0
             ))
             .header("Authorization", &self.token)
             .call()
@@ -308,6 +456,13 @@ impl Ledger for PocketBaseLedger {
         decision: &Decision,
         event: &Event,
     ) -> Result<Record, LedgerError> {
+        if let Shape::Mapped(_) = &self.shape {
+            // A mapped collection has its own filing procedure and its own
+            // required fields; a record filed here would be a hollow row.
+            return Err(LedgerError::Unsupported(
+                "file records into a mapped collection; use the collection's own filing procedure",
+            ));
+        }
         self.require_full("file a record without the ferrostep hooks installed")?;
         let Decision::Allow { to, .. } = decision else {
             return Err(LedgerError::NothingToApply);
@@ -316,7 +471,11 @@ impl Ledger for PocketBaseLedger {
         // and are not persisted onto the record being filed.
         let resp = self
             .agent
-            .post(format!("{}/api/ferrostep/create", self.base))
+            .post(format!(
+                "{}/api/ferrostep/{}/create",
+                self.base,
+                self.records_collection()
+            ))
             .header("Authorization", &self.token)
             .send_json(json!({
                 "state": to,
@@ -350,7 +509,11 @@ impl Ledger for PocketBaseLedger {
         })?;
         let resp = self
             .agent
-            .post(format!("{}/api/ferrostep/apply", self.base))
+            .post(format!(
+                "{}/api/ferrostep/{}/apply",
+                self.base,
+                self.records_collection()
+            ))
             .header("Authorization", &self.token)
             .send_json(json!({
                 "record_id": record.id.0,
@@ -386,25 +549,23 @@ impl Ledger for PocketBaseLedger {
         if states.is_empty() {
             return Ok(Vec::new());
         }
+        let state_field = match &self.shape {
+            Shape::Generic => "state",
+            Shape::Mapped(map) => &map.state_field,
+        };
         let filter = states
             .iter()
-            .map(|s| format!("state = {}", quoted(s)))
+            .map(|s| format!("{state_field} = {}", quoted(s)))
             .collect::<Vec<_>>()
             .join(" || ");
-        let items = self.list_all(RECORDS_COLLECTION, &format!("({filter})"), "id")?;
+        let items = self.list_all(self.records_collection(), &format!("({filter})"), "id")?;
         let mut out = Vec::new();
         for item in &items {
             // Scope narrowing happens here, in the adapter's own language,
             // exactly as in the SQLite adapter: a label key containing filter
             // syntax cannot be misread, at the cost of reading the state-wide
             // set — which the completeness check above already paid for.
-            let mut labels = BTreeMap::new();
-            if let Some(map) = item.get("scope").and_then(Value::as_object) {
-                for (k, v) in map {
-                    labels.insert(k.clone(), v.as_str().unwrap_or_default().to_string());
-                }
-            }
-            if !scope.matches(&labels) {
+            if !scope.matches(&self.scope_labels(item)) {
                 continue;
             }
             out.push(self.record_from_value(item)?);
@@ -416,7 +577,7 @@ impl Ledger for PocketBaseLedger {
         // A record with no history and no record at all must answer apart.
         self.load(id)?;
         let items = self.list_all(
-            EVENTS_COLLECTION,
+            self.events_collection(),
             &format!("(record = {})", quoted(&id.0)),
             "seq",
         )?;
@@ -454,11 +615,12 @@ impl Ledger for PocketBaseLedger {
     }
 }
 
-/// The generated hook file: the transactional apply/create routes and the
-/// ping the adapter probes for. ⚠ Every handler is deliberately
+/// The generated hook file for the **generic** shape: the transactional
+/// apply/create routes and the ping the adapter probes for, all scoped under
+/// the generic records collection. ⚠ Every handler is deliberately
 /// self-contained — hook callbacks run in isolated runtimes where file-scope
-/// helpers are not visible, so the duplication between the two write routes
-/// is load-bearing, not tidiness waiting to happen.
+/// helpers are not visible, so the duplication between the routes is
+/// load-bearing, not tidiness waiting to happen.
 pub fn hooks_file() -> String {
     let version = env!("CARGO_PKG_VERSION");
     format!(
@@ -468,11 +630,11 @@ pub fn hooks_file() -> String {
 // file-scope helpers are not visible, so shared logic here would fail on
 // every call while reading perfectly.
 
-routerAdd("GET", "/api/ferrostep/ping", (e) => {{
+routerAdd("GET", "/api/ferrostep/ferrostep_records/ping", (e) => {{
     return e.json(200, {{ "ferrostep": "{version}" }});
 }});
 
-routerAdd("POST", "/api/ferrostep/apply", (e) => {{
+routerAdd("POST", "/api/ferrostep/ferrostep_records/apply", (e) => {{
     const body = e.requestInfo().body;
     const recordId = String(body.record_id || "");
     const expected = Number(body.expected_version);
@@ -518,7 +680,7 @@ routerAdd("POST", "/api/ferrostep/apply", (e) => {{
     return e.json(200, {{ "version": version }});
 }}, $apis.requireAuth());
 
-routerAdd("POST", "/api/ferrostep/create", (e) => {{
+routerAdd("POST", "/api/ferrostep/ferrostep_records/create", (e) => {{
     const body = e.requestInfo().body;
     let out = {{}};
     $app.runInTransaction((txApp) => {{
@@ -546,10 +708,214 @@ routerAdd("POST", "/api/ferrostep/create", (e) => {{
     )
 }
 
-/// The generated migration: both collections, the unique `(record, seq)`
-/// index that referees concurrent appends, and rules that are `null` (writes:
-/// nobody over REST) or auth-gated (reads) — never `""`, which would mean
-/// *public*.
+/// The generated hook file for a **mapped** collection: the ping and the
+/// transactional apply route writing the mapped columns, plus — when the
+/// deployment asks for one — the store-side release: writing the decision
+/// field performs the definition's release transition with the referee's
+/// bookkeeping attached (version bump, event append), so the console's
+/// one-save flow survives the cutover under a single referee.
+///
+/// ⚠ One caveat the file also states: the release's event append runs after
+/// the row's own save commits (the row itself — state, counters, decision,
+/// version — is one atomic write). A crash in between leaves a correct row
+/// whose release event is missing. The apply route has no such window.
+pub fn hooks_file_mapped(map: &CollectionMap, release: Option<&ReleaseHook>) -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    let records = &map.records;
+    let events = &map.events;
+    let state = &map.state_field;
+    let version_field = &map.version_field;
+    let counter_sets = map
+        .counter_fields
+        .iter()
+        .map(|name| {
+            format!(
+                r#"        if (body.counters && body.counters["{name}"] !== undefined) {{
+            rec.set("{name}", Number(body.counters["{name}"]));
+        }}"#
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let mut out = format!(
+        r#"// ferrostep.{records}.pb.js — generated by ferrostep-pocketbase v{version}
+// for the mapped collection '{records}'. Do not hand-edit; regenerate and
+// reinstall instead. Each handler is self-contained on purpose: hook
+// callbacks run in isolated runtimes where file-scope helpers are not
+// visible, so shared logic here would fail on every call while reading
+// perfectly.
+
+routerAdd("GET", "/api/ferrostep/{records}/ping", (e) => {{
+    return e.json(200, {{ "ferrostep": "{version}" }});
+}});
+
+routerAdd("POST", "/api/ferrostep/{records}/apply", (e) => {{
+    const body = e.requestInfo().body;
+    const recordId = String(body.record_id || "");
+    const expected = Number(body.expected_version);
+    let next = 0;
+    $app.runInTransaction((txApp) => {{
+        let rec;
+        try {{
+            rec = txApp.findRecordById("{records}", recordId);
+        }} catch (err) {{
+            throw new NotFoundError("no_record: " + recordId);
+        }}
+        const held = rec.getInt("{version_field}");
+        if (held !== expected) {{
+            // The compare lives INSIDE the transaction. Measured as the only
+            // placement that survives concurrent writers; the same check
+            // outside it intermittently passes while losing updates.
+            throw new BadRequestError("cas_conflict: expected " + expected + ", found " + held);
+        }}
+        rec.set("{state}", String(body.state));
+{counter_sets}
+        rec.set("{version_field}", held + 1);
+        txApp.save(rec);
+        let seq = 1;
+        const last = txApp.findRecordsByFilter("{events}", "record = {{:id}}", "-seq", 1, 0, {{ "id": recordId }});
+        if (last.length > 0) {{
+            seq = last[0].getInt("seq") + 1;
+        }}
+        const ev = new Record(txApp.findCollectionByNameOrId("{events}"));
+        ev.set("record", recordId);
+        ev.set("seq", seq);
+        ev.set("actor", String((body.event && body.event.actor) || ""));
+        ev.set("role", String((body.event && body.event.role) || ""));
+        if (body.event && body.event.from_state) {{
+            ev.set("from_state", String(body.event.from_state));
+        }}
+        ev.set("decision", (body.event && body.event.decision) || {{}});
+        if (body.event && body.event.note) {{
+            ev.set("note", String(body.event.note));
+        }}
+        txApp.save(ev);
+        next = held + 1;
+    }});
+    return e.json(200, {{ "version": next }});
+}}, $apis.requireAuth());
+"#
+    );
+
+    if let Some(release) = release {
+        let decision_field = &release.decision_field;
+        let from_state = &release.from_state;
+        let to_state = &release.to_state;
+        let role = &release.role;
+        let writers = release
+            .writers
+            .iter()
+            .map(|w| format!("\"{w}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let resets = release
+            .reset_counters
+            .iter()
+            .map(|name| format!("            e.record.set(\"{name}\", 0);"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let reset_updates = release
+            .reset_counters
+            .iter()
+            .map(|name| format!("\"{name}\": 0"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.push_str(&format!(
+            r#"
+// The store-side release: writing '{decision_field}' IS taking the
+// definition's release transition, so the console's one-save flow keeps
+// working with the referee's bookkeeping attached. Guarded as a transition:
+// only from '{from_state}' does the state move; a decision on a record
+// already at '{to_state}' re-arms its counters (a revised decision is a new
+// instruction and needs attempts); a decision anywhere else is a note and
+// moves nothing. Only the allowlisted writers may change the field at all —
+// fail-closed: an account added later is refused here until somebody
+// deliberately adds it.
+onRecordUpdateRequest((e) => {{
+    const WRITERS = [{writers}];
+    const after = (e.record.getString("{decision_field}") || "").trim();
+    const before = (e.record.original().getString("{decision_field}") || "").trim();
+    let releasedFrom = null;
+    let releaseNote = "";
+    let releasedBy = "";
+    if (after !== before) {{
+        const who = e.auth ? (e.auth.getString("email") || "") : "";
+        if (WRITERS.indexOf(who) === -1) {{
+            throw new BadRequestError(
+                "{decision_field} is the owner's field. Agents read it and never write it — " +
+                "an agent writing here would forge the answer to a question it raised. " +
+                "(authenticated as: " + (who || "anonymous") + ")"
+            );
+        }}
+        if (after !== "") {{
+            const from = e.record.original().getString("{state}");
+            if (from === "{from_state}" || from === "{to_state}") {{
+                if (from === "{from_state}") {{
+                    e.record.set("{state}", "{to_state}");
+                }}
+{resets}
+                e.record.set("{version_field}", e.record.original().getInt("{version_field}") + 1);
+                releasedFrom = from;
+                releaseNote = after;
+                releasedBy = who;
+            }}
+        }}
+    }}
+    e.next();
+    // The row above committed as one save. The event line lands after it —
+    // a crash between the two loses the event, never the row.
+    if (releasedFrom !== null) {{
+        try {{
+            $app.runInTransaction((txApp) => {{
+                let seq = 1;
+                const last = txApp.findRecordsByFilter("{events}", "record = {{:id}}", "-seq", 1, 0, {{ "id": e.record.id }});
+                if (last.length > 0) {{
+                    seq = last[0].getInt("seq") + 1;
+                }}
+                const ev = new Record(txApp.findCollectionByNameOrId("{events}"));
+                ev.set("record", e.record.id);
+                ev.set("seq", seq);
+                ev.set("actor", releasedBy);
+                ev.set("role", "{role}");
+                ev.set("from_state", releasedFrom);
+                ev.set("decision", {{ "kind": "allow", "to": "{to_state}", "counter_updates": {{ {reset_updates} }} }});
+                ev.set("note", releaseNote);
+                txApp.save(ev);
+            }});
+        }} catch (err) {{
+            console.log("ferrostep: release event append failed for " + e.record.id + ": " + err);
+        }}
+    }}
+}}, "{records}");
+
+// Creation parity for the refusal: the decision field is the owner's from
+// the first save, not only after it.
+onRecordCreateRequest((e) => {{
+    const WRITERS = [{writers}];
+    const after = (e.record.getString("{decision_field}") || "").trim();
+    if (after !== "") {{
+        const who = e.auth ? (e.auth.getString("email") || "") : "";
+        if (WRITERS.indexOf(who) === -1) {{
+            throw new BadRequestError(
+                "{decision_field} is the owner's field. Agents read it and never write it — " +
+                "an agent writing here would forge the answer to a question it raised. " +
+                "(authenticated as: " + (who || "anonymous") + ")"
+            );
+        }}
+    }}
+    e.next();
+}}, "{records}");
+"#
+        ));
+    }
+    out
+}
+
+/// The generated migration for the **generic** shape: both collections, the
+/// unique `(record, seq)` index that referees concurrent appends, and rules
+/// that are `null` (writes: nobody over REST) or auth-gated (reads) — never
+/// `""`, which would mean *public*.
 pub fn migration_file() -> String {
     let version = env!("CARGO_PKG_VERSION");
     format!(
@@ -607,9 +973,38 @@ migrate((app) => {{
     )
 }
 
-/// Write both generated files under a PocketBase working directory:
-/// `pb_migrations/…_ferrostep.js` and `pb_hooks/ferrostep.pb.js`. Returns
-/// the two paths, migration first.
+/// The JSON body that creates a mapped deployment's event collection over
+/// the collections API — for deployments that provision by API call rather
+/// than migration file. Same shape and rules as the generic migration's
+/// event collection, under the mapped name.
+pub fn events_collection_body(events: &str) -> Value {
+    json!({
+        "name": events,
+        "type": "base",
+        "fields": [
+            { "name": "record", "type": "text", "required": true },
+            { "name": "seq", "type": "number", "required": true },
+            { "name": "actor", "type": "text", "required": true },
+            { "name": "role", "type": "text", "required": true },
+            { "name": "from_state", "type": "text" },
+            { "name": "decision", "type": "json", "required": true },
+            { "name": "note", "type": "text", "max": 50000 },
+            { "name": "at", "type": "autodate", "onCreate": true, "onUpdate": false }
+        ],
+        "indexes": [
+            format!("CREATE UNIQUE INDEX idx_{events}_record_seq ON {events} (record, seq)")
+        ],
+        "listRule": "@request.auth.id != ''",
+        "viewRule": "@request.auth.id != ''",
+        "createRule": null,
+        "updateRule": null,
+        "deleteRule": null
+    })
+}
+
+/// Write the generic shape's generated files under a PocketBase working
+/// directory: `pb_migrations/…_ferrostep.js` and `pb_hooks/ferrostep.pb.js`.
+/// Returns the two paths, migration first.
 ///
 /// ⚠ A server watching its hooks directory restarts itself when the hook
 /// file lands; a health check fired immediately after this returns can
@@ -681,7 +1076,18 @@ mod tests {
     }
 
     fn ping_full() -> (&'static str, u16, String) {
-        ("/api/ferrostep/ping", 200, r#"{"ferrostep":"test"}"#.to_string())
+        ("/api/ferrostep/ferrostep_records/ping", 200, r#"{"ferrostep":"test"}"#.to_string())
+    }
+
+    fn tickets_map() -> CollectionMap {
+        CollectionMap {
+            records: "tickets".to_string(),
+            events: "ticket_events".to_string(),
+            state_field: "stage".to_string(),
+            version_field: "fs_version".to_string(),
+            counter_fields: vec!["attempts".to_string()],
+            scope_fields: vec!["lane".to_string()],
+        }
     }
 
     fn an_event(decision: Decision) -> Event {
@@ -737,7 +1143,7 @@ mod tests {
             vec![
                 ping_full(),
                 (
-                    "/api/ferrostep/apply",
+                    "/api/ferrostep/ferrostep_records/apply",
                     400,
                     r#"{"message":"Cas_conflict: expected 3, found 5."}"#.to_string(),
                 ),
@@ -754,7 +1160,7 @@ mod tests {
         let base = serve(
             vec![
                 ping_full(),
-                ("/api/ferrostep/apply", 404, r#"{"message":"No_record: abc123."}"#.to_string()),
+                ("/api/ferrostep/ferrostep_records/apply", 404, r#"{"message":"No_record: abc123."}"#.to_string()),
                 ("/api/collections/ferrostep_records/records/", 404, r#"{"message":"Missing."}"#.to_string()),
             ],
             3,
@@ -848,13 +1254,78 @@ mod tests {
     }
 
     #[test]
+    fn a_mapped_collection_reads_its_own_columns_as_the_record() {
+        let row = r#"{"id":"t1","stage":"open","attempts":2,"lane":"alpha","fs_version":7,
+                      "title":"unrelated content stays unread"}"#;
+        let page = format!(
+            r#"{{"page":1,"perPage":500,"totalItems":1,"totalPages":1,"items":[{row}]}}"#
+        );
+        let base = serve(
+            vec![
+                ("/api/ferrostep/tickets/ping", 200, r#"{"ferrostep":"test"}"#.to_string()),
+                ("/api/collections/tickets/records/t1", 200, row.to_string()),
+                ("/api/collections/tickets/records", 200, page),
+            ],
+            4,
+        );
+        let ledger = PocketBaseLedger::connect_mapped(&base, "tok", tickets_map()).unwrap();
+        assert_eq!(ledger.mode(), Mode::Full);
+        let record = ledger.load(&RecordId("t1".to_string())).unwrap();
+        assert_eq!(record.snapshot.state, "open");
+        assert_eq!(record.snapshot.counters["attempts"], 2);
+        assert_eq!(record.version.0, "7");
+        let in_lane = ledger
+            .select(&Scope::all().with("lane", "alpha"), &["open".to_string()])
+            .unwrap();
+        assert_eq!(in_lane.len(), 1);
+        let elsewhere = ledger
+            .select(&Scope::all().with("lane", "beta"), &["open".to_string()])
+            .unwrap();
+        assert!(elsewhere.is_empty());
+    }
+
+    #[test]
+    fn a_row_predating_the_mapping_reads_version_zero_not_an_error() {
+        // The mapped version column defaults to 0 on old rows; 0 is a valid
+        // starting token, so no backfill pass is required before cutover.
+        let row = r#"{"id":"t9","stage":"open","lane":"alpha"}"#;
+        let base = serve(
+            vec![
+                ("/api/ferrostep/tickets/ping", 200, r#"{"ferrostep":"test"}"#.to_string()),
+                ("/api/collections/tickets/records/t9", 200, row.to_string()),
+            ],
+            2,
+        );
+        let ledger = PocketBaseLedger::connect_mapped(&base, "tok", tickets_map()).unwrap();
+        let record = ledger.load(&RecordId("t9".to_string())).unwrap();
+        assert_eq!(record.version.0, "0");
+        assert_eq!(record.snapshot.counters["attempts"], 0, "absent counter reads as never spent");
+    }
+
+    #[test]
+    fn a_mapped_collection_refuses_filing_by_name() {
+        let base = serve(
+            vec![("/api/ferrostep/tickets/ping", 200, r#"{"ferrostep":"test"}"#.to_string())],
+            1,
+        );
+        let ledger = PocketBaseLedger::connect_mapped(&base, "tok", tickets_map()).unwrap();
+        let refused = ledger.create(&Scope::all(), &allow("open"), &an_event(allow("open")));
+        match refused {
+            Err(LedgerError::Unsupported(what)) => {
+                assert!(what.contains("own filing procedure"), "{what}")
+            }
+            other => panic!("mapped filing must be refused by name, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn the_generated_files_carry_their_load_bearing_shapes() {
         let hooks = hooks_file();
         // Both write routes are transactional, authenticated, and the ping
-        // answers what connect() probes for.
+        // answers what connect() probes for — all scoped to the collection.
         assert_eq!(hooks.matches("runInTransaction").count(), 2);
         assert_eq!(hooks.matches("$apis.requireAuth()").count(), 2);
-        assert!(hooks.contains(r#"routerAdd("GET", "/api/ferrostep/ping""#));
+        assert!(hooks.contains(r#"routerAdd("GET", "/api/ferrostep/ferrostep_records/ping""#));
         assert!(hooks.contains("cas_conflict"));
         let migration = migration_file();
         assert!(migration.contains("CREATE UNIQUE INDEX"), "the (record, seq) referee");
@@ -862,6 +1333,45 @@ mod tests {
         // or a real expression.
         assert!(!migration.contains(r#"Rule": """#), "an empty-string rule is public");
         assert!(migration.contains(r#""createRule": null"#));
+        let events = serde_json::to_string(&events_collection_body("ticket_events")).unwrap();
+        assert!(events.contains("idx_ticket_events_record_seq"));
+        assert!(!events.contains(r#"Rule":"""#), "an empty-string rule is public");
+    }
+
+    #[test]
+    fn the_mapped_hooks_write_the_mapped_columns_and_only_those() {
+        let hooks = hooks_file_mapped(&tickets_map(), None);
+        assert!(hooks.contains(r#"routerAdd("GET", "/api/ferrostep/tickets/ping""#));
+        assert!(hooks.contains(r#"routerAdd("POST", "/api/ferrostep/tickets/apply""#));
+        assert!(hooks.contains(r#"rec.getInt("fs_version")"#), "compare on the mapped token");
+        assert!(hooks.contains(r#"rec.set("stage", String(body.state))"#));
+        assert!(hooks.contains(r#"body.counters["attempts"]"#));
+        assert!(!hooks.contains(r#"rec.set("counters""#), "no generic json write in mapped mode");
+        assert!(!hooks.contains("/create"), "filing stays with the collection's own procedure");
+        assert!(!hooks.contains("onRecordUpdateRequest"), "no release hook unless asked for");
+    }
+
+    #[test]
+    fn the_release_hook_is_a_guarded_transition_with_the_bookkeeping_attached() {
+        let release = ReleaseHook {
+            decision_field: "verdict".to_string(),
+            from_state: "parked".to_string(),
+            to_state: "open".to_string(),
+            reset_counters: vec!["attempts".to_string()],
+            writers: vec!["a-person@example.invalid".to_string()],
+            role: "owner".to_string(),
+        };
+        let hooks = hooks_file_mapped(&tickets_map(), Some(&release));
+        assert!(hooks.contains("onRecordUpdateRequest"));
+        assert!(hooks.contains("onRecordCreateRequest"), "the refusal holds from the first save");
+        assert!(hooks.contains(r#"WRITERS = ["a-person@example.invalid"]"#), "fail-closed allowlist");
+        assert!(hooks.contains(r#"e.record.set("attempts", 0)"#), "the reset rides the release");
+        assert!(
+            hooks.contains(r#"e.record.set("fs_version", e.record.original().getInt("fs_version") + 1)"#),
+            "the release bumps the version like any other move"
+        );
+        assert!(hooks.contains(r#""kind": "allow", "to": "open""#), "the event carries the decision");
+        assert!(hooks.contains(r#"ev.set("role", "owner")"#));
     }
 
     #[test]
@@ -881,6 +1391,9 @@ mod tests {
     // than silently green; run with:
     //   FERROSTEP_POCKETBASE_URL=… FERROSTEP_POCKETBASE_TOKEN=… \
     //     cargo test -p ferrostep-pocketbase -- --ignored
+    // The mapped test additionally expects the fixture from
+    // `live_mapped_setup` below: a `tickets` collection and the mapped hooks
+    // file for it.
     // ------------------------------------------------------------------
 
     fn live() -> PocketBaseLedger {
@@ -1019,5 +1532,53 @@ mod tests {
         assert_eq!(attempts, WRITERS * ROUNDS, "the battery ran its whole population");
         let final_version: usize = ledger.load(&record.id).unwrap().version.0.parse().unwrap();
         assert_eq!(final_version, 1 + ROUNDS, "one version step per round, none lost");
+    }
+
+    #[test]
+    #[ignore = "needs a live PocketBase with the mapped tickets fixture and hooks installed; set FERROSTEP_POCKETBASE_URL and FERROSTEP_POCKETBASE_TOKEN and run with --ignored"]
+    fn live_mapped_collection_moves_under_the_referee() {
+        // The mapped fixture: a `tickets` collection (stage select-or-text,
+        // attempts number, lane text, fs_version number) with the mapped
+        // hooks for it installed, and a `ticket_events` collection from
+        // events_collection_body. Rows are filed by the collection's own
+        // procedure — plain REST here, as superuser.
+        let url = std::env::var("FERROSTEP_POCKETBASE_URL").unwrap();
+        let token = std::env::var("FERROSTEP_POCKETBASE_TOKEN").unwrap();
+        let ledger = PocketBaseLedger::connect_mapped(&url, &token, tickets_map()).unwrap();
+        assert_eq!(ledger.mode(), Mode::Full, "the mapped hooks must be installed");
+
+        let client = agent();
+        let resp = client
+            .post(format!("{url}/api/collections/tickets/records"))
+            .header("Authorization", &token)
+            .send_json(json!({ "stage": "open", "attempts": 0, "lane": "live", "fs_version": 0 }))
+            .unwrap();
+        let (status, filed) = read(resp);
+        assert_eq!(status, 200, "filing through the collection's own procedure: {filed}");
+        let id = RecordId(filed["id"].as_str().unwrap().to_string());
+
+        // A row filed outside the referee starts at version 0 — valid token.
+        let record = ledger.load(&id).unwrap();
+        assert_eq!(record.version.0, "0");
+
+        // Claim: spend the counter, stage stays open (a self-move).
+        let claim = Decision::Allow {
+            to: "open".to_string(),
+            counter_updates: BTreeMap::from([("attempts".to_string(), 1)]),
+        };
+        let stale = record.clone();
+        ledger.apply(&record, &an_event(claim.clone())).unwrap();
+        let after = ledger.load(&id).unwrap();
+        assert_eq!(after.snapshot.counters["attempts"], 1);
+        assert_eq!(after.version.0, "1");
+
+        // The stale copy is refused — same CAS, mapped columns.
+        let refused = ledger.apply(&stale, &an_event(claim));
+        assert!(matches!(refused, Err(LedgerError::VersionConflict { .. })), "{refused:?}");
+
+        // The history landed beside the mapped row, in its own collection.
+        let history = ledger.history(&id).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].seq, 1);
     }
 }

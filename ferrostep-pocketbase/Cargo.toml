@@ -9,5 +9,6 @@ repository.workspace = true
 [dependencies]
 ferrostep-core = { path = "../ferrostep-core", version = "0.1.0-dev" }
 ferrostep-ledger = { path = "../ferrostep-ledger", version = "0.1.0-dev" }
+serde = { workspace = true }
 serde_json = { workspace = true }
 ureq = { version = "3", features = ["json"] }

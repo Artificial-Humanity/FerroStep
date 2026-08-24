@@ -16,7 +16,7 @@ ferrostep-ledger = { path = "../ferrostep-ledger", version = "0.1.0-dev" }
 ferrostep-sqlite = { path = "../ferrostep-sqlite", version = "0.1.0-dev" }
 ferrostep-pocketbase = { path = "../ferrostep-pocketbase", version = "0.1.0-dev" }
 ferrostep-notify = { path = "../ferrostep-notify", version = "0.1.0-dev" }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
-serde_json = { workspace = true }

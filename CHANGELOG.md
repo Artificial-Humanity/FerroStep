@@ -22,6 +22,16 @@ Everything to date — the first release has not been cut.
   mode it is in; without them it is read-only and refuses writes by name.
   Live end-to-end loop and concurrency battery ship as ignored-by-default
   tests, run against a real instance.
+- `ferrostep-pocketbase`, again: **mapped deployments** — a `CollectionMap`
+  referees an existing collection's own columns (state, counters, version
+  token, scope labels), so a loop already living in a collection keeps one
+  truth and its console view; filing stays with the collection's own
+  procedure and is refused by name. Generated routes became
+  collection-scoped so refereed collections cannot collide. An optional
+  generated release hook makes writing a decision field perform the
+  definition's release transition with the referee's bookkeeping (version
+  bump, event append) — the store-side transition B5 warns about, as
+  generated output instead of a hand-written peer.
 - `ferrostep-notify`: the notification message — which record, why, how
   urgently, how to get back — and the `Notifier` adapter boundary, with ntfy
   as the maintained default. Nothing polls or schedules; callers decide when.

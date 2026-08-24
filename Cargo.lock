@@ -203,6 +203,7 @@ version = "0.1.0-dev"
 dependencies = [
  "ferrostep-core",
  "ferrostep-ledger",
+ "serde",
  "serde_json",
  "ureq",
 ]
