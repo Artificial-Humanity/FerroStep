@@ -6,12 +6,15 @@ here and that cut and names each step's first move. The ordering and shapes
 are the resident developer's proposals (2026-08-24), owner-directed like
 everything else; roadmap item definitions are pointed at, never restated.
 
-**Status (2026-08-24):** §1–§5 are built, tested and merged — both adapters
-(the PocketBase one proven against a live throwaway instance, battery
-included), the decision surface with its resolving `move`, the notification
-crate, and the audit report. §6 is prepared, not performed: the
-[cutover runbook](cutover-runbook.md) exists, and the cutover itself and the
-deployability judgment are the owner's.
+**Status (2026-08-24, end of day):** §1–§5 are built, tested and merged.
+§6's provisioning is **done and live**: the lane's store now carries the
+referee (mapped collection, generated transactional routes, the release
+hook as generated output of the definition), rehearsed first on a throwaway
+at the store's exact version, then verified live — the refusal held, a
+probe record moved under the referee, the real queue read clean. What
+remains of §6 is the lane's *practice*: the actors' procedure switching to
+the referee, and B5's done-when — a real change shipped with a ceiling
+spent and an escalation exercised — after which the owner cuts 0.1.0.
 
 ## Where the tree stands
 
