@@ -22,3 +22,11 @@ Everything to date — the first release has not been cut.
   mode it is in; without them it is read-only and refuses writes by name.
   Live end-to-end loop and concurrency battery ship as ignored-by-default
   tests, run against a real instance.
+- `ferrostep-notify`: the notification message — which record, why, how
+  urgently, how to get back — and the `Notifier` adapter boundary, with ntfy
+  as the maintained default. Nothing polls or schedules; callers decide when.
+- `ferrostep-cli`: the `ferrostep` binary. `awaiting` renders which records
+  await a person and what their moves would actually do; `move` resolves one
+  without a database console; `audit` reports what happened (moves,
+  escalations, releases, last note) from the same enumeration `awaiting`
+  reads; `notify` sends one notification per awaiting record.

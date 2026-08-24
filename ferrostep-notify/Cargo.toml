@@ -1,0 +1,10 @@
+[package]
+name = "ferrostep-notify"
+description = "The message FerroStep sends when something needs a person, and the delivery adapter boundary — with ntfy as the maintained default"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ureq = { version = "3", features = ["json"] }

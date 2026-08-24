@@ -32,6 +32,16 @@ to argue against, not a constraint — the section says so itself).
   Two modes, said out loud: Full when the routes answer, ReadOnly otherwise —
   writes are then refused by name, never approximated, because the REST-only
   write path is the design the measured record rejected.
+- `ferrostep-notify/` — the notification: what FerroStep says when something
+  needs a person (which record, why, how urgently, how to get back), and the
+  `Notifier` adapter boundary it is delivered through. ntfy is the maintained
+  default and earns no standing in the interface. Nothing here polls or
+  schedules; a caller decides when.
+- `ferrostep-cli/` — the `ferrostep` binary: the decision surface
+  (`awaiting`), its resolution (`move`), the audit report (`audit`), and the
+  notification wiring (`notify`). The two views read one enumeration so they
+  cannot disagree about the ledger; stores are named per invocation, which is
+  the application layer choosing among adapters.
 - `ferrostep-py/` — PyO3/maturin bindings, mixed layout: Rust bridge in `src/`,
   pure-Python surface in `python/ferrostep/`. The bridge speaks JSON strings;
   the Python wrapper turns them into dicts. Keep new API in the wrapper thin.

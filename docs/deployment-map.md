@@ -24,6 +24,8 @@ exists to build or govern the product — the repo is public, so everything is
 | `ferrostep-ledger/` | Rust crate `ferrostep-ledger` — the interface an adapter implements | crates.io | not yet published |
 | `ferrostep-sqlite/` | Rust crate `ferrostep-sqlite` — the SQLite ledger adapter, the zero-install path | crates.io | not yet published |
 | `ferrostep-pocketbase/` | Rust crate `ferrostep-pocketbase` — the PocketBase ledger adapter, plus the generated migration and hook files it installs | crates.io; the generated files land in a deployment's PocketBase directory | not yet published |
+| `ferrostep-notify/` | Rust crate `ferrostep-notify` — the notification message and its delivery adapter boundary, with the ntfy default | crates.io | not yet published |
+| `ferrostep-cli/` | Rust crate `ferrostep-cli`, installing the `ferrostep` binary — decision surface, move, audit, notify wiring | crates.io | not yet published |
 | `ferrostep-py/` | Python package `ferrostep` | PyPI | not yet published |
 | `ferrostep-github/` | Rust crate/binary `ferrostep-github`, and a registered GitHub App instance per org | crates.io; the App via GitHub registration | scaffold; no App registered yet |
 | `skills/` | actor skills (`SKILL.md` format) | with the product; channel decided with the first skill | empty by design |
