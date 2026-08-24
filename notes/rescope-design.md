@@ -59,3 +59,10 @@ construction, expressible today. Revisit A only if successor-filing proves
 annoying in real use — that is a consuming-loop's evidence, which is what
 this repo requires of interface growth anyway. C stays what it already is:
 an operator's prerogative, never an agent's procedure.
+
+## Ruled
+
+**B — close-and-refile** (owner, 2026-08-24, given against this note and
+recorded on the tracker record whose escalation asked it). A stays a
+demand-gated possibility on real successor-filing pain; nothing pre-builds
+it.
