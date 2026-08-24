@@ -247,6 +247,39 @@ exit 0, from any position, without needing a workflow or a store. A test asks
 all six spellings, because one that only fixes the reported spelling would leave
 the other one for the next person.
 
+## 11. Our own lead paragraph said "enforced"
+
+**Hit:** a public write-up drawn from this project's material claimed a ceiling
+was "now **enforced**" in one paragraph and that the engine is "consulted, not
+enforcing" in another. Caught in review — but the interesting part is where it
+came from. **It was inherited, not invented.** The README's opening pitch said
+the loop's rules are "defined once, validated, and **enforced** consistently",
+56 lines above the section that says a caller could skip the engine entirely.
+
+**Why this is ours and not a writing problem:** the word doing the honest work
+there was *consistently* — one implementation, applied the same way everywhere.
+But *enforced* is the word that lands, and a reader who skims the pitch stops
+with it. We wrote the caveat carefully and then undercut it in the first
+paragraph anybody reads.
+
+⚠ **The test that caught it, from the adopter, and it is worth keeping:** an
+internally incoherent claim survives every reader who likes the story, because
+each half reads fine on its own. It is caught by refusing to read the halves
+and instead demanding **the end state, singular** — one machine, one answer:
+*does the ceiling stop a writer that does not ask?* No. So "enforced" is the
+wrong word wherever it appears about the engine, however well the surrounding
+paragraph is qualified.
+
+**Changed:** "enforced" → "applied" in the README's lead. The layered claim was
+already correct everywhere it was stated deliberately — the "What FerroStep is
+not" section and the north star's "the engine alone is advisory and the docs
+say so plainly". The defect was only ever in the pitch, which is exactly where
+it does the most damage.
+
+**Open:** the heading "What the engine guarantees" is defensible — the bullets
+under it are things the engine does guarantee about its own answers — but it is
+the same word class and worth a second opinion.
+
 ---
 
 ## Open questions the migration has not answered yet

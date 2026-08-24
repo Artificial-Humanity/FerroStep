@@ -11,7 +11,7 @@ your database — not in a framework's graph object.**
 FerroStep is for teams running LLM agents against real work — developer/reviewer
 loops, generate/QC pipelines, escalation paths — who want the loop's *rules*
 (who may move what where, and how many passes before a human is called) defined
-once, validated, and enforced consistently, while keeping prompts, network
+once, validated, and applied consistently, while keeping prompts, network
 calls, and agent runtimes in their own language and stack.
 
 Instead of hiding orchestration state inside an in-memory graph, FerroStep
