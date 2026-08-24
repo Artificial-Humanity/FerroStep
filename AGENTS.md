@@ -27,6 +27,11 @@ to argue against, not a constraint — the section says so itself).
 - `ferrostep-sqlite/` — the SQLite ledger adapter, and the zero-install path:
   one host, one WAL-mode file, no server. Compare-and-swap and the atomic
   apply are by construction; append-only history is trigger-enforced.
+- `ferrostep-pocketbase/` — the PocketBase ledger adapter: a stock instance
+  plus generated files (a migration and a transactional apply/create route).
+  Two modes, said out loud: Full when the routes answer, ReadOnly otherwise —
+  writes are then refused by name, never approximated, because the REST-only
+  write path is the design the measured record rejected.
 - `ferrostep-py/` — PyO3/maturin bindings, mixed layout: Rust bridge in `src/`,
   pure-Python surface in `python/ferrostep/`. The bridge speaks JSON strings;
   the Python wrapper turns them into dicts. Keep new API in the wrapper thin.

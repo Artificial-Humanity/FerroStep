@@ -15,3 +15,10 @@ Everything to date — the first release has not been cut.
   atomic apply and compare-and-swap by construction, append-only history
   enforced by triggers, all three capability flags earned by tests including
   a repeated-rounds concurrency battery.
+- `ferrostep-pocketbase`: the second ledger adapter — a stock instance plus a
+  generated migration and transactional apply/create routes (the compare
+  inside the store's transaction, the only placement that measured sound).
+  Detects at connect time whether the routes are installed and says which
+  mode it is in; without them it is read-only and refuses writes by name.
+  Live end-to-end loop and concurrency battery ship as ignored-by-default
+  tests, run against a real instance.
