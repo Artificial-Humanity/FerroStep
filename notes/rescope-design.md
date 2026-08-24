@@ -63,6 +63,8 @@ an operator's prerogative, never an agent's procedure.
 ## Ruled
 
 **B — close-and-refile** (owner, 2026-08-24, given against this note and
-recorded on the tracker record whose escalation asked it). A stays a
+recorded on the tracker record whose escalation asked it), **with the
+decision's own guard**: the move is always a requested, non-silent
+operation — never something a gate performs on its own. A stays a
 demand-gated possibility on real successor-filing pain; nothing pre-builds
 it.
