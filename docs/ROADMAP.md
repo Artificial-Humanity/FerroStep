@@ -42,9 +42,9 @@ line asks of it. "Public-release item" on an entry names that polish bar,
 never a testing venue — everything here, the expansion tier included, is
 exercised in-house before it is anyone else's.
 
-Until the replacement release is cut, the workspace version in `Cargo.toml`
-carries a pre-release marker, so the tree never claims a release that has
-not happened.
+Between cuts, the workspace version in `Cargo.toml` carries the next number
+with a pre-release marker, so the tree never claims a release that has not
+happened — only a tagged commit carries a released version.
 
 ---
 
