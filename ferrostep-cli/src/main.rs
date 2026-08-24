@@ -122,6 +122,15 @@ impl Flags {
 }
 
 fn run(args: &[String]) -> Result<String, String> {
+    // ⚠ Asking for help must not be parsed as *using* the tool. Every flag
+    // here takes a value, so `--help` used to be read as a flag missing its
+    // argument and answered "--help needs a value" — and `help <subcommand>`
+    // was an unexpected argument. Both spellings of "explain this to me"
+    // failed, at the moment a person had already admitted to not knowing.
+    // Reported by the first adopter, who worked around it silently.
+    if args.iter().any(|a| a == "--help" || a == "-h") || args.first().is_some_and(|a| a == "help") {
+        return Ok(USAGE.to_string());
+    }
     let Some(command) = args.first() else {
         return Err(format!("no subcommand given\n\n{USAGE}"));
     };
@@ -892,6 +901,31 @@ mod tests {
             4,
             "a refused rescope changed the ledger"
         );
+    }
+
+    /// ⚠ Every spelling of "explain this to me" has to answer, because the
+    /// person typing it has already said they do not know how this works.
+    /// Answering "--help needs a value" to `--help` is the tool being clever
+    /// at the exact moment it should be plain.
+    #[test]
+    fn every_way_of_asking_for_help_gets_help() {
+        for spelling in [
+            vec!["--help"],
+            vec!["-h"],
+            vec!["help"],
+            vec!["help", "awaiting"],
+            vec!["awaiting", "--help"],
+            vec!["rescope", "--record", "1", "--help"],
+        ] {
+            let out = run(&argv(&spelling));
+            let Ok(text) = out else {
+                panic!("{spelling:?} was refused instead of answered: {}", out.unwrap_err());
+            };
+            assert!(text.contains("USAGE:"), "{spelling:?} answered without usage");
+            // Help must not need a workflow or a store either — the person
+            // asking does not have one yet.
+            assert!(text.contains("agent-env"), "{spelling:?} answered a truncated usage");
+        }
     }
 
     /// A roster with both entries and the persona files they name.

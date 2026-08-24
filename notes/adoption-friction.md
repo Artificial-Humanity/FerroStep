@@ -79,11 +79,26 @@ the resident reported doing it as a raw store write **four times in one
 session**. Scope decides which queries find a record, so this was un-versioned,
 un-evented editing of the field every query depends on.
 
-**Shape of the lesson:** the referee had made every *modelled* operation safe,
-which made the unmodelled one the only place risk could accumulate — and it
-accumulated silently, because nothing refuses what it does not know about.
+⚠ **Attribution, corrected by the reporter, and the correction matters because
+these entries drive design:** the hole did not start here. The loop's own
+script had no such operation either, so the raw writes predate any contact with
+this project. **FerroStep inherited the gap rather than creating it.**
+
+**What is squarely ours, though, and is the entry's real content:**
+1. **We modelled the loop and reproduced the hole.** Handed a loop with an
+   unexpressible operation, the definition simply did not mention it — and
+   nothing in the engine noticed that the model was smaller than the thing
+   modelled. See entry 6; this is the same failure with a different face.
+2. **We then ruled, on our own reasoning, not to add it** — and the ruling was
+   reversed hours later by this adopter's evidence.
+3. **The referee concentrated the risk.** Every *modelled* operation became
+   safe, which made the unmodelled one the only place risk could accumulate.
+   Adopting a referee therefore makes an unmodelled operation *more* dangerous
+   than it was before, not less, and nothing warns you.
+
 ⚠ **Ask a migrating loop what it does that the definition cannot express.**
-That question found this; a review of the definition never would have.
+That question found this; a review of the definition never would have, because
+the definition is exactly where the answer is missing.
 
 **Changed:** rescope, refereed. Also reversed a same-day ruling — see
 `rescope-design.md`, where the revisit criterion was met by exactly this
@@ -170,6 +185,57 @@ to sequence (the keys leave in the same commit the roster arrives, which is
 what happened here and cost nothing). Recorded because the *next* adopter will
 meet it too, and because "FerroStep tells you where a value goes but not how to
 move it" is a documentation gap even if it is not a code one.
+
+## 9. The roster cannot identify the commit that installs the roster
+
+**Hit:** landing the change that *introduces* `config.yaml`. On the base branch
+there is no roster yet, so `agent-env` correctly refuses — but the identity it
+refuses to supply is the one needed to author the very merge commit that
+delivers the roster. **Every first adopter meets this on their first landing.**
+Cost: one failed merge and the diagnosis behind it.
+
+**Checked before reporting**, which is the right instinct: is the refusal
+wrong? No. Refusing when there is no roster is exactly correct, and a fallback
+would be the fail-open behaviour this whole surface exists to prevent.
+
+**So this is a guidance gap, not a code defect** — which does not make it less
+of an adoption cost, and it is the kind that lands on **every** adopter exactly
+once, at the least forgiving moment. The working pattern, from the adopter:
+
+```sh
+git merge --no-ff --no-commit <branch>   # roster is now in the working tree
+env="$(ferrostep agent-env)" || exit 1; eval "$env"
+git -c user.name="$AGENT_NAME" -c user.email="$AGENT_EMAIL" commit
+```
+
+⚠ **Generalizes past merges:** the roster is resolved from the working tree, so
+*any* first landing has a window where the tool that assigns identity is not
+yet installed. Bootstrap belongs in adopter-facing documentation, which this
+project does not yet have.
+
+**Not changed in code, deliberately.** Do not "solve" this by teaching
+`agent-env` to read a roster out of git — that is cleverness bought at the cost
+of the one property this reader has, which is that it tells you exactly which
+file it read.
+
+## 10. Both spellings of "help me" failed
+
+**Hit:** `ferrostep awaiting --help` answered **"--help needs a value"**, and
+`ferrostep help awaiting` answered **"unexpected argument"**. Usage printed only
+on some *other* misuse. Cost: a round trip — small, and reported only because
+the standing ask says to report what gets absorbed silently.
+
+**Why it is worth an entry despite being trivial:** every flag in this CLI takes
+a value, so the parser treated `--help` as a flag missing its argument. That is
+internally consistent and completely wrong from outside. **The failure lands on
+someone who has just admitted they do not know how the tool works** — the worst
+possible moment for the tool to be clever instead of plain. It is also
+invisible from inside: nobody who knows the commands ever types `--help`.
+
+**Changed:** `--help`, `-h`, `help`, and `help <subcommand>` all print usage and
+exit 0, from any position, without needing a workflow or a store. A test asks
+all six spellings, because one that only fixes the reported spelling would leave
+the other one for the next person.
 
 ---
 
