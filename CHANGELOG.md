@@ -25,6 +25,29 @@ entry here is mandatory rather than courtesy.
   another language.
 - `xtask agent-env` now delegates to `ferrostep-roster` rather than carrying a
   second reader of the same format.
+- **Rescope: moving a record between units of work is now a refereed
+  operation.** A record's scope decides which queries find it, so a record
+  whose scope names a finished unit is invisible to all of them — and until
+  now nothing could move one, so consuming loops did it as un-versioned,
+  un-evented writes to the field every query depends on. A definition grants
+  it per label and per role (`rescopes`), or nobody has it; `ferrostep
+  rescope` performs it; it lands versioned and evented like any other move and
+  shows up in `audit`. ⚠ Refused on terminal records, and that is not
+  configurable: a finished record's scope is the provenance of what it was
+  resolved against.
+- `Decision::Allow` grows `scope_updates`, omitted from the JSON when empty —
+  so a consumer written before rescope existed reads byte-identical JSON for
+  everything it already handled, and no fourth `kind` was added for every
+  binding to learn.
+- `ferrostep-pocketbase`: the generated ping now states what the installed
+  routes can write, and the adapter reads it. Hooks are deployed separately
+  from the binary, so a current adapter meets older routes routinely — and
+  those answer an apply carrying scope updates with a cheerful 200 while
+  writing no label. That is now refused by name, with the remedy in the
+  message, instead of being reported as a move that happened. In mapped
+  deployments the writable labels are the map's `scope_fields` and nothing
+  else, as one generated line per declared label rather than a loop over
+  whatever a request names.
 
 ## 0.1.0 — 2026-08-24
 

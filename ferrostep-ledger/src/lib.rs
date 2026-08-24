@@ -139,7 +139,7 @@ impl Scope {
 /// changes nothing and has nothing to persist.
 pub fn decided_snapshot(current: &Snapshot, decision: &Decision) -> Option<Snapshot> {
     match decision {
-        Decision::Allow { to, counter_updates } => {
+        Decision::Allow { to, counter_updates, .. } => {
             let mut counters = current.counters.clone();
             for (name, value) in counter_updates {
                 counters.insert(name.clone(), *value);
@@ -151,6 +151,32 @@ pub fn decided_snapshot(current: &Snapshot, decision: &Decision) -> Option<Snaps
             counters: current.counters.clone(),
         }),
         Decision::Deny { .. } => None,
+    }
+}
+
+/// The scope labels a decision moves, empty for every ordinary move.
+///
+/// Companion to [`decided_snapshot`], and deliberately not a merge: the
+/// updates are **absolute writes to named labels**. A rescope names the labels
+/// it moves and says nothing about the rest, so an adapter sets exactly these
+/// and leaves every other part of the record's identity alone. There is no
+/// "resulting scope" to compute, which is why this returns the instruction
+/// rather than an outcome — and why a record's other labels cannot be lost by
+/// an adapter that reads a stale copy of them.
+///
+/// Empty is the common answer, which lets an adapter skip touching scope at
+/// all on an ordinary move: a write that always fires is a write that can
+/// always go wrong.
+pub fn decided_scope_updates(decision: &Decision) -> &BTreeMap<String, String> {
+    match decision {
+        Decision::Allow { scope_updates, .. } => scope_updates,
+        _ => {
+            // A denial persists nothing, and an exhausted decision routes a
+            // record without moving it between units of work.
+            static NONE: std::sync::LazyLock<BTreeMap<String, String>> =
+                std::sync::LazyLock::new(BTreeMap::new);
+            &NONE
+        }
     }
 }
 
@@ -307,10 +333,7 @@ mod tests {
     use ferrostep_core::Decision;
 
     fn allow() -> Decision {
-        Decision::Allow {
-            to: "working".to_string(),
-            counter_updates: BTreeMap::from([("passes".to_string(), 1)]),
-        }
+        Decision::allow("working", BTreeMap::from([("passes".to_string(), 1)]))
     }
 
     #[test]

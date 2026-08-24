@@ -73,6 +73,33 @@ pub struct WorkflowDef {
     /// through this engine.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub creation: Option<CreationDef>,
+    /// Who may move a record between units of work, per scope label. **Empty
+    /// means nobody may** — scope is written at filing and stays there unless a
+    /// definition says otherwise.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rescopes: Vec<RescopeDef>,
+}
+
+/// Permission to change one scope label on a record.
+///
+/// A record's scope says which unit of work it belongs to, and every query
+/// that finds work filters on it — so a record whose scope names a finished
+/// unit is invisible to all of them. Moving it is a real operation, and one
+/// that was being performed as an un-versioned, un-evented write to the field
+/// every query depends on until it became this.
+///
+/// ⚠ **The label is opaque to the engine.** It knows a rule is *about* a
+/// label; it never knows what any particular label means, exactly as it never
+/// knows what a review means.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RescopeDef {
+    pub label: String,
+    pub role: String,
+    /// Whether the move must carry a reason. A scope change with no stated
+    /// reason is indistinguishable from a record quietly disappearing out of
+    /// one queue and into another.
+    #[serde(default)]
+    pub requires_note: bool,
 }
 
 /// An actor that may perform transitions. Written as a bare string for the
@@ -245,15 +272,32 @@ pub struct Snapshot {
 pub enum Decision {
     /// Legal. Persist the state flip AND `counter_updates` in one atomic write —
     /// splitting them re-opens the crashed-pass-costs-nothing hole.
+    ///
+    /// `scope_updates` moves the record between units of work (see
+    /// [`Engine::authorize_rescope`]) and is empty for every ordinary move, so
+    /// it is omitted from the JSON when empty and a consumer written before it
+    /// existed sees exactly what it saw before. It persists in the same atomic
+    /// write for the same reason the counters do.
     Allow {
         to: String,
         counter_updates: BTreeMap<String, u32>,
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        scope_updates: BTreeMap<String, String>,
     },
     /// The move was legal but a ceiling is spent: route the record to `to`
     /// (the counter's `on_exhausted` state) instead. No counter changes.
     Exhausted { to: String, counter: String },
     /// Not a legal move for this record/role. Nothing to persist.
     Deny { reason: String },
+}
+
+impl Decision {
+    /// An allow that moves state and counters and leaves scope alone — which
+    /// is every move except a rescope. Exists so the ordinary case does not
+    /// have to name the field it is not using.
+    pub fn allow(to: impl Into<String>, counter_updates: BTreeMap<String, u32>) -> Decision {
+        Decision::Allow { to: to.into(), counter_updates, scope_updates: BTreeMap::new() }
+    }
 }
 
 /// A defect found while validating a [`WorkflowDef`].
@@ -303,6 +347,13 @@ pub enum ValidationError {
     UnknownEntrySpendState { counter: String, state: String },
     UnknownCreationRole(String),
     UnknownCreationSpend(String),
+    /// A rescope rule handing a scope label to a role the workflow has no
+    /// actor for. It reads as a permission and grants nothing.
+    UnknownRescopeRole(String),
+    /// The same label granted to the same role twice: one of them is dead
+    /// text, and which one is dead depends on a lookup order nobody should
+    /// have to know.
+    DuplicateRescope { label: String, role: String },
     /// A counter metered both by state entry and by a transition: the same
     /// move would spend it twice.
     CounterSpentTwoWays(String),
@@ -372,6 +423,12 @@ impl fmt::Display for ValidationError {
             }
             CounterSpentTwoWays(c) => {
                 write!(f, "counter '{c}' is spent both on state entry and by a transition")
+            }
+            UnknownRescopeRole(r) => {
+                write!(f, "a rescope names role '{r}', which is not in `roles`")
+            }
+            DuplicateRescope { label, role } => {
+                write!(f, "scope label '{label}' is granted to role '{role}' twice")
             }
         }
     }
@@ -555,6 +612,22 @@ impl WorkflowDef {
         // is reported first, since a state with neither is both. Exhaustion
         // counts as an edge here — a ceiling is a way into its escalation
         // state, and is often the only way in.
+        // A rescope rule naming a role that does not exist grants nothing and
+        // reads as a granted permission — the same shape as a transition whose
+        // role is a typo, refused for the same reason.
+        let mut rescope_pairs: BTreeSet<(&str, &str)> = BTreeSet::new();
+        for rescope in &self.rescopes {
+            if !roles.contains(rescope.role.as_str()) {
+                return Err(UnknownRescopeRole(rescope.role.clone()));
+            }
+            if !rescope_pairs.insert((rescope.label.as_str(), rescope.role.as_str())) {
+                return Err(DuplicateRescope {
+                    label: rescope.label.clone(),
+                    role: rescope.role.clone(),
+                });
+            }
+        }
+
         let mut reached: BTreeSet<&str> = BTreeSet::from([self.initial.as_str()]);
         if let Some(creation) = &self.creation {
             for name in &creation.roles {
@@ -690,6 +763,80 @@ impl Engine {
         Decision::Allow {
             to: to.to_string(),
             counter_updates,
+            scope_updates: BTreeMap::new(),
+        }
+    }
+
+    /// May `role` move this record to a different unit of work?
+    ///
+    /// A rescope changes scope labels and nothing else: the state does not
+    /// move and no counter is spent, so the returned `to` is the state the
+    /// record is already in. That is not a fabricated state change — it is the
+    /// engine saying "stay here, with this scope", in the one shape a caller
+    /// already knows how to persist atomically.
+    ///
+    /// ⚠ **Refused on a terminal record, and that is not configurable.** A
+    /// finished record's scope is provenance: it says which unit of work the
+    /// record was resolved against, and rewriting it falsifies the answer to a
+    /// question nobody can re-ask later.
+    pub fn authorize_rescope(
+        &self,
+        snap: &Snapshot,
+        role: &str,
+        updates: &BTreeMap<String, String>,
+        note: Option<&str>,
+    ) -> Decision {
+        if !self.def.states.contains(&snap.state) {
+            return Decision::Deny {
+                reason: format!(
+                    "record state '{}' is not a state of workflow '{}'",
+                    snap.state, self.def.name
+                ),
+            };
+        }
+        if self.def.terminal.contains(&snap.state) {
+            return Decision::Deny {
+                reason: format!(
+                    "record is in terminal state '{}': a finished record's scope is \
+                     the unit of work it was resolved against, and is not rewritten",
+                    snap.state
+                ),
+            };
+        }
+        if updates.is_empty() {
+            return Decision::Deny { reason: "no scope labels given to change".to_string() };
+        }
+
+        let mut needs_note = false;
+        for label in updates.keys() {
+            let permitted = self.def.rescopes.iter().find(|r| &r.label == label && r.role == role);
+            let Some(rule) = permitted else {
+                // Same split as `authorize`: "you may not" and "nobody may"
+                // send a reader to different places.
+                let others = self.def.rescopes.iter().any(|r| &r.label == label);
+                let reason = if others {
+                    format!("role '{role}' may not change scope label '{label}'")
+                } else {
+                    format!(
+                        "workflow '{}' does not say who may change scope label '{label}'",
+                        self.def.name
+                    )
+                };
+                return Decision::Deny { reason };
+            };
+            needs_note |= rule.requires_note;
+        }
+        if needs_note && note.is_none_or(|n| n.trim().is_empty()) {
+            return Decision::Deny {
+                reason: "changing this record's unit of work requires a note saying why"
+                    .to_string(),
+            };
+        }
+
+        Decision::Allow {
+            to: snap.state.clone(),
+            counter_updates: BTreeMap::new(),
+            scope_updates: updates.clone(),
         }
     }
 
@@ -752,6 +899,9 @@ impl Engine {
         Decision::Allow {
             to: self.def.initial.clone(),
             counter_updates,
+            // A new record's scope is the scope it is filed into; there is no
+            // previous unit of work for it to move between.
+            scope_updates: BTreeMap::new(),
         }
     }
 
@@ -892,10 +1042,7 @@ mod tests {
         let decision = engine.authorize(&snap("awaiting_worker", 0), &Attempt::new("worker", "working"));
         assert_eq!(
             decision,
-            Decision::Allow {
-                to: "working".to_string(),
-                counter_updates: BTreeMap::from([("agent_passes".to_string(), 1)]),
-            }
+            Decision::allow("working", BTreeMap::from([("agent_passes".to_string(), 1)]))
         );
     }
 
@@ -927,10 +1074,7 @@ mod tests {
         let d = engine.authorize(&snap("working", 1), &Attempt::new("operator", "awaiting_worker"));
         assert_eq!(
             d,
-            Decision::Allow {
-                to: "awaiting_worker".to_string(),
-                counter_updates: BTreeMap::new(),
-            }
+            Decision::allow("awaiting_worker", BTreeMap::new())
         );
         // Two more claims spend 2 and 3, then the ceiling routes to escalation
         // even though only two passes ever produced work.
@@ -941,10 +1085,7 @@ mod tests {
             );
             assert_eq!(
                 d,
-                Decision::Allow {
-                    to: "working".to_string(),
-                    counter_updates: BTreeMap::from([("agent_passes".to_string(), expected)]),
-                }
+                Decision::allow("working", BTreeMap::from([("agent_passes".to_string(), expected)]))
             );
         }
         let d = engine.authorize(&snap("awaiting_worker", 3), &Attempt::new("worker", "working"));
@@ -1065,7 +1206,7 @@ mod tests {
         ));
 
         match engine.authorize(&spent, &Attempt::new("operator", "awaiting_worker")) {
-            Decision::Allow { to, counter_updates } => {
+            Decision::Allow { to, counter_updates, .. } => {
                 assert_eq!(to, "awaiting_worker");
                 assert_eq!(counter_updates.get("agent_passes"), Some(&0));
             }
@@ -1324,7 +1465,7 @@ mod tests {
         ));
 
         match engine.authorize_create(&Attempt::new("reviewer", "open").saying("the gate is unrun"), &none) {
-            Decision::Allow { to, counter_updates } => {
+            Decision::Allow { to, counter_updates, .. } => {
                 assert_eq!(to, "open");
                 assert_eq!(counter_updates.get("filings"), Some(&1));
             }
@@ -1521,6 +1662,182 @@ mod tests {
                 "kind": "allow",
                 "to": "working",
                 "counter_updates": { "agent_passes": 1 }
+            })
+        );
+    }
+
+    /// The reference loop plus permission to move a record between units of
+    /// work: the worker may re-label the unit, the reviewer may not.
+    fn with_rescopes() -> Engine {
+        let mut def = review_loop();
+        def.rescopes = vec![RescopeDef {
+            label: "branch".to_string(),
+            role: "worker".to_string(),
+            requires_note: true,
+        }];
+        Engine::new(def).unwrap()
+    }
+
+    fn moving_to(branch: &str) -> BTreeMap<String, String> {
+        BTreeMap::from([("branch".to_string(), branch.to_string())])
+    }
+
+    #[test]
+    fn a_permitted_rescope_keeps_the_record_where_it_stands() {
+        let engine = with_rescopes();
+        let decision = engine.authorize_rescope(
+            &snap("awaiting_worker", 2),
+            "worker",
+            &moving_to("follow-up"),
+            Some("rides to the follow-up unit"),
+        );
+        let Decision::Allow { to, counter_updates, scope_updates } = decision else {
+            panic!("a permitted rescope was refused: {decision:?}");
+        };
+        // The state does not move and nothing is spent: a rescope is not a
+        // free pass, and it is not a state change wearing a different name.
+        assert_eq!(to, "awaiting_worker");
+        assert!(counter_updates.is_empty(), "a rescope spent a counter");
+        assert_eq!(scope_updates, moving_to("follow-up"));
+    }
+
+    /// ⚠ Not configurable, and the reason is provenance: a finished record's
+    /// scope says which unit of work it was resolved against, and no later
+    /// reader can re-derive that once it is overwritten.
+    #[test]
+    fn a_finished_record_cannot_be_moved_to_another_unit_of_work() {
+        let engine = with_rescopes();
+        let decision = engine.authorize_rescope(
+            &snap("approved", 1),
+            "worker",
+            &moving_to("follow-up"),
+            Some("tidying the board"),
+        );
+        let Decision::Deny { reason } = decision else {
+            panic!("a terminal record was rescoped");
+        };
+        assert!(reason.contains("terminal"), "{reason}");
+    }
+
+    #[test]
+    fn rescope_refusals_tell_you_which_kind_of_no_it_is() {
+        let engine = with_rescopes();
+        let note = Some("because");
+        // A role the label was not granted to.
+        let Decision::Deny { reason } =
+            engine.authorize_rescope(&snap("working", 0), "reviewer", &moving_to("x"), note)
+        else {
+            panic!("the reviewer was allowed a label it does not hold");
+        };
+        assert!(reason.contains("may not change scope label 'branch'"), "{reason}");
+
+        // A label nobody was granted: a different problem with a different fix.
+        let unknown = BTreeMap::from([("repo".to_string(), "other".to_string())]);
+        let Decision::Deny { reason } =
+            engine.authorize_rescope(&snap("working", 0), "worker", &unknown, note)
+        else {
+            panic!("an ungranted label was written");
+        };
+        assert!(reason.contains("does not say who may change"), "{reason}");
+
+        // Nothing named at all.
+        let Decision::Deny { reason } =
+            engine.authorize_rescope(&snap("working", 0), "worker", &BTreeMap::new(), note)
+        else {
+            panic!("an empty rescope was allowed");
+        };
+        assert!(reason.contains("no scope labels"), "{reason}");
+    }
+
+    /// A scope change with no stated reason is indistinguishable from a record
+    /// quietly disappearing out of one queue and into another.
+    #[test]
+    fn a_rescope_that_must_carry_a_reason_is_refused_without_one() {
+        let engine = with_rescopes();
+        for missing in [None, Some(""), Some("   ")] {
+            let decision =
+                engine.authorize_rescope(&snap("working", 0), "worker", &moving_to("x"), missing);
+            let Decision::Deny { reason } = decision else {
+                panic!("a rescope was allowed with note {missing:?}");
+            };
+            assert!(reason.contains("requires a note"), "{reason}");
+        }
+    }
+
+    /// A workflow with no `rescopes` grants none. Scope is written at filing
+    /// and stays there unless a definition says otherwise, so the default has
+    /// to be the closed one.
+    #[test]
+    fn a_workflow_that_says_nothing_about_scope_permits_no_rescope() {
+        let engine = Engine::new(review_loop()).unwrap();
+        let decision = engine.authorize_rescope(
+            &snap("working", 0),
+            "worker",
+            &moving_to("anywhere"),
+            Some("why not"),
+        );
+        assert!(matches!(decision, Decision::Deny { .. }), "{decision:?}");
+    }
+
+    #[test]
+    fn a_rescope_naming_an_actor_the_workflow_does_not_have_is_a_defect() {
+        let mut def = review_loop();
+        def.rescopes = vec![RescopeDef {
+            label: "branch".to_string(),
+            role: "archivist".to_string(),
+            requires_note: false,
+        }];
+        assert_eq!(
+            def.validate(),
+            Err(ValidationError::UnknownRescopeRole("archivist".to_string()))
+        );
+    }
+
+    #[test]
+    fn the_same_label_granted_twice_to_one_role_is_a_defect() {
+        let mut def = review_loop();
+        let rule = RescopeDef {
+            label: "branch".to_string(),
+            role: "worker".to_string(),
+            requires_note: false,
+        };
+        def.rescopes = vec![rule.clone(), RescopeDef { requires_note: true, ..rule }];
+        assert_eq!(
+            def.validate(),
+            Err(ValidationError::DuplicateRescope {
+                label: "branch".to_string(),
+                role: "worker".to_string(),
+            })
+        );
+    }
+
+    /// ⚠ The Decision contract is what every binding switches on. A rescope
+    /// reuses `allow` rather than adding a fourth kind, and the new field is
+    /// absent from an ordinary move — so a consumer written before rescope
+    /// existed sees byte-identical JSON for everything it already handled.
+    #[test]
+    fn scope_updates_are_absent_from_an_ordinary_decision() {
+        let engine = with_rescopes();
+        let ordinary = engine.authorize(&snap("working", 1), &Attempt::new("worker", "awaiting_review"));
+        let value = serde_json::to_value(&ordinary).unwrap();
+        assert_eq!(
+            value,
+            json!({ "kind": "allow", "to": "awaiting_review", "counter_updates": {} })
+        );
+
+        let rescope = engine.authorize_rescope(
+            &snap("working", 1),
+            "worker",
+            &moving_to("follow-up"),
+            Some("rides"),
+        );
+        assert_eq!(
+            serde_json::to_value(&rescope).unwrap(),
+            json!({
+                "kind": "allow",
+                "to": "working",
+                "counter_updates": {},
+                "scope_updates": { "branch": "follow-up" }
             })
         );
     }

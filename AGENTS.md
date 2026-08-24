@@ -156,6 +156,24 @@ to argue against, not a constraint — the section says so itself).
 - **Decision JSON is a public contract.** `kind: allow | exhausted | deny` and
   their fields are what every binding and app layer switches on; changing the
   shape is a breaking change and needs a version bump and a changelog entry.
+  ⚠ **Grow a kind's fields, not the set of kinds**, where the meaning allows
+  it: an optional field omitted when empty leaves every existing consumer
+  reading byte-identical JSON, while a fourth kind is something every binding
+  must learn. `scope_updates` on `allow` is the worked example.
+- **Scope is refereed like everything else, and default-deny.** A record's
+  scope says which unit of work it belongs to, and every query that finds work
+  filters on it — so moving a record between units is a real operation, not a
+  field edit. A definition grants it per label and per role (`rescopes`) or
+  nobody has it. ⚠ **Refused on a terminal record, and that is not
+  configurable**: a finished record's scope is the provenance of what it was
+  resolved against, and no later reader can re-derive it.
+- ⚠ **Generated files outlive the binary that generated them.** Hooks, routes
+  and migrations are installed once and then met by newer adapters for as long
+  as the deployment lives. So a generated surface *states what it can do* (the
+  ping's `writes`) and an adapter asks rather than assuming its own
+  generation's abilities. The failure this prevents is the expensive kind: an
+  older route accepting a request, ignoring the part it does not understand,
+  and answering 200.
 - Python tooling is **uv only** (`uv venv`, `uv pip install ./ferrostep-py`);
   never introduce bare pip/venv or poetry.
 - **Favor Rust when the choice of tool is ambiguous; otherwise pick the best

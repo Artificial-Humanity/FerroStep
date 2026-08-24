@@ -60,11 +60,49 @@ annoying in real use — that is a consuming-loop's evidence, which is what
 this repo requires of interface growth anyway. C stays what it already is:
 an operator's prerogative, never an agent's procedure.
 
-## Ruled
+## Ruled — B, then A, both on 2026-08-24
 
-**B — close-and-refile** (owner, 2026-08-24, given against this note and
+**First: B — close-and-refile** (owner, given against this note and
 recorded on the tracker record whose escalation asked it), **with the
 decision's own guard**: the move is always a requested, non-silent
-operation — never something a gate performs on its own. A stays a
-demand-gated possibility on real successor-filing pain; nothing pre-builds
-it.
+operation — never something a gate performs on its own. A stayed a
+demand-gated possibility on real successor-filing pain.
+
+**Then: A — the interface gains the operation** (owner, same day, on the
+evidence below). ⚠ **This supersedes the ruling above; do not restore it.**
+
+**The revisit is this note's own criterion, met.** B's recommendation said
+to revisit A "only if successor-filing proves annoying in real use — that
+is a consuming-loop's evidence, which is what this repo requires of
+interface growth anyway." Hours later the consuming loop supplied it: its
+resident reported **four raw scope writes in a single session**, against a
+lane where the operation has no mechanism at all. That is not annoyance
+with successor-filing; it is the operation being performed *outside the
+referee entirely*, which is the shape the escalation existed to end. The
+owner's framing, and it belongs on the record because it governs more
+than this question: *"We shouldn't be too rigid with any of our policies
+since this is all a first test. We will surely need to revisit certain
+stances based on realized friction and efficacy."*
+
+**A's stated cost is paid, not dodged.** This note rejected A partly
+because "the engine never decides a rescope, because the engine has no
+notion of scope at all" — leaving three bad ways to record one. That
+premise is what changes: **the engine gains a minimal notion of scope**, so
+a rescope is genuinely authorized rather than fabricated.
+
+- The definition may declare `rescopes`: which label, which role, whether
+  a note is required. Absent means no rescope is permitted — default deny.
+- Labels stay opaque. The engine knows a rescope rule is *about a label*;
+  it never knows what `branch_name` means, exactly as it never knows what
+  a review means.
+- `Decision::Allow` grows `scope_updates`. One additive optional field on
+  the existing kind, not a fourth kind for every binding to switch on —
+  and it is truthful, because the engine did decide it.
+- ⚠ **Refused on terminal records, and that is not configurable.** A
+  closed finding's scope is provenance; rewriting it falsifies which range
+  the finding was found against.
+
+B is not withdrawn as a *practice* — closing and refiling remains right
+when the successor is genuinely new work rather than the same finding
+moving. What changes is that the lane no longer has to choose it because
+the alternative is unavailable.

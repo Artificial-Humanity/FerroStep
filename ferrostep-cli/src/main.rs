@@ -1,6 +1,6 @@
 //! ferrostep — the person-facing surface over a refereed ledger.
 //!
-//! Five subcommands. Four are one set of primitives over a ledger; the fifth
+//! Six subcommands. Five are one set of primitives over a ledger; the last
 //! answers the other half of an actor's question — the ledger says *what may
 //! be done*, and the roster says *who is doing it*:
 //!
@@ -15,6 +15,10 @@
 //!   escalations, releases, the last human note — a *reader of the same
 //!   enumeration `awaiting` uses*, so the two views cannot disagree about
 //!   the ledger.
+//! * `rescope` — the other kind of move: not where a record goes next, but
+//!   which unit of work it belongs to. Refereed like any other move, so the
+//!   operation that was a raw database write to the field every query filters
+//!   on is now versioned, evented, and refused where it should be.
 //! * `notify` — B3's wiring: one notification per awaiting record, through
 //!   the notifier adapter. Invoked when the caller decides; nothing here
 //!   polls or schedules.
@@ -41,7 +45,7 @@ use ferrostep_roster::Roster;
 const USAGE: &str = "ferrostep — the person-facing surface over a FerroStep-refereed ledger
 
 USAGE:
-  ferrostep <awaiting|audit|move|notify> --workflow <def.json> --store <target> [options]
+  ferrostep <awaiting|audit|move|rescope|notify> --workflow <def.json> --store <target> [options]
   ferrostep agent-env [--agent <title>] [--roster <config.yaml>]
 
 COMMON:
@@ -56,6 +60,10 @@ COMMON:
 
 move:
   --record <id> --role <role> --to <state> [--note <text>] [--actor <name>]
+
+rescope:                       (move a record to a different unit of work)
+  --record <id> --role <role> --set <label=value> [--set …] [--note <text>]
+  [--actor <name>]
 
 notify:
   --ntfy <server> --topic <topic> [--ntfy-token <token>]
@@ -151,6 +159,18 @@ fn run(args: &[String]) -> Result<String, String> {
                 flags.require("record")?,
                 role,
                 flags.require("to")?,
+                flags.get("note"),
+                flags.get("actor").unwrap_or(role),
+            )
+        }
+        "rescope" => {
+            let role = flags.require("role")?;
+            do_rescope(
+                &engine,
+                ledger.as_ref(),
+                flags.require("record")?,
+                role,
+                flags.all("set"),
                 flags.get("note"),
                 flags.get("actor").unwrap_or(role),
             )
@@ -435,6 +455,53 @@ fn do_move(
     Ok(format!("{outcome} (version {})", version.0))
 }
 
+/// Move a record to a different unit of work.
+///
+/// Separate from `move` because it is a different question — not "where does
+/// this record go next" but "which body of work does it belong to" — and
+/// because it is the operation that was being done as a raw database write
+/// until the referee could answer it.
+fn do_rescope(
+    engine: &Engine,
+    ledger: &dyn Ledger,
+    record_id: &str,
+    role: &str,
+    sets: &[String],
+    note: Option<&str>,
+    actor: &str,
+) -> Result<String, String> {
+    let mut updates = BTreeMap::new();
+    for pair in sets {
+        let (label, value) = pair
+            .split_once('=')
+            .ok_or(format!("--set takes label=value, got '{pair}'"))?;
+        updates.insert(label.to_string(), value.to_string());
+    }
+    let record = ledger.load(&RecordId(record_id.to_string())).map_err(|e| e.to_string())?;
+    let decision = engine.authorize_rescope(&record.snapshot, role, &updates, note);
+    if let Decision::Deny { reason } = &decision {
+        return Err(format!("refused: {reason}"));
+    }
+    let moved: Vec<String> = updates.iter().map(|(k, v)| format!("{k}={v}")).collect();
+    let event = Event {
+        actor: actor.to_string(),
+        role: role.to_string(),
+        // A rescope does not move the record, and saying where it "came from"
+        // would read as a state change in the history. It came from, and stays
+        // in, the state it is in.
+        from_state: Some(record.snapshot.state.clone()),
+        decision,
+        note: note.map(str::to_string),
+    };
+    let version = ledger.apply(&record, &event).map_err(|e| e.to_string())?;
+    Ok(format!(
+        "record {} now {} (version {})",
+        record.id.0,
+        moved.join(", "),
+        version.0
+    ))
+}
+
 /// One notification per awaiting record. Pure assembly; the send is the
 /// adapter's.
 fn notifications_for(engine: &Engine, rows: &[(Record, Status)]) -> Vec<Notification> {
@@ -505,13 +572,10 @@ mod tests {
     }
 
     fn allow(to: &str, counters: &[(&str, u32)]) -> Decision {
-        Decision::Allow {
-            to: to.to_string(),
-            counter_updates: counters
-                .iter()
-                .map(|(k, v)| (k.to_string(), *v))
-                .collect::<BTreeMap<_, _>>(),
-        }
+        Decision::allow(
+            to,
+            counters.iter().map(|(k, v)| (k.to_string(), *v)).collect::<BTreeMap<_, _>>(),
+        )
     }
 
     fn event(actor: &str, role: &str, from: Option<&str>, decision: Decision, note: Option<&str>) -> Event {
@@ -741,6 +805,93 @@ mod tests {
             panic!("a map on a sqlite store must be refused");
         };
         assert!(refused.contains("pocketbase: stores only"), "{refused}");
+    }
+
+    /// The reference loop plus permission to move a record between units of
+    /// work, which the shipped example deliberately does not grant.
+    fn engine_with_rescopes() -> Engine {
+        let mut def =
+            WorkflowDef::from_json(include_str!("../../examples/review-loop.json")).unwrap();
+        def.rescopes = vec![ferrostep_core::RescopeDef {
+            label: "branch".to_string(),
+            role: "worker".to_string(),
+            requires_note: true,
+        }];
+        Engine::new(def).unwrap()
+    }
+
+    /// The whole point of the subcommand: a record stops being found in one
+    /// unit of work and starts being found in another, through the referee
+    /// rather than through a database console.
+    #[test]
+    fn rescope_moves_a_record_between_units_of_work() {
+        let (_dir, ledger, ids) = seeded();
+        let engine = engine_with_rescopes();
+        let id = ids["live"].0.clone();
+
+        let out = do_rescope(
+            &engine,
+            &ledger,
+            &id,
+            "worker",
+            &[String::from("branch=follow-up")],
+            Some("below the floor; rides to the follow-up branch"),
+            "Ada",
+        )
+        .unwrap();
+        assert!(out.contains("branch=follow-up"), "{out}");
+
+        let in_scope = |branch: &str| {
+            records_with_status(&engine, &ledger, &Scope::all().with("branch", branch), true)
+                .unwrap()
+                .len()
+        };
+        // Four records were seeded onto `main`; exactly one left.
+        assert_eq!(in_scope("follow-up"), 1, "the record did not arrive");
+        assert_eq!(in_scope("main"), 3, "the record is still in the unit it left");
+    }
+
+    /// ⚠ Each refusal has a different fix, so each has to say which it is.
+    /// "Refused" alone sends a reader to re-read the definition looking for
+    /// the wrong thing.
+    #[test]
+    fn rescope_refusals_name_what_is_wrong_and_persist_nothing() {
+        let (_dir, ledger, ids) = seeded();
+        let engine = engine_with_rescopes();
+        let id = ids["live"].0.clone();
+        let set = [String::from("branch=follow-up")];
+
+        for (case, role, sets, note, expect) in [
+            ("no note", "worker", &set[..], None, "requires a note"),
+            ("wrong role", "reviewer", &set[..], Some("why"), "may not change scope label"),
+            (
+                "undeclared label",
+                "worker",
+                &[String::from("repo=elsewhere")][..],
+                Some("why"),
+                "does not say who may change",
+            ),
+        ] {
+            let refused = do_rescope(&engine, &ledger, &id, role, sets, note, "Ada");
+            let Err(message) = refused else {
+                panic!("{case}: allowed");
+            };
+            assert!(message.contains(expect), "{case}: {message}");
+        }
+
+        // A malformed --set is caught before the ledger is touched at all.
+        let refused =
+            do_rescope(&engine, &ledger, &id, "worker", &[String::from("branch")], Some("w"), "Ada");
+        assert!(refused.unwrap_err().contains("label=value"));
+
+        // Nothing above moved the record.
+        assert_eq!(
+            records_with_status(&engine, &ledger, &Scope::all().with("branch", "main"), true)
+                .unwrap()
+                .len(),
+            4,
+            "a refused rescope changed the ledger"
+        );
     }
 
     /// A roster with both entries and the persona files they name.

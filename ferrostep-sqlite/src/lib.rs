@@ -31,8 +31,8 @@ use std::time::Duration;
 
 use ferrostep_core::{Decision, Snapshot};
 use ferrostep_ledger::{
-    decided_snapshot, Capabilities, Event, Ledger, LedgerError, Record, RecordId, Scope,
-    StoredEvent, Version,
+    decided_scope_updates, decided_snapshot, Capabilities, Event, Ledger, LedgerError, Record,
+    RecordId, Scope, StoredEvent, Version,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 
@@ -214,16 +214,52 @@ impl Ledger for SqliteLedger {
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(transport)?;
+        // A rescope names labels rather than a whole scope, so the stored
+        // labels are read and merged here. Safe to read-then-write only
+        // because this transaction is IMMEDIATE — the write lock is already
+        // held, so nothing can slip between the read and the update — and the
+        // version compare below still guards the whole thing.
+        let scope_updates = decided_scope_updates(&event.decision);
+        let next_scope = if scope_updates.is_empty() {
+            None
+        } else {
+            let stored: String = tx
+                .query_row("SELECT scope FROM ferrostep_records WHERE id = ?1", [key], |r| {
+                    r.get(0)
+                })
+                .optional()
+                .map_err(transport)?
+                .ok_or_else(|| LedgerError::NotFound(record.id.clone()))?;
+            let mut labels: BTreeMap<String, String> =
+                serde_json::from_str(&stored).map_err(|e| LedgerError::Malformed {
+                    id: record.id.clone(),
+                    detail: format!("stored scope is not a label map: {e}"),
+                })?;
+            labels.extend(scope_updates.iter().map(|(k, v)| (k.clone(), v.clone())));
+            Some(serde_json::to_string(&labels).unwrap_or_else(|_| "{}".to_string()))
+        };
         // The compare and the write are one statement, inside the transaction
         // the event append also lives in. `WHERE version = ?` is the entire
         // compare-and-swap; a stale caller changes zero rows.
-        let moved = tx
-            .execute(
+        //
+        // ⚠ Scope is written by the SAME statement as the state and counters.
+        // A rescope that landed in its own write could half-apply, and a
+        // record whose scope moved while its history says it did not is
+        // invisible to every query that looks for it.
+        let moved = match &next_scope {
+            None => tx.execute(
                 "UPDATE ferrostep_records SET state = ?1, counters = ?2, version = version + 1
                  WHERE id = ?3 AND version = ?4",
                 params![next.state, counters_json(&next.counters), key, expected],
-            )
-            .map_err(transport)?;
+            ),
+            Some(scope) => tx.execute(
+                "UPDATE ferrostep_records
+                 SET state = ?1, counters = ?2, scope = ?3, version = version + 1
+                 WHERE id = ?4 AND version = ?5",
+                params![next.state, counters_json(&next.counters), scope, key, expected],
+            ),
+        }
+        .map_err(transport)?;
         if moved == 0 {
             let held: Option<i64> = tx
                 .query_row("SELECT version FROM ferrostep_records WHERE id = ?1", [key], |r| {
@@ -366,7 +402,7 @@ mod tests {
     }
 
     fn filed(to: &str) -> Decision {
-        Decision::Allow { to: to.to_string(), counter_updates: BTreeMap::new() }
+        Decision::allow(to, BTreeMap::new())
     }
 
     /// Seed one record the way a harness does for a workflow with no
@@ -469,10 +505,7 @@ mod tests {
         let first = ledger.load(&record.id).unwrap();
         let second = ledger.load(&record.id).unwrap();
 
-        let claim = Decision::Allow {
-            to: "working".to_string(),
-            counter_updates: BTreeMap::from([("passes".to_string(), 1)]),
-        };
+        let claim = Decision::allow("working", BTreeMap::from([("passes".to_string(), 1)]));
         ledger.apply(&first, &event("a", "worker", Some("open"), claim.clone())).unwrap();
         let refused = ledger.apply(&second, &event("b", "worker", Some("open"), claim.clone()));
         assert!(
@@ -513,13 +546,10 @@ mod tests {
                         let barrier = Arc::clone(&barrier);
                         s.spawn(move || {
                             let own = SqliteLedger::open(&path).unwrap();
-                            let claim = Decision::Allow {
-                                to: "spin".to_string(),
-                                counter_updates: BTreeMap::from([(
-                                    "wins".to_string(),
-                                    round as u32 + 1,
-                                )]),
-                            };
+                            let claim = Decision::allow(
+                                "spin",
+                                BTreeMap::from([("wins".to_string(), round as u32 + 1)]),
+                            );
                             barrier.wait();
                             own.apply(
                                 &current,
@@ -566,10 +596,7 @@ mod tests {
     #[test]
     fn a_filing_spend_is_not_stored_on_the_record_it_filed() {
         let (_dir, ledger) = temp_ledger();
-        let filing = Decision::Allow {
-            to: "open".to_string(),
-            counter_updates: BTreeMap::from([("filings".to_string(), 1)]),
-        };
+        let filing = Decision::allow("open", BTreeMap::from([("filings".to_string(), 1)]));
         let record = ledger
             .create(&Scope::all(), &filing, &event("r", "reviewer", None, filing.clone()))
             .unwrap();
@@ -657,5 +684,74 @@ mod tests {
         record.version = Version("etag-xyz".to_string());
         let refused = ledger.apply(&record, &event("a", "worker", Some("open"), filed("working")));
         assert!(matches!(refused, Err(LedgerError::Malformed { .. })), "{refused:?}");
+    }
+
+    /// A rescope's whole point is that the queries which find work start
+    /// finding the record somewhere else. Asserting the stored label would
+    /// only prove a column changed; this asks the question the lane actually
+    /// asks — *is it in this unit of work?* — from both sides.
+    #[test]
+    fn a_rescope_moves_the_record_between_units_of_work() {
+        let (_dir, ledger) = temp_ledger();
+        let record = seed(&ledger, "open");
+        let moved = Decision::Allow {
+            to: "open".to_string(),
+            counter_updates: BTreeMap::new(),
+            scope_updates: BTreeMap::from([("branch".to_string(), "follow-up".to_string())]),
+        };
+        let version = ledger
+            .apply(&record, &event("lauren", "operator", Some("open"), moved))
+            .unwrap();
+
+        let here = |branch: &str| {
+            ledger
+                .select(&Scope::all().with("branch", branch), &["open".to_string()])
+                .unwrap()
+                .len()
+        };
+        assert_eq!(here("follow-up"), 1, "the record did not arrive in the new unit");
+        assert_eq!(here("fix/gate"), 0, "the record is still in the unit it left");
+        assert_ne!(version, record.version, "a rescope must consume a version");
+
+        // The move is in the history like any other, so an audit shows why a
+        // record left a unit rather than it silently vanishing from a queue.
+        let history = ledger.history(&record.id).unwrap();
+        let last = history.last().expect("the rescope was not recorded");
+        assert!(
+            matches!(&last.event.decision, Decision::Allow { scope_updates, .. }
+                     if scope_updates.get("branch").map(String::as_str) == Some("follow-up")),
+            "{:?}",
+            last.event.decision
+        );
+    }
+
+    /// ⚠ A rescope names labels; it does not replace a scope. A record that
+    /// loses an unrelated label is a record that falls out of every other
+    /// query filtering on it — silently, because nothing asked about that
+    /// label.
+    #[test]
+    fn a_rescope_leaves_the_labels_nobody_named_alone() {
+        let (_dir, ledger) = temp_ledger();
+        let record = ledger
+            .create(
+                &Scope::all().with("branch", "fix/gate").with("repo", "acme/widgets"),
+                &filed("open"),
+                &event("lauren", "operator", None, filed("open")),
+            )
+            .unwrap();
+        let moved = Decision::Allow {
+            to: "open".to_string(),
+            counter_updates: BTreeMap::new(),
+            scope_updates: BTreeMap::from([("branch".to_string(), "follow-up".to_string())]),
+        };
+        ledger.apply(&record, &event("lauren", "operator", Some("open"), moved)).unwrap();
+
+        let still_scoped = ledger
+            .select(
+                &Scope::all().with("branch", "follow-up").with("repo", "acme/widgets"),
+                &["open".to_string()],
+            )
+            .unwrap();
+        assert_eq!(still_scoped.len(), 1, "an untouched label was lost by the rescope");
     }
 }

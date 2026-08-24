@@ -49,8 +49,8 @@ use std::path::{Path, PathBuf};
 
 use ferrostep_core::{Decision, Snapshot};
 use ferrostep_ledger::{
-    decided_snapshot, Capabilities, Event, Ledger, LedgerError, Record, RecordId, Scope,
-    StoredEvent, Version,
+    decided_scope_updates, decided_snapshot, Capabilities, Event, Ledger, LedgerError, Record,
+    RecordId, Scope, StoredEvent, Version,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -135,6 +135,10 @@ pub struct PocketBaseLedger {
     agent: ureq::Agent,
     mode: Mode,
     shape: Shape,
+    /// Whether the *installed* hooks said they write scope labels. Read from
+    /// the ping at connect time rather than assumed from this crate's own
+    /// version, because the two are deployed separately.
+    writes_scope: bool,
 }
 
 fn agent() -> ureq::Agent {
@@ -200,7 +204,17 @@ impl PocketBaseLedger {
         } else {
             Mode::ReadOnly
         };
-        Ok(PocketBaseLedger { base, token: token.to_string(), agent, mode, shape })
+        // ⚠ Installed hooks outlive the binary that generated them. A file
+        // written before rescope existed answers an apply carrying scope
+        // updates with a perfectly cheerful 200 and writes no label — so the
+        // caller is told a record moved between units of work when it did
+        // not, which is worse than any refusal. The ping says what it can
+        // write; anything that does not say is assumed not to.
+        let writes_scope = body
+            .get("writes")
+            .and_then(Value::as_array)
+            .is_some_and(|w| w.iter().any(|v| v.as_str() == Some("scope")));
+        Ok(PocketBaseLedger { base, token: token.to_string(), agent, mode, shape, writes_scope })
     }
 
     /// Which write path answered at connect time. Callers that surface
@@ -507,6 +521,17 @@ impl Ledger for PocketBaseLedger {
             id: record.id.clone(),
             detail: format!("version token '{}' is not this adapter's shape", record.version.0),
         })?;
+        // Refuse rather than approximate — the same rule this adapter applies
+        // to a missing write path, for the same reason. Hooks installed before
+        // rescope existed accept this request and ignore the labels, and a
+        // silent no-op reported as success is the one outcome worth failing to
+        // avoid.
+        if !decided_scope_updates(&event.decision).is_empty() && !self.writes_scope {
+            return Err(LedgerError::Unsupported(
+                "write scope labels: the installed ferrostep hooks predate rescope — \
+                 regenerate them and reinstall",
+            ));
+        }
         let resp = self
             .agent
             .post(format!(
@@ -520,6 +545,10 @@ impl Ledger for PocketBaseLedger {
                 "expected_version": expected,
                 "state": next.state,
                 "counters": next.counters,
+                // Named labels, not a whole scope: the route writes exactly
+                // these and leaves the record's other labels alone. Empty for
+                // every move that is not a rescope.
+                "scope": decided_scope_updates(&event.decision),
                 "event": event_payload(event),
             }))
             .map_err(transport)?;
@@ -631,7 +660,11 @@ pub fn hooks_file() -> String {
 // every call while reading perfectly.
 
 routerAdd("GET", "/api/ferrostep/ferrostep_records/ping", (e) => {{
-    return e.json(200, {{ "ferrostep": "{version}" }});
+    // `writes` is how an adapter learns what an INSTALLED file can do. Hooks
+    // outlive the binary that generated them, so a newer adapter must be able
+    // to find out that an older deployment cannot honour part of a request —
+    // rather than sending it and being told 200.
+    return e.json(200, {{ "ferrostep": "{version}", "writes": ["state", "counters", "scope"] }});
 }});
 
 routerAdd("POST", "/api/ferrostep/ferrostep_records/apply", (e) => {{
@@ -655,6 +688,19 @@ routerAdd("POST", "/api/ferrostep/ferrostep_records/apply", (e) => {{
         }}
         rec.set("state", String(body.state));
         rec.set("counters", body.counters || {{}});
+        // A rescope names labels, so the stored map is merged rather than
+        // replaced — a record keeps the parts of its identity nobody asked to
+        // change. Skipped entirely when nothing was named, which is every
+        // ordinary move.
+        const scopeIn = body.scope || {{}};
+        const scopeKeys = Object.keys(scopeIn);
+        if (scopeKeys.length > 0) {{
+            const labels = rec.get("scope") || {{}};
+            for (let i = 0; i < scopeKeys.length; i++) {{
+                labels[scopeKeys[i]] = String(scopeIn[scopeKeys[i]]);
+            }}
+            rec.set("scope", labels);
+        }}
         rec.set("version", held + 1);
         txApp.save(rec);
         let seq = 1;
@@ -737,6 +783,23 @@ pub fn hooks_file_mapped(map: &CollectionMap, release: Option<&ReleaseHook>) -> 
         })
         .collect::<Vec<_>>()
         .join("\n");
+    // ⚠ One `if` per DECLARED label, rather than a loop over whatever the
+    // caller sent. That makes the map's `scope_fields` an allowlist by
+    // construction: a request naming any other column cannot write it, because
+    // no line exists that would. An authenticated route is not an unconstrained
+    // one, and the difference has to be structural rather than remembered.
+    let scope_sets = map
+        .scope_fields
+        .iter()
+        .map(|name| {
+            format!(
+                r#"        if (body.scope && body.scope["{name}"] !== undefined) {{
+            rec.set("{name}", String(body.scope["{name}"]));
+        }}"#
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
 
     let mut out = format!(
         r#"// ferrostep.{records}.pb.js — generated by ferrostep-pocketbase v{version}
@@ -747,7 +810,9 @@ pub fn hooks_file_mapped(map: &CollectionMap, release: Option<&ReleaseHook>) -> 
 // perfectly.
 
 routerAdd("GET", "/api/ferrostep/{records}/ping", (e) => {{
-    return e.json(200, {{ "ferrostep": "{version}" }});
+    // See the generic file: this is how an adapter learns what the INSTALLED
+    // routes can write, rather than assuming its own generation's abilities.
+    return e.json(200, {{ "ferrostep": "{version}", "writes": ["state", "counters", "scope"] }});
 }});
 
 routerAdd("POST", "/api/ferrostep/{records}/apply", (e) => {{
@@ -771,6 +836,7 @@ routerAdd("POST", "/api/ferrostep/{records}/apply", (e) => {{
         }}
         rec.set("{state}", String(body.state));
 {counter_sets}
+{scope_sets}
         rec.set("{version_field}", held + 1);
         txApp.save(rec);
         let seq = 1;
@@ -1140,8 +1206,20 @@ mod tests {
         base
     }
 
+    /// A ping from hooks generated before rescope existed. Deliberately the
+    /// default fixture: it is what every already-installed deployment answers,
+    /// and the adapter has to behave correctly against those first.
     fn ping_full() -> (&'static str, u16, String) {
         ("/api/ferrostep/ferrostep_records/ping", 200, r#"{"ferrostep":"test"}"#.to_string())
+    }
+
+    /// A ping from hooks that can write scope labels.
+    fn ping_with_scope() -> (&'static str, u16, String) {
+        (
+            "/api/ferrostep/ferrostep_records/ping",
+            200,
+            r#"{"ferrostep":"test","writes":["state","counters","scope"]}"#.to_string(),
+        )
     }
 
     fn tickets_map() -> CollectionMap {
@@ -1174,7 +1252,7 @@ mod tests {
     }
 
     fn allow(to: &str) -> Decision {
-        Decision::Allow { to: to.to_string(), counter_updates: BTreeMap::new() }
+        Decision::allow(to, BTreeMap::new())
     }
 
     #[test]
@@ -1428,6 +1506,106 @@ mod tests {
         assert!(!hooks.contains("onRecordUpdateRequest"), "no release hook unless asked for");
     }
 
+    /// ⚠⚠ Hooks are deployed separately from the binary, so a NEW adapter
+    /// routinely meets OLD routes. An apply carrying scope updates against
+    /// routes that ignore them answers 200 with a fresh version — so the
+    /// caller reports a record moved between units of work while its label
+    /// never changed, and every query keeps finding it where it was. Refusing
+    /// by name is the only honest answer, and it names the remedy.
+    #[test]
+    fn a_rescope_against_hooks_that_predate_it_is_refused_rather_than_lost() {
+        let base = serve(vec![ping_full()], 1);
+        let ledger = PocketBaseLedger::connect(&base, "token").unwrap();
+        assert_eq!(ledger.mode(), Mode::Full, "the routes are installed, just older");
+
+        let record = Record {
+            id: RecordId("r1".to_string()),
+            snapshot: Snapshot { state: "open".to_string(), counters: BTreeMap::new() },
+            version: Version("1".to_string()),
+        };
+        let moving = Decision::Allow {
+            to: "open".to_string(),
+            counter_updates: BTreeMap::new(),
+            scope_updates: BTreeMap::from([("branch".to_string(), "follow-up".to_string())]),
+        };
+        let Err(refused) = ledger.apply(&record, &an_event(moving)) else {
+            panic!("a rescope was sent to routes that cannot write it");
+        };
+        let message = refused.to_string();
+        assert!(message.contains("scope labels"), "{message}");
+        assert!(message.contains("regenerate"), "{message}");
+        // ⚠ The refusal must be local. Reaching the network first would spend
+        // the record's version on a write that did nothing.
+        assert!(
+            matches!(refused, LedgerError::Unsupported(_)),
+            "expected a refusal by name, got {refused:?}"
+        );
+    }
+
+    /// The other half: the refusal must not fire where the routes can do it,
+    /// or rescope is unreachable everywhere and the test above passes for the
+    /// wrong reason.
+    #[test]
+    fn a_rescope_is_sent_where_the_installed_hooks_say_they_write_scope() {
+        let base = serve(
+            vec![
+                ping_with_scope(),
+                ("/api/ferrostep/ferrostep_records/apply", 200, r#"{"version":2}"#.to_string()),
+            ],
+            2,
+        );
+        let ledger = PocketBaseLedger::connect(&base, "token").unwrap();
+        let record = Record {
+            id: RecordId("r1".to_string()),
+            snapshot: Snapshot { state: "open".to_string(), counters: BTreeMap::new() },
+            version: Version("1".to_string()),
+        };
+        let moving = Decision::Allow {
+            to: "open".to_string(),
+            counter_updates: BTreeMap::new(),
+            scope_updates: BTreeMap::from([("branch".to_string(), "follow-up".to_string())]),
+        };
+        assert_eq!(ledger.apply(&record, &an_event(moving)).unwrap(), Version("2".to_string()));
+    }
+
+    /// ⚠⚠ The route is authenticated, which is not the same as constrained.
+    /// Every actor in the loop holds a token, so "what may this request write"
+    /// has to be answered by the generated text rather than by trust: one
+    /// `if` per DECLARED label means a request naming any other column has no
+    /// line that would write it.
+    #[test]
+    fn a_mapped_rescope_can_only_write_the_labels_the_map_declares() {
+        let hooks = hooks_file_mapped(&tickets_map(), None);
+        assert!(hooks.contains(r#"body.scope["lane"]"#), "the declared label is writable");
+        assert!(hooks.contains(r#"rec.set("lane", String(body.scope["lane"]))"#));
+        // The shape that would make it general — and therefore unbounded.
+        assert!(
+            !hooks.contains("Object.keys(body.scope"),
+            "mapped mode must never loop over caller-supplied label names"
+        );
+        for forbidden in ["stage", "fs_version", "attempts", "id"] {
+            assert!(
+                !hooks.contains(&format!(r#"body.scope["{forbidden}"]"#)),
+                "'{forbidden}' is not a declared scope label and must not be writable through scope"
+            );
+        }
+    }
+
+    /// The generic shape keeps its labels in one JSON field, so the same rule
+    /// is expressed differently: merge into what is stored rather than
+    /// replace it. A record that loses an unnamed label falls out of every
+    /// query filtering on it, silently.
+    #[test]
+    fn the_generic_route_merges_scope_labels_rather_than_replacing_them() {
+        let hooks = hooks_file();
+        assert!(hooks.contains(r#"const labels = rec.get("scope") || {}"#));
+        assert!(hooks.contains("labels[scopeKeys[i]] = String(scopeIn[scopeKeys[i]])"));
+        assert!(
+            hooks.contains("if (scopeKeys.length > 0)"),
+            "an ordinary move must not touch scope at all"
+        );
+    }
+
     #[test]
     fn the_release_hook_is_a_guarded_transition_with_the_bookkeeping_attached() {
         let release = ReleaseHook {
@@ -1579,13 +1757,10 @@ mod tests {
                         let barrier = Arc::clone(&barrier);
                         s.spawn(move || {
                             let own = PocketBaseLedger::connect(&url, &token).unwrap();
-                            let claim = Decision::Allow {
-                                to: "spin".to_string(),
-                                counter_updates: BTreeMap::from([(
-                                    "wins".to_string(),
-                                    round as u32 + 1,
-                                )]),
-                            };
+                            let claim = Decision::allow(
+                                "spin",
+                                BTreeMap::from([("wins".to_string(), round as u32 + 1)]),
+                            );
                             barrier.wait();
                             own.apply(&current, &an_event(claim))
                                 .map(|v| {
@@ -1639,10 +1814,7 @@ mod tests {
         assert_eq!(record.version.0, "0");
 
         // Claim: spend the counter, stage stays open (a self-move).
-        let claim = Decision::Allow {
-            to: "open".to_string(),
-            counter_updates: BTreeMap::from([("attempts".to_string(), 1)]),
-        };
+        let claim = Decision::allow("open", BTreeMap::from([("attempts".to_string(), 1)]));
         let stale = record.clone();
         ledger.apply(&record, &an_event(claim.clone())).unwrap();
         let after = ledger.load(&id).unwrap();
