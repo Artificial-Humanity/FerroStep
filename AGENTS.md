@@ -41,11 +41,22 @@ to argue against, not a constraint — the section says so itself).
   `Notifier` adapter boundary it is delivered through. ntfy is the maintained
   default and earns no standing in the interface. Nothing here polls or
   schedules; a caller decides when.
+- `ferrostep-roster/` — who the actors are. A deployment's `config.yaml`
+  names its agents by **title**, and each entry carries the identity work is
+  signed under and the persona document that tells that agent how to behave.
+  Titles are configured values, never vocabulary this crate knows: nothing in
+  it means anything by "developer". The engine answers what may be done; this
+  answers who is doing it, and the two are configured separately because a
+  repo adopts a roster before it adopts a referee. Everything fails loudly —
+  an identity that fails open signs work under the wrong author and nothing
+  downstream notices.
 - `ferrostep-cli/` — the `ferrostep` binary: the decision surface
-  (`awaiting`), its resolution (`move`), the audit report (`audit`), and the
-  notification wiring (`notify`). The two views read one enumeration so they
-  cannot disagree about the ledger; stores are named per invocation, which is
-  the application layer choosing among adapters.
+  (`awaiting`), its resolution (`move`), the audit report (`audit`), the
+  notification wiring (`notify`), and the roster reader (`agent-env`, which
+  takes no store — it is how a repo with no Rust toolchain resolves an
+  actor). The two views read one enumeration so they cannot disagree about
+  the ledger; stores are named per invocation, which is the application layer
+  choosing among adapters.
 - `ferrostep-py/` — PyO3/maturin bindings, mixed layout: Rust bridge in `src/`,
   pure-Python surface in `python/ferrostep/`. The bridge speaks JSON strings;
   the Python wrapper turns them into dicts. Keep new API in the wrapper thin.
@@ -77,11 +88,16 @@ to argue against, not a constraint — the section says so itself).
   points at a value here and never writes it out** (owner, 2026-08-20) — a
   restated value, a *title* included, is a second copy waiting to drift.
   `cargo xtask agent-env` is the reader that turns an entry into shell
-  variables.
+  variables — and it is a two-line delegation to `ferrostep-roster`, because
+  `ferrostep agent-env` is the same command for a repo with no Rust
+  toolchain and two readers of one format would drift the moment either grew
+  a rule.
 - `xtask/` — repo tooling, invoked as `cargo xtask` (alias in
-  `.cargo/config.toml`): the config reader today. Not a product crate, never
-  published; its test guards `config.yaml` (parses, default agent complete,
-  persona file exists).
+  `.cargo/config.toml`): the roster reader today, so working *inside*
+  FerroStep needs no install of FerroStep. Not a product crate, never
+  published; its tests guard *this repo's* `config.yaml` (resolves and emits,
+  and the persona it names is **tracked**, not merely present — a fresh clone
+  is what CLAUDE.md imports from) and the deployment map's coverage.
 - `assets/` — project identity. `icon.png` (1024px, alpha) is the icon, and
   the GitHub App avatar (a manual upload — `ferrostep-github/README.md` says
   why registration cannot do it); `icon.svg` holds the canonical

@@ -5,33 +5,20 @@
 //!                                 shell-safe variable assignments, for
 //!                                 `eval "$(cargo xtask agent-env)"`.
 //!
+//! ⚠ **The reading is `ferrostep-roster`'s, not this file's.** `ferrostep
+//! agent-env` is the same command for a repo with no Rust toolchain, and two
+//! readers of one file format would drift the moment either grew a rule. This
+//! exists because working *inside* FerroStep should not require installing
+//! FerroStep first.
+//!
 //! Everything here fails loudly. An identity that fails open commits as the
 //! wrong author silently, so a missing file, an unknown title, or an
 //! incomplete entry is an error on stderr and a non-zero exit — never an
 //! empty string.
 
-use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::process::ExitCode;
 
-use serde::Deserialize;
-
-/// The repo's working configuration (`config.yaml` at the root). Unknown keys
-/// are deliberately tolerated: the config may grow values this reader has no
-/// business rejecting.
-#[derive(Debug, Deserialize)]
-struct Config {
-    default_agent: Option<String>,
-    #[serde(default)]
-    agents: BTreeMap<String, Agent>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Agent {
-    name: String,
-    email: String,
-    persona: String,
-}
+use ferrostep_roster::Roster;
 
 fn main() -> ExitCode {
     match run() {
@@ -59,58 +46,10 @@ fn agent_env(mut args: impl Iterator<Item = String>) -> Result<(), String> {
         None => None,
     };
 
-    let path = find_config()?;
-    let text = std::fs::read_to_string(&path)
-        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    let config: Config = serde_norway::from_str(&text)
-        .map_err(|e| format!("{} is not a valid config: {e}", path.display()))?;
-
-    let title = requested
-        .or(config.default_agent)
-        .ok_or("no --agent given and config.yaml sets no default_agent")?;
-    let agent = config.agents.get(&title).ok_or_else(|| {
-        let known: Vec<&str> = config.agents.keys().map(String::as_str).collect();
-        let known = if known.is_empty() { "none".into() } else { known.join(", ") };
-        format!("no agent titled '{title}' in config.yaml (known: {known})")
-    })?;
-    for (label, value) in [
-        ("name", &agent.name),
-        ("email", &agent.email),
-        ("persona", &agent.persona),
-    ] {
-        if value.trim().is_empty() {
-            return Err(format!("agent '{title}' has an empty {label} in config.yaml"));
-        }
-    }
-
-    println!("AGENT_TITLE={}", shell_quote(&title));
-    println!("AGENT_NAME={}", shell_quote(&agent.name));
-    println!("AGENT_EMAIL={}", shell_quote(&agent.email));
-    println!("AGENT_PERSONA={}", shell_quote(&agent.persona));
+    let roster = Roster::discover_from_cwd().map_err(|e| e.to_string())?;
+    let agent = roster.resolve(requested.as_deref()).map_err(|e| e.to_string())?;
+    println!("{}", agent.shell_assignments().map_err(|e| e.to_string())?);
     Ok(())
-}
-
-/// Walk up from the current directory, so `cargo xtask` works from any
-/// subdirectory of the repo. An absolute path baked in at compile time would
-/// go stale if the checkout moved.
-fn find_config() -> Result<PathBuf, String> {
-    let mut dir =
-        std::env::current_dir().map_err(|e| format!("cannot read current dir: {e}"))?;
-    loop {
-        let candidate = dir.join("config.yaml");
-        if candidate.is_file() {
-            return Ok(candidate);
-        }
-        if !dir.pop() {
-            return Err("no config.yaml found between here and the filesystem root".into());
-        }
-    }
-}
-
-/// POSIX single-quoting, `'` escaped as `'\''`. The caller `eval`s this
-/// output, so quoting is correctness, not cosmetics.
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', r"'\''"))
 }
 
 #[cfg(test)]
@@ -120,41 +59,37 @@ mod tests {
     /// "Configurable" is a claim to test: this proves the shipped config.yaml
     /// parses, its default agent resolves to a complete entry, and the
     /// persona path points at a real file — the roster cannot silently rot.
+    ///
+    /// The parsing rules themselves are `ferrostep-roster`'s to test. What is
+    /// tested here is *this repo's* roster, which that crate knows nothing
+    /// about.
     #[test]
     fn repo_config_parses_and_default_agent_resolves() {
-        let text = include_str!("../../config.yaml");
-        let config: Config = serde_norway::from_str(text).unwrap();
-        let title = config.default_agent.expect("config.yaml sets no default_agent");
-        let agent = config
-            .agents
-            .get(&title)
-            .unwrap_or_else(|| panic!("default_agent '{title}' has no agents entry"));
-        for (label, value) in [
-            ("name", &agent.name),
-            ("email", &agent.email),
-            ("persona", &agent.persona),
-        ] {
-            assert!(!value.trim().is_empty(), "default agent has an empty {label}");
-        }
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-        assert!(
-            root.join(&agent.persona).is_file(),
-            "persona file '{}' does not exist",
-            agent.persona
-        );
+        let roster = Roster::load(repo_root().join("config.yaml")).unwrap();
+        // `shell_assignments` is what the emitter actually calls, and it is
+        // where completeness and the persona's existence are checked. Asking
+        // for it here tests the same path a caller takes rather than a
+        // weaker restatement of it.
+        let agent = roster.resolve(None).unwrap();
+        agent.shell_assignments().unwrap();
         // ⚠ Existing is not the requirement — being TRACKED is. The persona is
-        // what CLAUDE.md imports, so an untracked one works perfectly here and
-        // leaves a fresh clone with an agent that has no procedures. Those two
-        // questions are asked of different things: `is_file` reads the working
-        // tree, this reads the index, and they disagree in exactly the case
-        // worth catching. Measured elsewhere in this workspace: a full suite
-        // passed green while the file it depended on was untracked.
+        // what CLAUDE.md imports, so an untracked one works perfectly for the
+        // check above and leaves a fresh clone with an agent that has no
+        // procedures. Those two questions are asked of different things:
+        // `is_file` reads the working tree, this reads the index, and they
+        // disagree in exactly the case worth catching. Measured elsewhere in
+        // this workspace: a full suite passed green while the file it
+        // depended on was untracked.
         assert!(
-            tracked_files(root).contains(agent.persona.as_str()),
+            tracked_files(&repo_root()).contains(agent.persona()),
             "persona file '{}' exists but is not tracked by git — it would be \
              absent from a fresh clone, and CLAUDE.md imports it",
-            agent.persona
+            agent.persona()
         );
+    }
+
+    fn repo_root() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
     }
 
     /// The repo's tracked paths, from the index rather than the working tree.
@@ -173,56 +108,6 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn shell_quote_survives_embedded_quotes() {
-        assert_eq!(shell_quote("O'Malley"), r"'O'\''Malley'");
-    }
-
-    /// The emitted text is `eval`ed by the caller's shell, so config becomes
-    /// executable text and quoting is the only thing between the two. Asserting
-    /// the quoted *form* only tests what we believe a shell does with it; this
-    /// hands it to a real one and reads the value back.
-    #[test]
-    fn a_value_reaches_the_shell_as_itself_whatever_is_in_it() {
-        for hostile in [
-            "O'Malley",
-            "; rm -rf /",
-            "$(id)",
-            "`id`",
-            "a\nb",
-            "$HOME",
-            r#"double " and single ' together"#,
-            "",
-        ] {
-            let script = format!("V={}; printf %s \"$V\"", shell_quote(hostile));
-            let out = std::process::Command::new("sh")
-                .arg("-c")
-                .arg(&script)
-                .output()
-                .expect("sh is available");
-            assert!(out.status.success(), "sh refused: {script}");
-            assert_eq!(
-                String::from_utf8_lossy(&out.stdout),
-                hostile,
-                "value did not survive: {script}"
-            );
-        }
-    }
-
-    /// Key injection is unreachable rather than filtered: the emitter writes
-    /// four literal names and never derives one from the file, so a config
-    /// cannot introduce an identifier into the caller's shell.
-    #[test]
-    fn the_emitted_keys_are_fixed_not_derived() {
-        let src = include_str!("main.rs");
-        let emitted = src.matches("println!(\"AGENT_").count();
-        assert_eq!(emitted, 4, "a fifth emitted key needs a fixed name too");
-        assert!(
-            !src.contains("println!(\"{}=") && !src.contains("println!(\"{key}"),
-            "an emitted key must never be interpolated from config"
-        );
-    }
-
     /// Every tracked top-level path must be mentioned in the deployment map,
     /// so adding a directory forces classifying it (Ships or Never ships).
     /// This is a MENTION check, not a truth check: green means "nothing is
@@ -230,10 +115,10 @@ mod tests {
     /// git index, so an untracked path is invisible to it until `git add`.
     #[test]
     fn deployment_map_covers_the_tree() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let root = repo_root();
         let map = std::fs::read_to_string(root.join("docs/deployment-map.md"))
             .expect("docs/deployment-map.md is missing");
-        let tracked = tracked_files(root);
+        let tracked = tracked_files(&root);
         let top_level: std::collections::BTreeSet<&str> = tracked
             .iter()
             .filter_map(|line| line.split('/').next())

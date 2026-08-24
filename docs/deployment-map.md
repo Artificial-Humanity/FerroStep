@@ -25,7 +25,8 @@ exists to build or govern the product — the repo is public, so everything is
 | `ferrostep-sqlite/` | Rust crate `ferrostep-sqlite` — the SQLite ledger adapter, the zero-install path | crates.io | not yet published |
 | `ferrostep-pocketbase/` | Rust crate `ferrostep-pocketbase` — the PocketBase ledger adapter, plus the generated migration and hook files it installs | crates.io; the generated files land in a deployment's PocketBase directory | not yet published |
 | `ferrostep-notify/` | Rust crate `ferrostep-notify` — the notification message and its delivery adapter boundary, with the ntfy default | crates.io | not yet published |
-| `ferrostep-cli/` | Rust crate `ferrostep-cli`, installing the `ferrostep` binary — decision surface, move, audit, notify wiring | crates.io | not yet published |
+| `ferrostep-roster/` | Rust crate `ferrostep-roster` — the actor roster a deployment configures: titles, the identity work is signed under, and the persona document a launcher hands an agent | crates.io | not yet published |
+| `ferrostep-cli/` | Rust crate `ferrostep-cli`, installing the `ferrostep` binary — decision surface, move, audit, notify wiring, and `agent-env` (the roster reader, which is how a repo with no Rust toolchain resolves an actor) | crates.io | not yet published |
 | `ferrostep-py/` | Python package `ferrostep` | PyPI | not yet published |
 | `ferrostep-github/` | Rust crate/binary `ferrostep-github`, and a registered GitHub App instance per org | crates.io; the App via GitHub registration | scaffold; no App registered yet |
 | `skills/` | actor skills (`SKILL.md` format) | with the product; channel decided with the first skill | empty by design |
@@ -42,7 +43,7 @@ it gets a row when the crate does.
 | path | what keeps it home |
 |---|---|
 | `workflow/` | working conventions: personas, and repo-working skills when they exist |
-| `config.yaml` | the repo's agent roster |
+| `config.yaml` | the repo's *own* agent roster — the format ships (`ferrostep-roster`), this instance of it does not |
 | `xtask/` | repo tooling; `publish = false` in its manifest is the mechanism |
 | `.cargo/` | the cargo alias that invokes xtask |
 | `notes/` | long-term scratchpad |

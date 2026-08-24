@@ -7,7 +7,24 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
-Nothing yet.
+- `ferrostep-roster`: the actor roster as a product surface. A deployment's
+  `config.yaml` names its agents by title; each entry carries the identity work
+  is signed under and the persona document that tells that agent how to behave.
+  Titles are configured values and the crate knows nothing by any of them. The
+  persona resolves against the roster's own directory and is checked to exist
+  before it is emitted, because that path is what a launcher hands to
+  `--system-prompt-file`.
+- `ferrostep-cli`: `agent-env` — the roster as shell assignments, taking no
+  workflow and no store. A repo adopts a roster before it adopts a referee, and
+  a repo with no Rust toolchain could not reach the reader at all while it was
+  an `xtask` subcommand. Every failure is a refusal with a message rather than
+  an empty assignment at status zero: a caller `eval`s this and then commits
+  with it, so falling back is how work gets signed under the wrong name.
+  `--format json` answers the same resolution for a caller that is not a
+  shell, so recovering a name does not require decoding shell quoting in
+  another language.
+- `xtask agent-env` now delegates to `ferrostep-roster` rather than carrying a
+  second reader of the same format.
 
 ## 0.1.0 — 2026-08-24
 

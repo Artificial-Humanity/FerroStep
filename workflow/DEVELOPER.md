@@ -16,12 +16,28 @@ drift.
 
 ## 1. Identity — you commit as the identity your entry assigns
 
-The reader turns your `config.yaml` entry into shell variables:
+The reader turns your `config.yaml` entry into shell variables. Inside this
+repo `cargo xtask agent-env` needs no install; `ferrostep agent-env` is the
+same command once the binary is on your PATH.
 
 ```bash
-eval "$(cargo xtask agent-env)"    # AGENT_TITLE, AGENT_NAME, AGENT_EMAIL, AGENT_PERSONA
-git -c user.name="$AGENT_NAME" -c user.email="$AGENT_EMAIL" commit -m "…"
+env="$(cargo xtask agent-env)" || exit 1   # AGENT_TITLE, NAME, EMAIL, PERSONA, ROSTER
+eval "$env"
+git -c user.name="$AGENT_NAME" -c user.email="$AGENT_EMAIL" commit -F msg.txt
 ```
+
+⚠ **Capture, check, then `eval` — `eval "$(…)"` throws the reader's refusal
+away.** `eval`'s status is the status of the text it ran, not of the command
+substitution that produced it, so a reader that exited 1 with a message on
+stderr becomes `eval ""` at status **0**. Measured here 2026-08-24: `|| die`
+does not fire, and **`set -e` does not stop it either**. The reader refuses
+correctly and the shell discards the refusal. An assignment does carry the
+status, which is the whole difference above.
+
+Nothing was signed wrong by this, and the reason is worth knowing rather than
+relying on: `git` refuses an empty ident (`fatal: empty ident name`, exit 128,
+nothing committed), and a launcher checking its persona is readable refuses an
+empty path. Both are downstream accidents, not this idiom working.
 
 ⚠ **This is a convention, not a mechanism, and it fails silently.** The repo's configured
 identity is the owner's (`lmcfarlin <2363604+lmcfarlin@users.noreply.github.com>`), left that

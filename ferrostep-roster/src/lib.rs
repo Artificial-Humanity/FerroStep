@@ -214,13 +214,13 @@ impl<'a> Resolved<'a> {
         self.roster
     }
 
-    /// The entry as shell variable assignments, for `eval "$(…)"`.
+    /// The resolved persona path, having checked that it exists.
     ///
-    /// The persona is emitted resolved and is **checked to exist**: this
-    /// output is what a launcher passes to `--system-prompt-file`, and a path
+    /// This is what a launcher passes to `--system-prompt-file`, and a path
     /// that points at nothing is a lie that surfaces as an actor behaving
-    /// like no one in particular.
-    pub fn shell_assignments(&self) -> Result<String, RosterError> {
+    /// like no one in particular. Every emitter goes through here, so no
+    /// output format can be the one that skips the check.
+    pub fn require_persona_file(&self) -> Result<PathBuf, RosterError> {
         let persona = self.persona_path();
         if !persona.is_file() {
             return Err(RosterError::MissingPersona {
@@ -230,6 +230,12 @@ impl<'a> Resolved<'a> {
                 path: self.roster.source.clone(),
             });
         }
+        Ok(persona)
+    }
+
+    /// The entry as shell variable assignments, for `eval "$(…)"`.
+    pub fn shell_assignments(&self) -> Result<String, RosterError> {
+        let persona = self.require_persona_file()?;
         // ⚠ Every emitted key is a literal written here. Deriving one from
         // the file would let a roster introduce an identifier into the
         // caller's shell, and the caller `eval`s this.

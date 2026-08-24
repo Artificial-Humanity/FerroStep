@@ -1,6 +1,8 @@
 //! ferrostep — the person-facing surface over a refereed ledger.
 //!
-//! Four subcommands, one set of primitives:
+//! Five subcommands. Four are one set of primitives over a ledger; the fifth
+//! answers the other half of an actor's question — the ledger says *what may
+//! be done*, and the roster says *who is doing it*:
 //!
 //! * `awaiting` — the decision surface (ROADMAP B2): which records await a
 //!   person, and which moves their role has, each annotated with what it
@@ -16,6 +18,12 @@
 //! * `notify` — B3's wiring: one notification per awaiting record, through
 //!   the notifier adapter. Invoked when the caller decides; nothing here
 //!   polls or schedules.
+//! * `agent-env` — the roster: an agent's title, the identity it signs work
+//!   under, and the persona document a launcher hands it, as shell
+//!   assignments. It touches no ledger and takes no store, because who the
+//!   actors are is knowable without one. This is the surface that lets a
+//!   repo with no Rust toolchain — or no FerroStep-refereed ledger yet —
+//!   resolve an actor at all.
 //!
 //! The store is named per invocation (`sqlite:<path>` or
 //! `pocketbase:<url>`) — an application-layer choice among adapters, which
@@ -28,11 +36,13 @@ use std::process::ExitCode;
 use ferrostep_core::{Attempt, Decision, Engine, Status, WorkflowDef};
 use ferrostep_ledger::{Event, Ledger, Record, RecordId, Scope};
 use ferrostep_notify::{Notification, Notifier, Ntfy, Urgency};
+use ferrostep_roster::Roster;
 
 const USAGE: &str = "ferrostep — the person-facing surface over a FerroStep-refereed ledger
 
 USAGE:
   ferrostep <awaiting|audit|move|notify> --workflow <def.json> --store <target> [options]
+  ferrostep agent-env [--agent <title>] [--roster <config.yaml>]
 
 COMMON:
   --workflow <path>     the workflow definition JSON the ledger is refereed by
@@ -49,6 +59,13 @@ move:
 
 notify:
   --ntfy <server> --topic <topic> [--ntfy-token <token>]
+
+agent-env:                     (takes no --workflow and no --store)
+  --agent <title>       the roster entry to resolve (default: its default_agent)
+  --roster <path>       the roster file (default: the nearest config.yaml at
+                        or above the working directory)
+  --format shell|json   shell assignments to eval (default), or JSON for a
+                        caller that is not a shell
 ";
 
 fn main() -> ExitCode {
@@ -101,6 +118,13 @@ fn run(args: &[String]) -> Result<String, String> {
         return Err(format!("no subcommand given\n\n{USAGE}"));
     };
     let flags = Flags::parse(&args[1..])?;
+    // The roster is not a question about a ledger, so it answers before one
+    // is opened. Requiring a workflow and a store to ask who the developer is
+    // would put the actor's own identity behind the very machinery an actor
+    // needs its identity to operate.
+    if command == "agent-env" {
+        return agent_env(&flags);
+    }
     let engine = load_engine(flags.require("workflow")?)?;
     let ledger = open_ledger(flags.require("store")?, flags.get("token"), flags.get("map"))?;
     let mut scope = Scope::all();
@@ -140,6 +164,40 @@ fn run(args: &[String]) -> Result<String, String> {
             send_notifications(&engine, &rows, &notifier)
         }
         other => Err(format!("unknown subcommand '{other}'\n\n{USAGE}")),
+    }
+}
+
+/// Resolve one roster entry into shell assignments the caller `eval`s.
+///
+/// ⚠ **Every failure here is a non-zero exit with a message**, never an
+/// empty assignment at status zero. A caller that `eval`s an empty
+/// `AGENT_NAME` and commits with it has silently signed the work as whoever
+/// the repo is configured for — which is the failure the roster exists to
+/// end, arriving through the roster itself.
+fn agent_env(flags: &Flags) -> Result<String, String> {
+    let roster = match flags.get("roster") {
+        Some(path) => Roster::load(path),
+        None => Roster::discover_from_cwd(),
+    }
+    .map_err(|e| e.to_string())?;
+    let agent = roster.resolve(flags.get("agent")).map_err(|e| e.to_string())?;
+    match flags.get("format").unwrap_or("shell") {
+        "shell" => agent.shell_assignments().map_err(|e| e.to_string()),
+        // For a caller that is not a shell. Parsing shell quoting in another
+        // language to recover a value the emitter had in hand is a decoding
+        // step that can go wrong, in a caller that only wanted a name.
+        "json" => {
+            let persona = agent.require_persona_file().map_err(|e| e.to_string())?;
+            Ok(serde_json::json!({
+                "title": agent.title(),
+                "name": agent.name(),
+                "email": agent.email(),
+                "persona": persona.to_string_lossy(),
+                "roster": agent.roster().source().to_string_lossy(),
+            })
+            .to_string())
+        }
+        other => Err(format!("--format takes shell or json, got '{other}'")),
     }
 }
 
@@ -683,5 +741,153 @@ mod tests {
             panic!("a map on a sqlite store must be refused");
         };
         assert!(refused.contains("pocketbase: stores only"), "{refused}");
+    }
+
+    /// A roster with both entries and the persona files they name.
+    fn roster_dir() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("workflow")).unwrap();
+        std::fs::write(dir.path().join("workflow/DEVELOPER.md"), "# developer").unwrap();
+        std::fs::write(dir.path().join("workflow/REVIEWER.md"), "# reviewer").unwrap();
+        std::fs::write(
+            dir.path().join("config.yaml"),
+            "default_agent: developer\n\
+             agents:\n\
+            \x20 developer:\n\
+            \x20   name: Ada\n\
+            \x20   email: ada@example.com\n\
+            \x20   persona: workflow/DEVELOPER.md\n\
+            \x20 reviewer:\n\
+            \x20   name: Grace\n\
+            \x20   email: grace@example.com\n\
+            \x20   persona: workflow/REVIEWER.md\n",
+        )
+        .unwrap();
+        dir
+    }
+
+    fn argv(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// ⚠ The regression this pins is structural: every other subcommand
+    /// requires a workflow and a store, and those are resolved before the
+    /// match. Asking who the developer is must not require a refereed ledger
+    /// to exist — a repo adopts the roster before it adopts the referee, and
+    /// that ordering is the whole reason this ships in the binary.
+    #[test]
+    fn agent_env_answers_without_a_workflow_or_a_store() {
+        let dir = roster_dir();
+        let roster = dir.path().join("config.yaml");
+        let out = run(&argv(&["agent-env", "--roster", roster.to_str().unwrap()])).unwrap();
+        assert!(out.contains("AGENT_TITLE='developer'"), "{out}");
+        assert!(out.contains("AGENT_NAME='Ada'"), "{out}");
+        assert!(out.contains("AGENT_EMAIL='ada@example.com'"), "{out}");
+        assert!(out.contains("workflow/DEVELOPER.md'"), "{out}");
+
+        let out = run(&argv(&[
+            "agent-env",
+            "--agent",
+            "reviewer",
+            "--roster",
+            roster.to_str().unwrap(),
+        ]))
+        .unwrap();
+        assert!(out.contains("AGENT_NAME='Grace'"), "{out}");
+        assert!(out.contains("workflow/REVIEWER.md'"), "{out}");
+    }
+
+    /// ⚠⚠ **Refuse, never fall back.** The caller `eval`s this output and
+    /// then commits with it, so an empty `AGENT_NAME` emitted at status zero
+    /// signs the work as whoever the repo is configured for — the exact
+    /// silent misattribution the roster exists to end. Every failure must
+    /// reach `main` as an `Err`, which is the non-zero exit.
+    #[test]
+    fn every_roster_failure_is_a_refusal_rather_than_an_empty_variable() {
+        let dir = roster_dir();
+        let roster = dir.path().join("config.yaml");
+        let missing = dir.path().join("nowhere/config.yaml");
+        std::fs::write(dir.path().join("broken.yaml"), "agents: [this is not a map]\n").unwrap();
+
+        for (case, args) in [
+            ("no such roster", vec!["agent-env", "--roster", missing.to_str().unwrap()]),
+            (
+                "unparseable roster",
+                vec!["agent-env", "--roster", dir.path().join("broken.yaml").to_str().unwrap()],
+            ),
+            (
+                "unknown title",
+                vec!["agent-env", "--agent", "archivist", "--roster", roster.to_str().unwrap()],
+            ),
+        ] {
+            let result = run(&argv(&args));
+            let Err(refused) = result else {
+                panic!("{case}: emitted '{}' instead of refusing", result.unwrap());
+            };
+            assert!(!refused.is_empty(), "{case}: refused with no message");
+        }
+    }
+
+    /// A caller that is not a shell should not have to decode shell quoting
+    /// to recover a value the emitter had in hand. Both formats answer from
+    /// one resolution, so they cannot disagree about who an agent is.
+    #[test]
+    fn json_carries_the_same_entry_as_the_shell_form() {
+        let dir = roster_dir();
+        let roster = dir.path().join("config.yaml");
+        let json = run(&argv(&[
+            "agent-env",
+            "--agent",
+            "reviewer",
+            "--roster",
+            roster.to_str().unwrap(),
+            "--format",
+            "json",
+        ]))
+        .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["title"], "reviewer");
+        assert_eq!(parsed["name"], "Grace");
+        assert_eq!(parsed["email"], "grace@example.com");
+        assert_eq!(
+            parsed["persona"],
+            dir.path().join("workflow/REVIEWER.md").to_string_lossy().as_ref()
+        );
+
+        let Err(refused) = run(&argv(&[
+            "agent-env",
+            "--roster",
+            roster.to_str().unwrap(),
+            "--format",
+            "yaml",
+        ])) else {
+            panic!("an unknown format was accepted");
+        };
+        assert!(refused.contains("shell or json"), "{refused}");
+    }
+
+    /// ⚠ The persona check is the reason a launcher can trust the path it is
+    /// handed. A second output format is exactly where such a check gets
+    /// forgotten, so it is asked of both.
+    #[test]
+    fn neither_format_emits_a_persona_that_does_not_exist() {
+        let dir = roster_dir();
+        std::fs::remove_file(dir.path().join("workflow/REVIEWER.md")).unwrap();
+        let roster = dir.path().join("config.yaml");
+        for format in ["shell", "json"] {
+            let result = run(&argv(&[
+                "agent-env",
+                "--agent",
+                "reviewer",
+                "--roster",
+                roster.to_str().unwrap(),
+                "--format",
+                format,
+            ]));
+            let Err(refused) = result else {
+                panic!("--format {format} emitted a persona that does not exist");
+            };
+            assert!(refused.contains("does not exist"), "{format}: {refused}");
+        }
     }
 }

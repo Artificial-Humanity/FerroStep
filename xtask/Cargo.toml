@@ -10,5 +10,6 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+ferrostep-roster = { path = "../ferrostep-roster", version = "0.1.1-dev" }
 serde = { workspace = true }
 serde_norway = "0.9"

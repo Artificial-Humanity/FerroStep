@@ -16,6 +16,7 @@ ferrostep-ledger = { path = "../ferrostep-ledger", version = "0.1.1-dev" }
 ferrostep-sqlite = { path = "../ferrostep-sqlite", version = "0.1.1-dev" }
 ferrostep-pocketbase = { path = "../ferrostep-pocketbase", version = "0.1.1-dev" }
 ferrostep-notify = { path = "../ferrostep-notify", version = "0.1.1-dev" }
+ferrostep-roster = { path = "../ferrostep-roster", version = "0.1.1-dev" }
 serde_json = { workspace = true }
 
 [dev-dependencies]

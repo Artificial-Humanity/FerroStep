@@ -160,6 +160,7 @@ dependencies = [
  "ferrostep-ledger",
  "ferrostep-notify",
  "ferrostep-pocketbase",
+ "ferrostep-roster",
  "ferrostep-sqlite",
  "serde_json",
  "tempfile",
@@ -215,6 +216,15 @@ dependencies = [
  "ferrostep-core",
  "pyo3",
  "serde_json",
+]
+
+[[package]]
+name = "ferrostep-roster"
+version = "0.1.1-dev"
+dependencies = [
+ "serde",
+ "serde_norway",
+ "tempfile",
 ]
 
 [[package]]
@@ -1083,6 +1093,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 name = "xtask"
 version = "0.1.1-dev"
 dependencies = [
+ "ferrostep-roster",
  "serde",
  "serde_norway",
 ]
