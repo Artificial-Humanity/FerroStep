@@ -3,7 +3,7 @@
 //!
 //! ```sh
 //! cargo run -p ferrostep-pocketbase --example emit-mapped -- \
-//!     <config.json> <hooks-out.pb.js> [events-collection.json]
+//!     <config.json> <hooks-out.pb.js> [migration-out.js]
 //! ```
 //!
 //! The config is deployment configuration, kept beside the workflow
@@ -18,8 +18,8 @@
 //!
 //! The hooks file lands in the server's `pb_hooks/` (⚠ a watching server
 //! restarts itself when it does). The optional third argument writes the
-//! event collection's creation body, for provisioning over the collections
-//! API instead of a migration file.
+//! guarded migration that adds the version column and creates the event
+//! collection — placed in `pb_migrations/`, it applies at that same restart.
 
 use serde::Deserialize;
 
@@ -32,10 +32,10 @@ struct EmitConfig {
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let usage = "usage: emit-mapped <config.json> <hooks-out.pb.js> [events-collection.json]";
+    let usage = "usage: emit-mapped <config.json> <hooks-out.pb.js> [migration-out.js]";
     let config_path = args.next().expect(usage);
     let hooks_out = args.next().expect(usage);
-    let events_out = args.next();
+    let migration_out = args.next();
 
     let source = std::fs::read_to_string(&config_path).expect("readable config");
     let config: EmitConfig = serde_json::from_str(&source).expect("config parses");
@@ -44,10 +44,9 @@ fn main() {
     std::fs::write(&hooks_out, hooks).expect("writable hooks path");
     println!("wrote {hooks_out}");
 
-    if let Some(path) = events_out {
-        let body = ferrostep_pocketbase::events_collection_body(&config.map.events);
-        std::fs::write(&path, serde_json::to_string_pretty(&body).unwrap())
-            .expect("writable events path");
+    if let Some(path) = migration_out {
+        let migration = ferrostep_pocketbase::migration_file_mapped(&config.map);
+        std::fs::write(&path, migration).expect("writable migration path");
         println!("wrote {path}");
     }
 }
