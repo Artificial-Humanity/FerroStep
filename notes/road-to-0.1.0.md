@@ -6,6 +6,13 @@ here and that cut and names each step's first move. The ordering and shapes
 are the resident developer's proposals (2026-08-24), owner-directed like
 everything else; roadmap item definitions are pointed at, never restated.
 
+**Status (2026-08-24):** §1–§5 are built, tested and merged — both adapters
+(the PocketBase one proven against a live throwaway instance, battery
+included), the decision surface with its resolving `move`, the notification
+crate, and the audit report. §6 is prepared, not performed: the
+[cutover runbook](cutover-runbook.md) exists, and the cutover itself and the
+deployability judgment are the owner's.
+
 ## Where the tree stands
 
 The referee core and Python bindings are built and tested. `ferrostep-ledger`
