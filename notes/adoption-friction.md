@@ -96,6 +96,16 @@ this project. **FerroStep inherited the gap rather than creating it.**
    Adopting a referee therefore makes an unmodelled operation *more* dangerous
    than it was before, not less, and nothing warns you.
 
+⚠⚠ **And here is what that feels like from inside the loop, which is the half
+that makes it actionable** — the reporter's words, and not something this side
+of the boundary could have observed: **the raw writes felt SAFER than they
+were, precisely because everything around them was refereed.** The mechanism
+explains where the risk goes; this explains why nobody looks. An operator
+surrounded by careful machinery stops asking whether the one uncareful thing is
+dangerous, because the *setting* reads as careful. A referee therefore buys
+safety and spends some of it on complacency, and an adopter should be told so
+in as many words.
+
 ⚠ **Ask a migrating loop what it does that the definition cannot express.**
 That question found this; a review of the definition never would have, because
 the definition is exactly where the answer is missing.
