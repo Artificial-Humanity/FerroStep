@@ -39,6 +39,15 @@ entry here is mandatory rather than courtesy.
   so a consumer written before rescope existed reads byte-identical JSON for
   everything it already handled, and no fourth `kind` was added for every
   binding to learn.
+- `CounterDef` grows `exhausted_requires_note`: the attempt that finds a ceiling
+  spent can be required to say what decision is being asked for. Exhaustion
+  routes a record to a person, and an automatic route arrives in front of them
+  with **no question attached** — which is the whole content of the handover.
+  The actor that just ran out of attempts is the one who knows what cannot be
+  settled, and that is the moment it knows it. Deliberately not `requires_note`
+  on the spending transition, which would tax every attempt when only the last
+  one is addressed to anybody; the decision surface still shows where a spent
+  ceiling would route, because it offers moves with a note already attached.
 - `ferrostep-pocketbase`: the generated ping now states what the installed
   routes can write, and the adapter reads it. Hooks are deployed separately
   from the binary, so a current adapter meets older routes routinely — and

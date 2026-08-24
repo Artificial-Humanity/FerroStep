@@ -252,6 +252,19 @@ pub struct CounterDef {
     /// two would both fire on the same move.
     #[serde(default)]
     pub spend_on_entry_to: Vec<String>,
+    /// Whether the attempt that finds this ceiling spent must carry a reason.
+    ///
+    /// Exhaustion is routing, and where it routes is usually a person. But an
+    /// automatic route produces a record sitting in front of that person **with
+    /// no question attached** — and the question is the whole content of the
+    /// handover. The actor that ran out of attempts is the one who knows what
+    /// cannot be settled, and this is the moment it knows it.
+    ///
+    /// ⚠ Deliberately not `requires_note` on the spending transition: that
+    /// would demand a reason for *every* attempt, when only the last one is
+    /// addressed to anybody.
+    #[serde(default)]
+    pub exhausted_requires_note: bool,
 }
 
 /// A record's current position, as read from the ledger. Counters absent from
@@ -747,6 +760,19 @@ impl Engine {
         for counter in spends {
             let current = snap.counters.get(&counter.name).copied().unwrap_or(0);
             if current >= counter.max {
+                // The routing is about to hand this record to somebody. Refuse
+                // to do it silently where the definition says the handover
+                // carries a question — a person cannot answer one that was
+                // never asked.
+                if counter.exhausted_requires_note && !attempt.has_note() {
+                    return Decision::Deny {
+                        reason: format!(
+                            "'{}' is spent: the attempt that routes this record to '{}' \
+                             must say what decision is being asked for",
+                            counter.name, counter.on_exhausted
+                        ),
+                    };
+                }
                 return Decision::Exhausted {
                     to: counter.on_exhausted.clone(),
                     counter: counter.name.clone(),
@@ -1545,6 +1571,7 @@ mod tests {
             max: 2,
             on_exhausted: "escalated".to_string(),
             spend_on_entry_to: Vec::new(),
+            exhausted_requires_note: false,
         });
         def.transitions.push(TransitionDef {
             from: "working".to_string(),
@@ -1576,6 +1603,7 @@ mod tests {
             max: 2,
             on_exhausted: "escalated".to_string(),
             spend_on_entry_to: Vec::new(),
+            exhausted_requires_note: false,
         });
         assert_eq!(
             def.validate().unwrap_err(),
@@ -1808,6 +1836,74 @@ mod tests {
                 label: "branch".to_string(),
                 role: "worker".to_string(),
             })
+        );
+    }
+
+    /// ⚠ Exhaustion routes a record to a person, and an automatic route
+    /// arrives with no question attached — which is the whole content of the
+    /// handover. The actor that just ran out of attempts is the one who knows
+    /// what cannot be settled, so that is where the reason is demanded.
+    #[test]
+    fn the_attempt_that_spends_a_ceiling_can_be_made_to_carry_the_question() {
+        let mut def = review_loop();
+        def.counters[0].exhausted_requires_note = true;
+        let engine = Engine::new(def).unwrap();
+        let spent = snap("awaiting_worker", 3);
+
+        let silent = engine.authorize(&spent, &Attempt::new("worker", "working"));
+        let Decision::Deny { reason } = silent else {
+            panic!("a ceiling routed to a person with nothing said: {silent:?}");
+        };
+        assert!(reason.contains("escalated"), "{reason}");
+        assert!(reason.contains("what decision is being asked for"), "{reason}");
+
+        // With the question attached it routes, and the note rides into the
+        // event the caller builds — which is where the person reads it.
+        let asked = engine.authorize(
+            &spent,
+            &Attempt::new("worker", "working").saying("the corpus licence is unclear; ruling?"),
+        );
+        assert_eq!(
+            asked,
+            Decision::Exhausted {
+                to: "escalated".to_string(),
+                counter: "agent_passes".to_string()
+            }
+        );
+    }
+
+    /// ⚠ Only the LAST attempt is addressed to anybody. Demanding a reason for
+    /// every claim would be `requires_note` on the transition, which is a
+    /// different and much more expensive rule.
+    #[test]
+    fn requiring_the_question_does_not_tax_the_attempts_before_it() {
+        let mut def = review_loop();
+        def.counters[0].exhausted_requires_note = true;
+        let engine = Engine::new(def).unwrap();
+        for spent in [0u32, 1, 2] {
+            let decision =
+                engine.authorize(&snap("awaiting_worker", spent), &Attempt::new("worker", "working"));
+            assert!(
+                matches!(decision, Decision::Allow { .. }),
+                "claim {spent} was taxed for a note: {decision:?}"
+            );
+        }
+    }
+
+    /// The decision surface offers moves WITH a placeholder note, so a move
+    /// that merely lacks one is not reported impossible. That has to keep
+    /// holding, or turning this rule on hides the escalation from the very
+    /// view a person reads to find it.
+    #[test]
+    fn the_decision_surface_still_shows_where_a_spent_ceiling_would_route() {
+        let mut def = review_loop();
+        def.counters[0].exhausted_requires_note = true;
+        let engine = Engine::new(def).unwrap();
+        let moves = engine.next_moves(&snap("awaiting_worker", 3), "worker");
+        assert!(
+            moves.iter().any(|(t, d)| t.to == "working"
+                && matches!(d, Decision::Exhausted { to, .. } if to == "escalated")),
+            "the spent ceiling stopped being visible: {moves:?}"
         );
     }
 
