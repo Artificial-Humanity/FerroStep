@@ -311,6 +311,39 @@ refusal messages needed nothing. *"role 'developer' may not move 'review' ->
 split matters — refusal text was designed carefully and holds up; success text
 was not designed at all, and that is where the regression was.
 
+## 13. A ceiling moved into the definition; its ARITHMETIC stayed behind
+
+**Hit:** the loop's fix-pass ceiling became `agent_passes.max` in the workflow
+definition. Elsewhere in the loop, a launcher carried a hardcoded review
+ceiling — **`max + 1`**, wearing a refusal — because three fix passes means up
+to four reviews (the one that finds a finding, then one after each pass).
+Migrating the value did not migrate the arithmetic derived from it. A targeted
+sweep missed it; a broader battery found it, along with three other live
+leftovers.
+
+⚠⚠ **The general shape, and it will hit every adopter who moves a ceiling:
+FerroStep takes ownership of the NUMBER and knows nothing about its
+DERIVATIVES.** Those are not copies of `3` — they are `max + 1` in a guard, a
+`1-4` range in a help string, a diagram with four arrows, a sentence in a brief.
+**Searching for the literal value finds none of them.** They live in registers
+that do not look like configuration, which is exactly why they survive a
+migration that was careful about configuration.
+
+⚠⚠ **And the first fix is likely incomplete, which is the part worth
+internalizing.** After the derived ceiling was fixed, **two more instances
+survived in the same file** — one in `--help` text and one *inside the brief
+handed to the reviewing actor*, eight lines from the corrected code. The one
+that was found was the one **wearing a refusal**; the ones wearing prose stayed.
+That is not carelessness. A refusal announces itself when it fires; a brief
+never does, and an actor trusts it precisely because it arrives on the channel
+its rules arrive on.
+
+**Not changed in FerroStep, and possibly not fixable here** — the derivatives
+are the adopter's and the engine cannot see them. But it sharpens the open item
+in entry 6: alongside the expensive replay check, a cheap cousin would simply
+**print the numbers a definition asserts**, so an adopter has a list to go
+hunting arithmetic for. Two data points now, from one migration.
+
 ---
 
 ## Open questions the migration has not answered yet
