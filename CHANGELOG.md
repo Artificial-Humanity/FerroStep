@@ -7,7 +7,15 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
-Everything to date — the first release has not been cut.
+Nothing yet.
+
+## 0.1.0 — 2026-08-24
+
+The internal MVP ([ROADMAP §Releases](docs/ROADMAP.md)): cut on the owner's
+judgment after the lane's store was provisioned live and a real record ran
+the full refereed cycle — a pass claimed and spent, a genuine design
+escalation, the owner's release through the generated hook, and a close —
+all of it in the ledger's own history.
 
 - `ferrostep-ledger`: `Scope::matches` and `decided_snapshot` — the one shared
   meaning of "apply this decision to this snapshot".

@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-ferrostep-core = { path = "../ferrostep-core", version = "0.1.0-dev" }
+ferrostep-core = { path = "../ferrostep-core", version = "0.1.0" }
 serde = { workspace = true }
 
 [dev-dependencies]

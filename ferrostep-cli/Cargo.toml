@@ -11,11 +11,11 @@ name = "ferrostep"
 path = "src/main.rs"
 
 [dependencies]
-ferrostep-core = { path = "../ferrostep-core", version = "0.1.0-dev" }
-ferrostep-ledger = { path = "../ferrostep-ledger", version = "0.1.0-dev" }
-ferrostep-sqlite = { path = "../ferrostep-sqlite", version = "0.1.0-dev" }
-ferrostep-pocketbase = { path = "../ferrostep-pocketbase", version = "0.1.0-dev" }
-ferrostep-notify = { path = "../ferrostep-notify", version = "0.1.0-dev" }
+ferrostep-core = { path = "../ferrostep-core", version = "0.1.0" }
+ferrostep-ledger = { path = "../ferrostep-ledger", version = "0.1.0" }
+ferrostep-sqlite = { path = "../ferrostep-sqlite", version = "0.1.0" }
+ferrostep-pocketbase = { path = "../ferrostep-pocketbase", version = "0.1.0" }
+ferrostep-notify = { path = "../ferrostep-notify", version = "0.1.0" }
 serde_json = { workspace = true }
 
 [dev-dependencies]

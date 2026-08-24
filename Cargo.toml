@@ -5,11 +5,9 @@ resolver = "3"
 # ferrostep-ts (NAPI-RS) is deliberately deferred until a TypeScript consumer
 # exists — see AGENTS.md. The workspace layout already leaves room for it.
 
-# Pre-release until the replacement release is cut — 0.1.0 has an
-# outcome-defined meaning (docs/ROADMAP.md §Releases) the tree must not
-# claim early.
+# 0.1.0 — the internal MVP (docs/ROADMAP.md §Releases).
 [workspace.package]
-version = "0.1.0-dev"
+version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/Artificial-Humanity/FerroStep"

@@ -7,12 +7,15 @@ configuration, no speculative scenarios, the admission bar of a real consuming
 loop) live in [AGENTS.md](../AGENTS.md) and the north star, and every
 milestone below inherits them.
 
-**Where it stands (2026-08-21):** the referee core and Python bindings are
-built and tested; workflows are data with a validated reference loop; the
-repo's own conventions (identity roster, deployment map, guards) are
-mechanized; the GitHub App sub-project emits its registration manifest.
-Nothing is published to a registry yet, and no production loop runs on the
-engine. Everything below is ordered around changing that last fact first.
+**Where it stands (2026-08-24):** the baseline through B4 is built and
+tested — the referee core, both ledger adapters with their measured
+batteries, the decision surface and its resolving move, the notification
+boundary with its default, and the audit report. The author's lane runs on
+the engine: its store carries the referee (a mapped collection with
+generated transactional routes), and the first real record has completed
+the full refereed cycle — claim, escalation, owner release, close. 0.1.0 is
+cut on that basis. Nothing is published to a registry yet; the lane's
+procedure switch sits with its reviewer to land.
 
 ## Releases — the named points on the road
 
