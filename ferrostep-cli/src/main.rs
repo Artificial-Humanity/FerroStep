@@ -446,7 +446,27 @@ fn do_move(
         return Err(format!("refused: {reason}"));
     }
     let outcome = match &decision {
-        Decision::Allow { to, .. } => format!("record {} moved to '{to}'", record.id.0),
+        Decision::Allow { to, counter_updates, .. } => {
+            // ⚠ Report what the move COST, not just where it went. The
+            // hand-rolled tooling this replaces printed the arithmetic
+            // ("agent_passes 0 -> 1"), and dropping it made confirming a
+            // spend a second read — a regression the first adopter absorbed
+            // silently before reporting it. Old and new are both shown, so a
+            // spend and a re-arm are told apart by the numbers rather than by
+            // a label the engine would have to invent.
+            let mut line = format!("record {} moved to '{to}'", record.id.0);
+            if !counter_updates.is_empty() {
+                let changes: Vec<String> = counter_updates
+                    .iter()
+                    .map(|(name, new)| {
+                        let old = record.snapshot.counters.get(name).copied().unwrap_or(0);
+                        format!("{name} {old} → {new}")
+                    })
+                    .collect();
+                let _ = write!(line, " ({})", changes.join(", "));
+            }
+            line
+        }
         Decision::Exhausted { to, counter } => format!(
             "'{counter}' is spent: record {} routed to '{to}' instead",
             record.id.0
@@ -901,6 +921,38 @@ mod tests {
             4,
             "a refused rescope changed the ledger"
         );
+    }
+
+    /// ⚠ A move that costs something must say what it cost. Confirming a
+    /// spend by reading the record back is a second round trip, and the
+    /// tooling this replaces printed the arithmetic — so omitting it made the
+    /// referee a regression at the one moment an operator most wants the
+    /// number. Old → new, so a spend and a re-arm are distinguishable without
+    /// the engine inventing a label for them.
+    #[test]
+    fn a_move_reports_what_it_spent_not_just_where_it_went() {
+        let (_dir, ledger, ids) = seeded();
+        let engine = engine();
+        let out = do_move(
+            &engine,
+            &ledger,
+            &ids["live"].0,
+            "worker",
+            "working",
+            None,
+            "Ada",
+        )
+        .unwrap();
+        assert!(out.contains("moved to 'working'"), "{out}");
+        assert!(out.contains("agent_passes 0 → 1"), "the spend's arithmetic is missing: {out}");
+
+        // A move that costs nothing must not claim a cost. (The version is
+        // always reported, so the absence being checked is the counter
+        // fragment, not the parenthesis around the version.)
+        let out = do_move(&engine, &ledger, &ids["live"].0, "worker", "awaiting_review", None, "Ada")
+            .unwrap();
+        assert!(!out.contains('→'), "a costless move reported a cost: {out}");
+        assert!(out.contains("version"), "the version is still reported: {out}");
     }
 
     /// ⚠ Every spelling of "explain this to me" has to answer, because the

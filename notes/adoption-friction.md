@@ -280,6 +280,37 @@ it does the most damage.
 under it are things the engine does guarantee about its own answers — but it is
 the same word class and worth a second opinion.
 
+## 12. The referee was a REGRESSION at the moment the number mattered
+
+**Hit:** `ferrostep move` reported the record's new state and version but **not
+the counter it had just spent**. The hand-rolled tooling being replaced printed
+the arithmetic — *"agent_passes 0 -> 1"* — so confirming a spend became a second
+read against the store. The adopter worked around it silently with their old
+tool before deciding it was worth reporting.
+
+⚠⚠ **This is its own friction shape and the file should name it: not "FerroStep
+lacks X" but "FerroStep is WORSE THAN WHAT THEY ALREADY HAD."** A migration is
+judged against the thing it replaces, not against nothing, and a capability the
+old tool had is one the adopter has *paid* for losing. Those are the entries
+most likely to go unreported, because losing something feels like the price of
+moving rather than a defect.
+
+**And the specific loss was badly chosen.** Spend-on-entry is this project's
+signature guarantee; the moment an operator most wants to see the number is the
+moment the referee had stopped printing it.
+
+**Changed:** the move reports `agent_passes 0 → 1`. Old *and* new, so a spend
+and an operator's re-arm are told apart by the numbers rather than by a label
+the engine would have to invent — the engine deliberately does not know which
+of the two a counter update is, and this keeps it that way.
+
+**Counter-entry, recorded for balance because a friction file that only
+collects complaints stops being evidence:** the same adopter reported that the
+refusal messages needed nothing. *"role 'developer' may not move 'review' ->
+'open'"* names the role and both states and was usable exactly as printed. The
+split matters — refusal text was designed carefully and holds up; success text
+was not designed at all, and that is where the regression was.
+
 ---
 
 ## Open questions the migration has not answered yet
