@@ -1,8 +1,11 @@
 //! ferrostep — the person-facing surface over a refereed ledger.
 //!
-//! Six subcommands. Five are one set of primitives over a ledger; the last
-//! answers the other half of an actor's question — the ledger says *what may
-//! be done*, and the roster says *who is doing it*:
+//! Most subcommands are one set of primitives over a ledger. Two are not, and
+//! neither needs a store: `explain` reads a definition, and `agent-env` answers
+//! the other half of an actor's question — the ledger says *what may be done*,
+//! the roster says *who is doing it*. (⚠ No count is stated here on purpose:
+//! a number in prose goes stale silently, and this line has already been wrong
+//! once.)
 //!
 //! * `awaiting` — the decision surface (ROADMAP B2): which records await a
 //!   person, and which moves their role has, each annotated with what it
@@ -22,6 +25,10 @@
 //! * `notify` — B3's wiring: one notification per awaiting record, through
 //!   the notifier adapter. Invoked when the caller decides; nothing here
 //!   polls or schedules.
+//! * `explain` — what a definition permits, readable without a ledger. Its
+//!   numbers section exists because a ceiling that moves into a definition
+//!   leaves derived arithmetic behind elsewhere, and that arithmetic does not
+//!   contain the value it came from.
 //! * `agent-env` — the roster: an agent's title, the identity it signs work
 //!   under, and the persona document a launcher hands it, as shell
 //!   assignments. It touches no ledger and takes no store, because who the
@@ -46,6 +53,7 @@ const USAGE: &str = "ferrostep — the person-facing surface over a FerroStep-re
 
 USAGE:
   ferrostep <awaiting|audit|move|rescope|notify> --workflow <def.json> --store <target> [options]
+  ferrostep explain --workflow <def.json>
   ferrostep agent-env [--agent <title>] [--roster <config.yaml>]
 
 COMMON:
@@ -67,6 +75,10 @@ rescope:                       (move a record to a different unit of work)
 
 notify:
   --ntfy <server> --topic <topic> [--ntfy-token <token>]
+
+explain:                       (takes no --store)
+  what the definition permits, and the numbers it asserts — including the
+  off-by-one neighbours that derived arithmetic hides behind
 
 agent-env:                     (takes no --workflow and no --store)
   --agent <title>       the roster entry to resolve (default: its default_agent)
@@ -143,6 +155,11 @@ fn run(args: &[String]) -> Result<String, String> {
         return agent_env(&flags);
     }
     let engine = load_engine(flags.require("workflow")?)?;
+    // A definition is readable without a ledger, and the person most in need
+    // of reading one has not connected anything yet.
+    if command == "explain" {
+        return Ok(explain(&engine));
+    }
     let ledger = open_ledger(flags.require("store")?, flags.get("token"), flags.get("map"))?;
     let mut scope = Scope::all();
     for pair in flags.all("scope") {
@@ -194,6 +211,114 @@ fn run(args: &[String]) -> Result<String, String> {
         }
         other => Err(format!("unknown subcommand '{other}'\n\n{USAGE}")),
     }
+}
+
+/// What a definition asserts, in a form a person can read and search for.
+///
+/// ⚠ **The numbers section is the reason this exists**, and it comes from a
+/// migrating loop rather than from taste. When a ceiling moves into a
+/// definition, FerroStep owns the *number* and knows nothing about the
+/// *arithmetic derived from it* elsewhere in the adopter's tree — `max + 1` in
+/// a guard, a range in a help string, a sentence in a brief to an actor. Those
+/// do not contain the value, so searching for it finds none of them. Three
+/// times in one migration, the search term that worked was a number the
+/// definition never states.
+///
+/// So this prints the asserted values *and* their off-by-one neighbours: not
+/// because the engine knows what an adopter derived, but because it is the
+/// list they need in hand before they can go looking.
+fn explain(engine: &Engine) -> String {
+    let def = engine.def();
+    let mut out = String::new();
+    let _ = writeln!(out, "workflow '{}'", def.name);
+    if let Some(purpose) = &def.purpose {
+        let _ = writeln!(out, "  purpose: {purpose}  (carried, never interpreted)");
+    }
+
+    let mark = |s: &String| {
+        let mut tags = Vec::new();
+        if s == &def.initial {
+            tags.push("initial");
+        }
+        if def.terminal.contains(s) {
+            tags.push("ending");
+        }
+        if def.halted.contains(s) {
+            tags.push("pause");
+        }
+        if tags.is_empty() { s.clone() } else { format!("{s} [{}]", tags.join(",")) }
+    };
+    let _ = writeln!(
+        out,
+        "\nstates: {}",
+        def.states.iter().map(mark).collect::<Vec<_>>().join(", ")
+    );
+    let _ = writeln!(
+        out,
+        "roles:  {}",
+        def.roles
+            .iter()
+            .map(|r| if r.human { format!("{} [person]", r.name) } else { r.name.clone() })
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+
+    let _ = writeln!(out, "\nmoves:");
+    for t in &def.transitions {
+        let mut notes = Vec::new();
+        if !t.spends.is_empty() {
+            notes.push(format!("spends {}", t.spends.join("+")));
+        }
+        if !t.resets.is_empty() {
+            notes.push(format!("clears {}", t.resets.join("+")));
+        }
+        if t.requires_note {
+            notes.push("needs a reason".to_string());
+        }
+        let suffix = if notes.is_empty() { String::new() } else { format!("  ({})", notes.join(", ")) };
+        let _ = writeln!(out, "  {} : {} -> {}{}", t.role, t.from, t.to, suffix);
+    }
+
+    if !def.rescopes.is_empty() {
+        let _ = writeln!(out, "\nunit-of-work moves:");
+        for r in &def.rescopes {
+            let reason = if r.requires_note { "  (needs a reason)" } else { "" };
+            let _ = writeln!(out, "  {} may change '{}'{}", r.role, r.label, reason);
+        }
+    }
+
+    if def.counters.is_empty() {
+        let _ = writeln!(out, "\nthis definition asserts no numbers.");
+        return out;
+    }
+    let _ = writeln!(out, "\n⚠ NUMBERS THIS DEFINITION ASSERTS — and what to search for:");
+    for c in &def.counters {
+        let _ = writeln!(
+            out,
+            "  {} = {}   (spent, then routes to '{}'{})",
+            c.name,
+            c.max,
+            c.on_exhausted,
+            if c.exhausted_requires_note { "; the spending attempt must say why" } else { "" }
+        );
+        let _ = writeln!(
+            out,
+            "      search your tree for {} AND for {} — a ceiling of {} usually means {} \
+             rounds counting the first, and that derived number is the one that hides",
+            c.max,
+            c.max + 1,
+            c.max,
+            c.max + 1
+        );
+    }
+    let _ = writeln!(
+        out,
+        "\n  Derived arithmetic does not contain the value it came from, so a search for\n  \
+         the ceiling alone will not find it. Check guards, --help text, defaults,\n  \
+         diagrams, and any prose handed to an actor: a refusal announces itself when it\n  \
+         fires, a brief never does."
+    );
+    out
 }
 
 /// Resolve one roster entry into shell assignments the caller `eval`s.
@@ -921,6 +1046,31 @@ mod tests {
             4,
             "a refused rescope changed the ledger"
         );
+    }
+
+    /// ⚠⚠ The point of `explain` is the number the definition does NOT
+    /// contain. A ceiling of 3 becomes a 4 somewhere in the adopter's tree —
+    /// `max + 1` in a guard, a range in help text, a sentence in a brief — and
+    /// searching for 3 finds none of them. Measured three times in one
+    /// migration, where the search term that worked was never the stored value.
+    #[test]
+    fn explain_names_the_derived_number_a_search_would_miss() {
+        let engine = engine_with_rescopes();
+        let out = explain(&engine);
+        assert!(out.contains("agent_passes = 3"), "the asserted value is missing: {out}");
+        assert!(
+            out.contains("for 3 AND for 4"),
+            "the off-by-one neighbour is the whole feature: {out}"
+        );
+        // Readable without a ledger: the person who needs this has not
+        // connected anything yet.
+        let out = run(&argv(&["explain", "--workflow", "../examples/review-loop.json"])).unwrap();
+        assert!(out.contains("workflow 'review-loop'"), "{out}");
+        // A pause and an ending are different things, and the whole point of
+        // distinguishing them is lost if a reader cannot see which is which.
+        assert!(out.contains("[initial]") && out.contains("[ending]") && out.contains("[pause]"),
+            "states are not marked: {out}");
+        assert!(out.contains("[person]"), "human roles are not marked: {out}");
     }
 
     /// ⚠ A move that costs something must say what it cost. Confirming a

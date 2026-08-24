@@ -338,11 +338,21 @@ That is not carelessness. A refusal announces itself when it fires; a brief
 never does, and an actor trusts it precisely because it arrives on the channel
 its rules arrive on.
 
-**Not changed in FerroStep, and possibly not fixable here** — the derivatives
-are the adopter's and the engine cannot see them. But it sharpens the open item
-in entry 6: alongside the expensive replay check, a cheap cousin would simply
-**print the numbers a definition asserts**, so an adopter has a list to go
-hunting arithmetic for. Two data points now, from one migration.
+⚠⚠ **THIRD DATA POINT, AND IT SETTLED THE DESIGN.** The report of those two
+survivors triggered a wider sweep that found **six more** — including a second
+live refusal in another launcher, another passage in the brief, and two stale
+claims in a persona sending a reviewer to verify a mechanism that had moved out
+from under it that morning. ⚠ **Neither of us enumerated the set by insight.
+Only a grep, run after the shape was known, found them** — and the adopter's
+own words: *"`3` was never the search term that worked."*
+
+**Changed: `ferrostep explain`.** It prints what a definition permits and, the
+point of it, **the numbers the definition asserts together with their
+off-by-one neighbours** — *"search your tree for 3 AND for 4"*. The engine
+cannot see an adopter's derivatives and should not pretend to; what it can do
+is hand over the list to go hunting with, which is the artefact that was
+missing all three times. The expensive cousin from entry 6 (replay a loop's
+history against a candidate definition) stays unbuilt on one data point.
 
 ---
 

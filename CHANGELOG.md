@@ -23,6 +23,15 @@ entry here is mandatory rather than courtesy.
   `--format json` answers the same resolution for a caller that is not a
   shell, so recovering a name does not require decoding shell quoting in
   another language.
+- `ferrostep-cli`: `explain` — what a definition permits, readable without a
+  store. Its numbers section exists because of a migrating loop, not taste: when
+  a ceiling moves into a definition, FerroStep owns the *value* and knows
+  nothing about the *arithmetic derived from it* elsewhere in the adopter's tree
+  — `max + 1` in a guard, a range in help text, a sentence in a brief handed to
+  an actor. That arithmetic does not contain the value it came from, so a search
+  for the ceiling finds none of it. Three times in one migration the search term
+  that worked was a number the definition never states, so `explain` prints the
+  asserted values *and* their off-by-one neighbours.
 - `xtask agent-env` now delegates to `ferrostep-roster` rather than carrying a
   second reader of the same format.
 - **Rescope: moving a record between units of work is now a refereed
