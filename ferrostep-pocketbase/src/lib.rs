@@ -96,6 +96,24 @@ pub struct CollectionMap {
     pub counter_fields: Vec<String>,
     /// Text columns that are scope labels, each under its own name.
     pub scope_fields: Vec<String>,
+    /// Whether a direct write to a refereed column is refused.
+    ///
+    /// The engine is consulted, not in the write path — so by default a
+    /// client holding credentials can edit `state` or a counter straight on
+    /// the row and the referee never hears about it. Turning this on refuses
+    /// that at the request layer, leaving the apply route as the only way
+    /// those columns move.
+    ///
+    /// ⚠ **It constrains administrators, which an access rule cannot** —
+    /// measured on this backend. That is the whole reason it is a hook.
+    ///
+    /// ⚠ **Off by default, because on is a behaviour change for a running
+    /// deployment**, exactly like [`ActorBinding::allow_unbound`]. Turn it on
+    /// deliberately, and know what it costs: a console hand-edit of a counter
+    /// stops working too. The operator's supported path becomes the release
+    /// hook and the routes — which is the point, and is not free.
+    #[serde(default)]
+    pub guard_refereed_fields: bool,
 }
 
 /// A store-side release: writing a decision field *is* taking a transition,
@@ -962,6 +980,54 @@ routerAdd("POST", "/api/ferrostep/{records}/apply", (e) => {{
 "#
     );
 
+    // ⚠ Registered BEFORE the release hook, deliberately. Handlers chain
+    // through `e.next()`, so this one sees the client's own changes and
+    // passes control on; the release hook's writes happen downstream of it
+    // and are not its business. Reversing the order would have the guard
+    // refuse the release it is supposed to permit.
+    if map.guard_refereed_fields {
+        let refereed: Vec<String> = std::iter::once(state)
+            .chain(std::iter::once(version_field))
+            .chain(map.counter_fields.iter())
+            .chain(map.scope_fields.iter())
+            .map(|f| format!("\"{f}\""))
+            .collect();
+        let list = refereed.join(", ");
+        out.push_str(&format!(
+            r#"
+// ⚠⚠ The refereed columns move through the apply route or they do not move.
+// Without this, a client holding credentials edits `{state}` straight on the
+// row and the referee never hears about it — no version bump, no event, and
+// every later compare-and-swap arguing about a number that changed behind it.
+//
+// It is a HOOK rather than an access rule because a store administrator
+// bypasses rules and does not bypass this — measured on this backend.
+//
+// The route's own writes are internal saves and never reach a request hook,
+// so the referee is unaffected; only a direct edit is refused. Same for the
+// release hook below, which runs after this one and writes downstream of it.
+onRecordUpdateRequest((e) => {{
+    const REFEREED = [{list}];
+    const changed = [];
+    for (let i = 0; i < REFEREED.length; i++) {{
+        const f = REFEREED[i];
+        if (String(e.record.get(f)) !== String(e.record.original().get(f))) {{
+            changed.push(f);
+        }}
+    }}
+    if (changed.length > 0) {{
+        throw new BadRequestError(
+            "refereed_field: " + changed.join(", ") + " may only change through " +
+            "/api/ferrostep/{records}/apply, which records who moved the record and why. " +
+            "A direct write here would leave the ledger's history disagreeing with the row."
+        );
+    }}
+    e.next();
+}}, "{records}");
+"#
+        ));
+    }
+
     if let Some(release) = release {
         let decision_field = &release.decision_field;
         let from_state = &release.from_state;
@@ -1394,7 +1460,14 @@ mod tests {
             version_field: "fs_version".to_string(),
             counter_fields: vec!["attempts".to_string()],
             scope_fields: vec!["lane".to_string()],
+            guard_refereed_fields: false,
         }
+    }
+
+    /// The same map with the direct-write guard on — the hardened shape a
+    /// deployment opts into once its actors exist.
+    fn guarded_map() -> CollectionMap {
+        CollectionMap { guard_refereed_fields: true, ..tickets_map() }
     }
 
     fn an_event(decision: Decision) -> Event {
@@ -1655,6 +1728,54 @@ mod tests {
         assert!(migration.contains("idx_ticket_events_record_seq"), "the (record, seq) referee");
         assert!(!migration.contains(r#"Rule": """#), "an empty-string rule is public");
         assert!(migration.contains(r#"records.fields.removeByName("fs_version")"#), "a down path");
+    }
+
+    /// ⚠⚠ **The engine is consulted, not in the write path** — so a client
+    /// with credentials can edit `state` straight on the row and the referee
+    /// never hears: no version bump, no event, and every later
+    /// compare-and-swap arguing about a number that moved behind it. A
+    /// deployment can now close that, and the closing has to be a **hook**
+    /// rather than an access rule, because an administrator bypasses rules
+    /// and does not bypass hooks.
+    #[test]
+    fn the_refereed_columns_can_be_closed_to_direct_writes() {
+        let open = hooks_file_mapped(&tickets_map(), None, &ActorBinding::default());
+        assert!(!open.contains("refereed_field"), "off unless asked for: {open}");
+
+        let guarded = hooks_file_mapped(&guarded_map(), None, &ActorBinding::default());
+        assert!(guarded.contains("refereed_field"), "{guarded}");
+        // ⚠ Every column the map declares refereed, derived from the map
+        // rather than listed here — a counter or scope label added later is
+        // guarded because it is in the map, not because anyone remembered.
+        for field in ["stage", "fs_version", "attempts", "lane"] {
+            assert!(
+                guarded.contains(&format!("\"{field}\"")),
+                "{field} is refereed and unguarded: {guarded}"
+            );
+        }
+        // The refusal names the way through, not just the refusal.
+        assert!(guarded.contains("/api/ferrostep/tickets/apply"), "{guarded}");
+    }
+
+    /// ⚠ Handlers chain through `e.next()`, so the guard must be registered
+    /// BEFORE the release hook: it sees the client's own change and passes
+    /// control on, and the release's writes happen downstream of it.
+    /// Reversed, the guard would refuse the release it exists to permit.
+    #[test]
+    fn the_guard_is_registered_ahead_of_the_release_it_must_not_refuse() {
+        let release = ReleaseHook {
+            decision_field: "verdict".to_string(),
+            from_state: "stalled".to_string(),
+            to_state: "queued".to_string(),
+            reset_counters: vec!["attempts".to_string()],
+            writers: vec!["a-person@example.invalid".to_string()],
+            role: "owner".to_string(),
+        };
+        let hooks = hooks_file_mapped(&guarded_map(), Some(&release), &ActorBinding::default());
+        let guard = hooks.find("refereed_field").expect("the guard is emitted");
+        let release_at = hooks.find("verdict is the owner's field").expect("the release is emitted");
+        assert!(guard < release_at, "the guard must be registered first, or it refuses the release");
+        assert_eq!(hooks.matches("onRecordUpdateRequest").count(), 2, "two chained handlers");
     }
 
     /// ⚠⚠ **The route authenticated, and then believed the request about who

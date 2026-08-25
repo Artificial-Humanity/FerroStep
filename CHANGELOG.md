@@ -7,6 +7,25 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-pocketbase`: **`CollectionMap::guard_refereed_fields` — the
+  refereed columns can be closed to direct writes.** The engine is consulted,
+  not in the write path, so a client holding credentials could edit `state` or
+  a counter straight on the row: no version bump, no event, and every later
+  compare-and-swap arguing about a number that moved behind it. With the guard
+  on, those columns change through the apply route or they do not change.
+  ⚠ **It is a hook rather than an access rule because an administrator
+  bypasses rules and does not bypass hooks** — measured on this backend, and
+  the whole reason the placement matters. The route's own writes are internal
+  saves that never reach a request hook, so the referee is unaffected; only a
+  direct edit is refused. Registered *ahead of* the release hook, since
+  handlers chain and a guard running second would refuse the release it exists
+  to permit.
+  ⚠ **Off by default**, like `ActorBinding::allow_unbound`, because on is a
+  behaviour change for a running deployment — and it is not free: a console
+  hand-edit of a counter stops working too, leaving the release hook and the
+  routes as the operator's supported path. The guarded columns are derived
+  from the map, so a counter or scope label added later is covered because it
+  is declared, not because somebody remembered.
 - `ferrostep-roster`: **layered rosters and a credential *source*.** Discovery
   collected the first `config.yaml` above the working directory and stopped;
   it now collects every one and layers them, nearest last. That is what lets a
