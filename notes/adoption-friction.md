@@ -360,6 +360,42 @@ is hand over the list to go hunting with, which is the artefact that was
 missing all three times. The expensive cousin from entry 6 (replay a loop's
 history against a candidate definition) stays unbuilt on one data point.
 
+## 14. The referee's history was more readable than the records it describes
+
+**Hit:** provisioning a mapped deployment creates an events collection from
+our generated migration, which hardcodes an authenticated-user read rule on
+it. The collection being refereed was the adopter's own, already locked to
+administrators only. So the migration delivered, by default and without
+saying so, a collection carrying **every state change, actor, role and human
+note about records nobody was allowed to read** — readable by any account the
+instance would authenticate. Found by inspection days later, not by anything
+failing.
+
+**Why this is squarely ours.** A generic deployment supplies both collections,
+so the generated rule matches what it created and looks right in testing. The
+mapped path is the one where the records' rules are *the adopter's*, and it is
+exactly the path where our default cannot know what it is matching. We shipped
+one number for two situations and only tested the one where it holds.
+
+⚠ **The shape, and it generalizes past access rules:** *when generated output
+sits beside something the adopter already owns, a constant is a guess.* The
+generated artifact should be **derived from what it is attaching to** — here,
+from the records collection's own rules — because the invariant is relational
+("no more visible than its subject"), not absolute. Same family as entry 7:
+the generated file is the compatibility boundary nobody inspects, because it
+is our code on both sides.
+
+⚠⚠ **And the severity is set by something the referee cannot see.** How bad
+this is depends entirely on who can reach the instance and whether it accepts
+new accounts — facts that live in the deployment, not in any definition. A
+referee that provisions storage inherits a security posture it has no way to
+read, so the safe default is the strict one and widening is the adopter's
+deliberate act.
+
+**Not changed yet** — recorded the same day it was found (2026-08-25) and
+carried into ROADMAP B6, where it belongs with role-scoped actor accounts:
+what an actor may read and what a history may expose are one question.
+
 ---
 
 ## Open questions the migration has not answered yet
@@ -371,7 +407,10 @@ history against a candidate definition) stays unbuilt on one data point.
 - **Filing.** Deliberately refused by the adapter in mapped deployments, so the
   loop keeps its own procedure. That has cost nothing so far, which is itself
   worth recording.
-- **Two actors, one credential.** Every actor authenticates as the same
-  privileged identity, so "who may do what" is enforced by the definition and
-  not by the store. Role-scoped accounts are a known gap, not yet a measured
-  pain.
+- ~~**Two actors, one credential.**~~ ⚠ **No longer an open question — entry
+  14 measured it.** Every actor authenticates as the same privileged identity,
+  so "who may do what" is enforced by the definition and not by the store.
+  That was recorded as a known gap and *not yet a measured pain*; the read-rule
+  inversion is what turned it into one, because "which accounts exist and what
+  may they see" turned out to be the question that decided how bad a generated
+  default was. Now ROADMAP B6, at 0.2.0.

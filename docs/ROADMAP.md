@@ -39,16 +39,41 @@ than enumerated now. Deployability to that lane is the bar; registry
 publication is its own decision and not implied by it.
 
 **1.0.0 — the planned road, complete.** The goal release: the baseline and
-expansion tiers done, with demand-gating intact — expansion items still
-land in whatever order demand arrives, and 1.0.0 arrives when the last of
-them has. An item admitted to the roadmap after this ruling states at
-admission whether it sits inside 1.0.0 or beyond it.
+expansion tiers done. An item admitted to the roadmap after this ruling
+states at admission whether it sits inside 1.0.0 or beyond it.
 
-The road between them is incremental (owner, 2026-08-23): versions climb
-from the MVP as features come in, each landing at the polish its release
-line asks of it. "Public-release item" on an entry names that polish bar,
-never a testing venue — everything here, the expansion tier included, is
-exercised in-house before it is anyone else's.
+### The ladder between them — 0.1.0 increments (owner, 2026-08-25)
+
+Milestones climb in tenths, and each names an **outcome** rather than a
+date. Two of the rungs below are the owner's own placement; the rest are
+this file's proposal and are moved freely.
+
+| release | outcome | items |
+|---|---|---|
+| **0.1.0** ✅ | the internal MVP — the author's lane runs on the referee | B1–B5 |
+| **0.2.0** | **the store enforces, not just the referee** — actors stop authenticating as an administrator, and the rules the engine validates are also applied by the store | B6 |
+| **0.3.0** | **a stranger can adopt it from the documentation alone** *(owner)* | B8 |
+| **0.4.0** | *unassigned* — see the note below | — |
+| **0.5.0** | **the zero-install path gets a console** *(owner)* | E6 |
+| **0.6.0 →** | the remaining expansion tier, in whatever order demand arrives | E1–E5, B7 |
+| **1.0.0** | the planned road complete | — |
+
+⚠ **This ladder places items; it does not gate them.** An expansion item
+whose demand arrives early lands early and moves the ladder rather than
+waiting for its rung. What a rung fixes is the *outcome that names the
+release*, so a version number means something specific rather than "the
+work that happened to finish."
+
+**On 0.4.0, deliberately empty.** The leading candidate is **registry
+publication** — after 0.3.0 a stranger can read how to adopt it, and being
+unable to install it without cloning is the next thing in their way. That
+is the owner's decision and is not implied by any release here (nor was it
+by 0.1.0), so the rung stays open until they make it. B7 is the other
+candidate and cannot be scheduled: it lands with its first real consumer.
+
+"Public-release item" on an entry names a polish bar, never a testing
+venue — everything here, the expansion tier included, is exercised in-house
+before it is anyone else's.
 
 Between cuts, the workspace version in `Cargo.toml` carries the next number
 with a pre-release marker, so the tree never claims a release that has not
@@ -214,7 +239,7 @@ generated output of the definition, and the loop's prior workflow machinery
 was retired in the same migration instead of being left to agree with the
 definition by luck.
 
-**B6 — Defense in depth: compile the rules into the database.**
+**B6 — Defense in depth: compile the rules into the database.** *(0.2.0)*
 The engine is consulted, not in the write path — by design. This milestone
 emits store-side enforcement from the same `WorkflowDef` the engine validates,
 so definition and enforcement cannot drift apart. What that enforcement *is*
@@ -222,14 +247,62 @@ varies by store and is not always its access rules — a hook, a constraint, a
 trigger, a rule expression. ⚠ Some stores can enforce nothing at all, and for
 those the engine is the only gate; that is a fact to state plainly in the
 adapter rather than a milestone to fake.
+Two things already known to be wrong belong to this milestone rather than
+waiting for it:
+
+⚠⚠ **A generated history collection must never be more readable than the
+records it describes.** The generated migration hardcodes an
+authenticated-user read rule on the events collection it creates. For a
+deployment using the adapter's own collections that matches; for a **mapped**
+one it does not, because there the refereed records are a collection the
+adopter already had, under whatever rules it already has — commonly stricter.
+The result is an inversion delivered by default and silently: every state
+change, actor, role and human note about records nobody may read, in a
+collection anybody authenticated may. **The generated rules should be derived
+from the records collection rather than assumed**, since the whole point is
+that the history is no more visible than its subject.
+
+⚠ **Actors authenticate as a store administrator** until this milestone
+lands, which is the condition the B1 note above says makes every enforcement
+story a promise. Role-scoped accounts are the fix, and the two are one design:
+what an actor may read is the same question as what an events collection may
+expose.
+
 *Done when:* an illegal transition is blocked by the store itself with the
-engine bypassed entirely, on a store capable of it.
+engine bypassed entirely, on a store capable of it — and no generated
+artifact grants a read the collection it describes would refuse.
 
 **B7 — First shipped skill.**
 The first entry in `skills/` lands with its first real consumer — the actor
 skill B5's worker loads, or the one that narrates B2's decision surface to a
 human, whichever arrives first. The skills distribution channel is decided
 then, with that consumer in hand and not before.
+
+**B8 — Adopter documentation.** *(0.3.0)*
+The baseline is two sentences and the second one — *a stranger can read this
+repo and run their own loop on their own database by imitation* — has never
+had an owner. The README now describes the whole product, which was the
+blocker; what it cannot be is the walkthrough.
+
+⚠ **Write it from the friction file, not from the code.**
+[`notes/adoption-friction.md`](../notes/adoption-friction.md) is a record of
+what a real migration actually cost, and two of its entries are this document
+in negative: **authoring a definition** (entry 6) is the first thing an
+adopter does and the step with the least support and the quietest failure —
+a definition that permits *less* than the loop it models reads like tidying —
+and **the roster bootstrap** (entry 9) lands on every adopter exactly once,
+at their first landing, when the tool that assigns identity is not yet
+installed. A guide written from the code would cover neither, because from
+the code neither looks like a step.
+
+⚠ **What is knowably missing must be in it**: there is no way to file a first
+record other than the CLI or your own program, no lint that compares a
+definition against the loop it claims to describe, and actors authenticate as
+one credential until B6 lands. An adopter finding those out by hitting them
+is the same friction over again.
+*Done when:* somebody outside this project stands a loop up from the
+documentation, and the places they get stuck become entries rather than
+surprises.
 
 ---
 
@@ -278,6 +351,34 @@ drafted shape, and why the two items must not blur, is
 which graduates to `docs/` with the item. Presence — the identity-to-address
 claim the messaging routes over — has an in-house consumer of its own and is
 sequenced independently of it.
+
+**E6 — The SQLite console.** *(0.5.0)*
+A browsable, editable view of the records in a SQLite ledger — what a store
+with an admin UI gives you for free, for the store that has none.
+
+**Provenance, recorded because it was lost.** ⚠ **The owner proposed this at
+the project's outset** — SQLite holding the agents' issues, decisions
+surfaced in chat, and a simple console to follow along — and **it was never
+written down**, in this file or anywhere else. It surfaced again on
+2026-08-25 only because the owner said so from memory. Two of the three parts
+had been built anyway (the adapter; B2's rendered decision surface, which is
+also what an agent narrates from). The console was not, and the reason is
+worth keeping: the idea was absorbed into a requirement *on the store*
+([`notes/ledger-requirements-and-pocketbase.md`](../notes/ledger-requirements-and-pocketbase.md),
+requirement 8 — *"the requirement a purpose-built replacement is most likely
+to drop and most likely to regret dropping"*), which PocketBase satisfies and
+SQLite cannot. From there SQLite's lack of a console was reframed as a
+**virtue** — it is what stops the interface hiding behind a store's own UI,
+and that argument is good and stays. But a suggestion had been answered with
+a reason it was fine not to do, and nothing recorded that it had been.
+
+**Scope.** Browsable and editable records, per requirement 8 — not a live
+tail; `awaiting` and `audit` already answer *what is happening*. ⚠ It reads
+and writes through the ledger interface rather than the database file, or it
+becomes a second writer with none of the referee's bookkeeping — the very
+thing rescope exists to have ended.
+*Done when:* a person inspects and corrects a SQLite-backed loop without
+reaching for a SQL client.
 
 ---
 
