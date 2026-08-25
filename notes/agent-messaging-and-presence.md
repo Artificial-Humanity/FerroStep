@@ -28,6 +28,26 @@ Two facts make this FerroStep's problem rather than any harness's:
   a local model — which is the adapter rule doing its normal job, not a new
   principle.
 
+**Measured again 2026-08-25, and this time it cost something.** Coordinating
+the role-scoped actor work meant one question for one agent — *is now a good
+time, or are you mid-cycle?* — asked before touching a lane that agent works.
+Four peer sessions were listed, all named workspace-plus-suffix, none
+indicating which project it was resident in. There was no way to address the
+one. **The message went to all four, opening with "if you are not the
+resident of project X, please ignore this."**
+
+⚠ **Note what the workaround costs, because it is the argument for the
+item.** Three sessions were interrupted to reach one. That is tolerable at
+four and absurd at forty, and the failure is not noise but *targeting*: a
+question whose whole purpose was to avoid disturbing someone at a bad moment
+had to disturb three people to ask it. ⚠ **And the broadcast is
+unfalsifiable** — silence from a session means "not me", "busy", or "never
+saw it", and nothing distinguishes them, so the coordination step cannot
+report whether it succeeded.
+
+This is the second recorded instance and the first with a cost attached. The
+roster said who the actor was; nothing said where it currently was.
+
 ## 2. What already legislates this
 
 Nothing here starts from zero:
