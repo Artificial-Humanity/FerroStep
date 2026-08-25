@@ -392,9 +392,21 @@ referee that provisions storage inherits a security posture it has no way to
 read, so the safe default is the strict one and widening is the adopter's
 deliberate act.
 
-**Not changed yet** — recorded the same day it was found (2026-08-25) and
-carried into ROADMAP B6, where it belongs with role-scoped actor accounts:
-what an actor may read and what a history may expose are one question.
+**Changed, the generator half, same day:** the mapped shape creates its
+events collection **superuser-only** — the only end of the range that is
+right whatever the adopter's rules turn out to say. ⚠ **Deliberately not
+"copy the records collection's rule":** a rule may reference that
+collection's own fields (`author = @request.auth.id`), and a copy of it onto
+a collection without those fields is refused on save — so the naive
+derivation would trade a silent leak for a broken migration. Widening is the
+adopter's act in the admin UI, and the create-if-absent guard means a later
+regeneration will not undo it.
+
+**Still open:** a deployment already provisioned under the old default keeps
+the lax rule, precisely *because* of that guard — so this fix reaches new
+deployments and no existing one. Fixing those is a hand act per deployment.
+Role-scoped actor accounts remain ROADMAP B6, at 0.2.0: what an actor may
+read and what a history may expose are one question.
 
 ---
 

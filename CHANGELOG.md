@@ -7,6 +7,24 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-pocketbase`: **a generated history no longer outranks the records
+  it describes.** The mapped migration created its events collection with an
+  authenticated-user read rule — matching in the generic shape, which creates
+  *both* collections and where the two therefore agree by construction, and
+  wrong in the mapped one, where the refereed records are a collection the
+  adopter already had under rules commonly stricter. That shipped an inversion
+  by default and in silence: every state change, actor, role and human note
+  about records the reader may not open, in a collection any authenticated
+  account may list. The mapped shape now creates it **superuser-only**, which
+  is the only end of the range that is right whatever the adopter's rules say;
+  widening is their deliberate act in the admin UI, and the create-if-absent
+  guard means a later regeneration will not undo it. `events_collection_body`
+  is strict for the same reason and a stronger one — it is handed a name and
+  nothing else, so it can know even less about what it sits beside.
+  ⚠ The general shape, and it is not about access rules: **generated output
+  that attaches to something the adopter owns cannot carry a constant.** The
+  invariant here is relational — *no more visible than its subject* — and one
+  value was shipped for two situations, then tested in the one where it holds.
 - `ferrostep-cli`: `file` (also spelled `create`) — the way into a ledger.
   `authorize_create` had been in the engine, the Python binding and both
   adapters since 0.1.0, and was reachable from the person-facing surface

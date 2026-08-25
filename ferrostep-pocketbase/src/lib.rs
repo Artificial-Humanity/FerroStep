@@ -1021,6 +1021,11 @@ migrate((app) => {{
         "indexes": [
             "CREATE UNIQUE INDEX idx_ferrostep_events_record_seq ON ferrostep_events (record, seq)"
         ],
+        // ⚠ Authenticated-read here and NOT in the mapped migration, on
+        // purpose. This shape creates both collections, so the history and
+        // the records it describes carry the same rule by construction and
+        // neither can outrank the other. A mapped deployment refers to a
+        // collection somebody else made, which is why it cannot assume.
         "listRule": "@request.auth.id != ''",
         "viewRule": "@request.auth.id != ''",
         "createRule": null,
@@ -1082,8 +1087,15 @@ migrate((app) => {{
             "indexes": [
                 "CREATE UNIQUE INDEX idx_{events}_record_seq ON {events} (record, seq)"
             ],
-            "listRule": "@request.auth.id != ''",
-            "viewRule": "@request.auth.id != ''",
+            // ⚠ Superuser-only reads, deliberately. This collection describes
+            // rows in "{records}" — YOUR collection, under YOUR rules, which
+            // this migration cannot read the meaning of. Anything laxer risks
+            // a history more readable than its subject: every state change,
+            // actor, role and note about records the reader may not open.
+            // Widen it in the admin UI if you mean to; the `haveEvents` guard
+            // above means a later regeneration will not undo that.
+            "listRule": null,
+            "viewRule": null,
             "createRule": null,
             "updateRule": null,
             "deleteRule": null
@@ -1108,6 +1120,14 @@ migrate((app) => {{
 /// the collections API — for deployments that provision by API call rather
 /// than migration file. Same shape and rules as the generic migration's
 /// event collection, under the mapped name.
+/// The event collection's shape, for creating one outside a migration.
+///
+/// ⚠ **Reads are superuser-only, and that is the only default this can
+/// safely carry.** It is handed a name and nothing else, so it cannot know
+/// what it will sit beside — and beside a collection with stricter rules, a
+/// laxer history is every state change, actor, role and note about records
+/// the reader may not open. The strict end is the only one that is right in
+/// every case; widening is the deployment's deliberate act.
 pub fn events_collection_body(events: &str) -> Value {
     json!({
         "name": events,
@@ -1125,8 +1145,8 @@ pub fn events_collection_body(events: &str) -> Value {
         "indexes": [
             format!("CREATE UNIQUE INDEX idx_{events}_record_seq ON {events} (record, seq)")
         ],
-        "listRule": "@request.auth.id != ''",
-        "viewRule": "@request.auth.id != ''",
+        "listRule": null,
+        "viewRule": null,
         "createRule": null,
         "updateRule": null,
         "deleteRule": null
@@ -1491,6 +1511,48 @@ mod tests {
         assert!(migration.contains("idx_ticket_events_record_seq"), "the (record, seq) referee");
         assert!(!migration.contains(r#"Rule": """#), "an empty-string rule is public");
         assert!(migration.contains(r#"records.fields.removeByName("fs_version")"#), "a down path");
+    }
+
+    /// ⚠⚠ **A generated history must never be more readable than the records
+    /// it describes.** The mapped shape attaches to a collection somebody
+    /// else made, under rules this migration cannot read the meaning of — so
+    /// the only read rule that is right for every adopter is the strict one.
+    /// It shipped with an authenticated-user rule instead, which matched in
+    /// the generic case that gets tested and inverted the mapped one: every
+    /// state change, actor, role and note about records the reader may not
+    /// open.
+    ///
+    /// The two shapes differ deliberately, and the test says why rather than
+    /// pinning two constants: the generic migration creates BOTH collections,
+    /// so they match by construction and neither can outrank the other.
+    #[test]
+    fn a_mapped_history_never_outranks_the_records_it_describes() {
+        let mapped = migration_file_mapped(&tickets_map());
+        // The events collection is the second block; the records collection
+        // in this shape is not created at all, only altered.
+        assert!(
+            !mapped.contains(r#""listRule": "@request.auth.id"#),
+            "the mapped events collection must not assume a read rule: {mapped}"
+        );
+        assert!(mapped.contains(r#""listRule": null"#), "{mapped}");
+        assert!(mapped.contains(r#""viewRule": null"#), "{mapped}");
+
+        // Same requirement, same reason, for the helper that builds the
+        // collection outside a migration — it is handed a name and nothing
+        // else, so it can know even less about what it sits beside.
+        let body = events_collection_body("ticket_events");
+        assert_eq!(body["listRule"], Value::Null, "{body}");
+        assert_eq!(body["viewRule"], Value::Null, "{body}");
+
+        // ⚠ The generic shape keeps its authenticated read, and that is not
+        // an exception to the rule above — it creates the records collection
+        // too, with the same rule, so the invariant holds by construction.
+        let generic = migration_file();
+        assert_eq!(
+            generic.matches(r#""listRule": "@request.auth.id != ''""#).count(),
+            2,
+            "records and events must carry the SAME rule, or one outranks the other"
+        );
     }
 
     #[test]
