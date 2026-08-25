@@ -35,10 +35,16 @@ path is a first-class concern rather than a courtesy to newcomers.
 What does not change: the ledger is the memory, the engine is a referee rather
 than a runtime, and the human stays the authority the loop escalates to.
 
-**Tiebreaker.** The author's own loop decides *what* gets built — a feature
-still needs a real consuming loop, and that loop is ours. Other users decide
-*how it is shaped*: given something worth building, prefer the form a stranger
-could reconfigure over the one that hardcodes our arrangement.
+**Tiebreaker.** The author's own loop decides *what* gets built. Other users
+decide *how it is shaped*: given something worth building, prefer the form a
+stranger could reconfigure over the one that hardcodes our arrangement.
+
+> ⚠ This paragraph used to continue "a feature still needs a real consuming
+> loop, and that loop is ours" — **removed by the owner on 2026-08-25, and not
+> to be restored.** It sat inside a ratified section without ever having been
+> ratified itself, which is how it came to be quoted back at the owner as
+> their own ruling. Whose needs set the priority is the part that was ratified;
+> a bar on what may be built at all was not.
 
 ## 2. Ours vs rented
 

@@ -1,11 +1,17 @@
 # Adoption friction — what the first migrating loop actually hit
 
 Working notes, not a deliverable. **This is the evidence file for interface
-growth.** The repo's standing bar is that a feature needs a real consuming
-loop behind it, and the north star says the author's loop decides *what* gets
-built while other users decide *how it is shaped*. Both of those need somewhere
-for the evidence to land before it is argued from — otherwise "a real loop
-needs this" is a claim made from memory.
+growth.** The north star says the author's loop decides *what* gets built
+while other users decide *how it is shaped* — and shaping needs evidence
+about what an adopter actually met, or it is done from memory. That is what
+lands here.
+
+⚠ **This is not a gate, and it never was one.** An earlier version of this
+header said the repo's standing bar was that a feature needs a real consuming
+loop behind it. The owner removed that bar on 2026-08-25 (AGENTS.md
+§Conventions) — it had never been theirs. **Nothing has to appear in this file
+to be worth building.** What a full entry buys is a better argument, not
+permission.
 
 The first loop to migrate onto the referee is a hand-driven worker/reviewer
 lane on a shared record store, being converted from a script that enforced its

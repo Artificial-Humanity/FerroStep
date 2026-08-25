@@ -1,8 +1,9 @@
 # GitHub agents — roadmap
 
 How `ferrostep-github` grows from an identity shim into GitHub-side agents.
-Each phase lands only when something real consumes it — the same admission bar
-as `examples/` and `skills/` — and each later phase depends on the ones before.
+Each later phase depends on the ones before, and each is sequenced rather than
+gated: this is the order they make sense in, not a bar each must clear (the
+repo has no standing admission bar — see [ROADMAP](ROADMAP.md) §Non-goals).
 
 ## P0 — one App as the actors' umbrella *(current)*
 

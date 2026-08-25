@@ -71,8 +71,10 @@ to argue against, not a constraint — the section says so itself).
   conventions below); kept honest by the core's `shipped_examples_stay_valid`
   test.
 - `skills/` — skills that **deploy with the product**, for actors *inside*
-  loops the engine referees (open `SKILL.md` format). Product artifacts with
-  `examples/`'s admission bar: a skill lands when a real loop consumes it.
+  loops the engine referees (open `SKILL.md` format). Product artifacts, empty
+  by a judgment specific to them: a skill tells an actor how to work a
+  particular loop, so one written before a real loop exists is instructing an
+  invented one.
   **Write a skill here when it serves the loops FerroStep referees; a skill
   that serves work *on* FerroStep itself is a working convention and belongs
   in `workflow/skills/` instead** — which does not exist yet, deliberately,
@@ -131,6 +133,21 @@ to argue against, not a constraint — the section says so itself).
   and never make the engine aware of any specific workflow. The `purpose`
   field is engine-opaque and must stay so — the engine has no concept of what
   a review, an alignment check, or any other workflow *means*.
+- ⚠ **"No feature without a consuming loop" was removed by the owner on
+  2026-08-25 and must not be restored.** Features are judged case by case;
+  there is **no standing admission bar**. Per-item deferrals (`ferrostep-ts`,
+  `skills/`) stand on their own reasons and are not instances of a rule.
+  **How it got here is the part worth keeping, and this half is an observation
+  rather than a ruling:** the line entered the roadmap unattributed, and the
+  resident persona then listed it among two genuine owner rulings as though it
+  were a third. Shelved beside real ones, in the file that *is* an agent's
+  system prompt, it inherited their authority — and was eventually quoted back
+  at the owner as their own position, which is the only reason it was caught.
+  ⚠ A restatement drifts; an **unattributed idea placed among attributed ones
+  is promoted**, and nothing goes red when that happens. So attribute what you
+  carry, and check the attribution before you apply it: the inline
+  "(owner, DATE)" markers throughout this file are load-bearing, not
+  decoration. A ruling you cannot point to a source for is not one.
 - **Everything outside the engine is an adapter** (owner, 2026-08-21). Define
   the thing internally first — the ledger record, the issue log, the
   notification, the agent interface — then reach the world through an adapter

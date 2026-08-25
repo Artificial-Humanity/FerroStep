@@ -2,10 +2,9 @@
 
 The ordering of intent. [`north-star.md`](north-star.md) is *why*, the
 [README](../README.md) is *what*, this is *in what order and why that order*.
-It sequences; it does not re-legislate — the standing rules (fluid
-configuration, no speculative scenarios, the admission bar of a real consuming
-loop) live in [AGENTS.md](../AGENTS.md) and the north star, and every
-milestone below inherits them.
+It sequences; it does not re-legislate — the standing rules live in
+[AGENTS.md](../AGENTS.md) and the north star, and every milestone below
+inherits them.
 
 **Where it stands (2026-08-25):** the baseline through B5 is built, tested
 and running — the referee core, both ledger adapters with their measured
@@ -297,7 +296,15 @@ sequenced independently of it.
 ## Non-goals — permanent
 
 No runtime, scheduler, queue, or hosted anything. No blessed workflows. No
-feature without a consuming loop. No competing with actor-layer frameworks —
-agents built on them are actors *in* FerroStep loops, not rivals to it. And
-no vendor's agent tooling gets framework-level support (owner, 2026-08-21):
-it is reached through an agent adapter or it is not reached at all.
+competing with actor-layer frameworks — agents built on them are actors *in*
+FerroStep loops, not rivals to it. And no vendor's agent tooling gets
+framework-level support (owner, 2026-08-21): it is reached through an agent
+adapter or it is not reached at all.
+
+⚠ **"No feature without a consuming loop" was here and was removed by the
+owner on 2026-08-25. Do not restore it.** It had stood as a permanent
+non-goal, entered unattributed, and no ruling behind it was ever recorded;
+asked directly, the owner did not hold the position. **Features are judged
+case by case, with no standing bar.** Per-item deferrals below still stand on
+their own reasons — they are judgments about those items, not instances of a
+rule.
