@@ -173,6 +173,9 @@ is worse than one that admits the gap.
 **A person decides from the `ferrostep` binary.**
 
 ```sh
+ferrostep file --workflow loop.json --store sqlite:loop.db \
+  --role reviewer --scope branch=main --note "found in the release audit"
+
 ferrostep awaiting --workflow loop.json --store sqlite:loop.db
 
 ferrostep move --workflow loop.json --store sqlite:loop.db \
@@ -180,6 +183,8 @@ ferrostep move --workflow loop.json --store sqlite:loop.db \
   --note "reproduced locally; worth another pass"
 ```
 
+`file` starts a loop — it is how a record gets into a store that has no
+console of its own, which is the zero-install path's whole situation.
 `awaiting` lists the records that need a person and what each of their moves
 would *actually* do right now. `move` resolves one without opening a database
 console. `audit` reports what happened — moves, escalations, releases, the
@@ -187,15 +192,21 @@ last note — reading the same enumeration `awaiting` does, so the two views
 cannot disagree. `notify` sends one message per awaiting record through the
 notifier adapter; nothing here polls or schedules, so a caller decides when.
 
-`explain` takes no store at all. Besides what a definition permits, it prints
-the numbers the definition asserts **and their off-by-one neighbours** — the
-list you want when a ceiling moves into a definition and the arithmetic
-derived from it stays behind in a guard, a help string, or a brief handed to
-an agent. A search for the ceiling finds none of those.
+⚠ **Filing is default-deny and its ceiling is yours to measure.** A
+definition that does not say who may file grants it to nobody. And where
+filing spends a counter, that counter bounds a *population* — how much work a
+branch or a cycle may create — so it belongs to whatever can count it, never
+to the record being filed; pass it with `--counter name=value` and the binary
+will refuse rather than assume a zero. Some deployments keep filing for
+themselves: a *mapped* PocketBase collection refuses it by name, so the
+procedure that already creates those records stays the one that does.
 
-Filing is not a subcommand. Records are created by your application through
-the adapter, or by whatever procedure the collection already has; the binary
-is the surface over records that exist.
+`explain` takes no store at all. Besides who may file, what may move where,
+and who may change a scope label, it prints the numbers the definition
+asserts **and their off-by-one neighbours** — the list you want when a
+ceiling moves into a definition and the arithmetic derived from it stays
+behind in a guard, a help string, or a brief handed to an agent. A search for
+the ceiling finds none of those.
 
 **Scope is which unit of work a record belongs to** — a branch, a cycle, a
 tenant. Every query that finds work filters on it, so a record whose scope

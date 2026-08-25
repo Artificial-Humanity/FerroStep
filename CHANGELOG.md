@@ -7,6 +7,26 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-cli`: `file` (also spelled `create`) — the way into a ledger.
+  `authorize_create` had been in the engine, the Python binding and both
+  adapters since 0.1.0, and was reachable from the person-facing surface
+  nowhere: a store with a console of its own can be handed a record without
+  the referee ever being asked, and **SQLite has no console to hide behind**,
+  so the deployment shape the roadmap calls first-class could not get a first
+  record in short of writing a program. ⚠ A filing ceiling is **measured
+  against a count this binary cannot take** — it bounds a branch or a cycle
+  rather than the record being filed — so it is passed with `--counter` and a
+  missing one is a refusal naming the remedy. Defaulting it to zero would mean
+  every filing ceiling silently never fires, which is a guard reporting
+  success having checked nothing.
+- `ferrostep-cli`: `explain` now says who may file and what filing costs, and
+  says **"nobody"** out loud where a definition grants it to no one. Filing is
+  default-deny like a rescope, and a heading that is not there leaves a reader
+  to work that out for themselves.
+- `examples/product-review.json` grows a `creation` block, so the permission
+  has an illustration and the guard that keeps `examples/` honest validates
+  one. Its filing ceiling is the shape the field exists for: every record
+  individually bounded, the population bounded separately.
 - `ferrostep-py`: `authorize_rescope`. The core, both ledger adapters and the
   CLI grew rescope; the binding did not, and nothing said so — which left the
   Decision JSON contract a strict superset of what a first-class binding could

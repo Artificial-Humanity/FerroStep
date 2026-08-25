@@ -7,8 +7,14 @@
   "terminal": ["acknowledged"],
   "halted": ["stalled"],
   "counters": [
-    { "name": "review_attempts", "max": 2, "on_exhausted": "stalled" }
+    { "name": "review_attempts", "max": 2, "on_exhausted": "stalled" },
+    { "name": "reviews_queued", "max": 4, "on_exhausted": "stalled" }
   ],
+  "creation": {
+    "roles": ["owner"],
+    "spends": ["reviews_queued"],
+    "requires_note": true
+  },
   "rescopes": [
     { "label": "release_line", "role": "owner", "requires_note": true }
   ],

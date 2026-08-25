@@ -11,6 +11,10 @@
 //!   person, and which moves their role has, each annotated with what it
 //!   would actually do. Built on one enumeration plus [`Engine::status`] and
 //!   [`Engine::next_moves`].
+//! * `file` — the way in. A store with a console of its own can be handed a
+//!   record without the referee ever being asked; SQLite has none, so the
+//!   zero-install path had no way to get a first record in short of writing
+//!   a program.
 //! * `move` — the resolution: authorize one attempt and persist what the
 //!   decision says. This is how a person resolves an escalation without
 //!   opening a database console.
@@ -52,7 +56,7 @@ use ferrostep_roster::Roster;
 const USAGE: &str = "ferrostep — the person-facing surface over a FerroStep-refereed ledger
 
 USAGE:
-  ferrostep <awaiting|audit|move|rescope|notify> --workflow <def.json> --store <target> [options]
+  ferrostep <awaiting|audit|file|move|rescope|notify> --workflow <def.json> --store <target> [options]
   ferrostep explain --workflow <def.json>
   ferrostep agent-env [--agent <title>] [--roster <config.yaml>]
 
@@ -65,6 +69,14 @@ COMMON:
                         referees an existing collection instead of the
                         generic ferrostep ones
   --scope <key=value>   narrow to records labelled key=value (repeatable)
+
+file:                          (also spelled `create`; files a new record)
+  --role <role> [--note <text>] [--actor <name>] [--scope …]
+  [--counter <name=value> …]   what a filing ceiling is measured against.
+                               Required for every counter the definition's
+                               `creation.spends` names: the count bounds a
+                               branch or a cycle, not the new record, so this
+                               tool cannot take it for you — see `explain`.
 
 move:
   --record <id> --role <role> --to <state> [--note <text>] [--actor <name>]
@@ -177,6 +189,22 @@ fn run(args: &[String]) -> Result<String, String> {
             let rows = records_with_status(&engine, ledger.as_ref(), &scope, true)?;
             render_audit(&engine, ledger.as_ref(), &rows)
         }
+        // `create` is the ledger interface's word and `file` is the
+        // definition's; a person reaching for either has said the same thing,
+        // and answering only the one we happen to prefer is the mistake
+        // `--help` already made once.
+        "file" | "create" => {
+            let role = flags.require("role")?;
+            do_file(
+                &engine,
+                ledger.as_ref(),
+                &scope,
+                role,
+                flags.all("counter"),
+                flags.get("note"),
+                flags.get("actor").unwrap_or(role),
+            )
+        }
         "move" => {
             let role = flags.require("role")?;
             do_move(
@@ -277,6 +305,33 @@ fn explain(engine: &Engine) -> String {
         }
         let suffix = if notes.is_empty() { String::new() } else { format!("  ({})", notes.join(", ")) };
         let _ = writeln!(out, "  {} : {} -> {}{}", t.role, t.from, t.to, suffix);
+    }
+
+    // Filing is a permission like any other, and default-deny like any
+    // other. Saying "nobody" out loud beats leaving a reader to conclude it
+    // from a heading that is not there.
+    match &def.creation {
+        Some(creation) => {
+            let mut notes = Vec::new();
+            if !creation.spends.is_empty() {
+                notes.push(format!("spends {}", creation.spends.join("+")));
+            }
+            if creation.requires_note {
+                notes.push("needs a reason".to_string());
+            }
+            let suffix =
+                if notes.is_empty() { String::new() } else { format!("  ({})", notes.join(", ")) };
+            let _ = writeln!(
+                out,
+                "\nfiling: {} may file into '{}'{}",
+                creation.roles.join(", "),
+                def.initial,
+                suffix
+            );
+        }
+        None => {
+            let _ = writeln!(out, "\nfiling: nobody, through this engine");
+        }
     }
 
     if !def.rescopes.is_empty() {
@@ -580,6 +635,124 @@ fn render_audit(
         let _ = writeln!(out, "{line}");
     }
     Ok(out)
+}
+
+/// File a new record into `scope`.
+///
+/// The zero-install path is why this exists. A store with a console of its
+/// own answers "put a record here" without the referee ever being asked, and
+/// SQLite has no console to hide behind — so without this, the deployment
+/// shape the roadmap calls first-class had no way to get a first record in
+/// at all, short of writing a program.
+///
+/// ⚠ **A filing ceiling is measured against a number this tool cannot
+/// take.** `creation.spends` bounds a *population* — how much work a branch
+/// or a cycle may create — and that count belongs to whatever can count it,
+/// never to the record being filed; the adapters deliberately do not store it
+/// on the new record, and the ledger interface has no operation that reads
+/// it back. Defaulting it to zero would be the worst available answer: every
+/// filing ceiling would silently never fire, which is a guard reporting
+/// success having checked nothing. So the caller supplies it, and a missing
+/// one is a refusal that says where the number lives.
+fn do_file(
+    engine: &Engine,
+    ledger: &dyn Ledger,
+    scope: &Scope,
+    role: &str,
+    counters: &[String],
+    note: Option<&str>,
+    actor: &str,
+) -> Result<String, String> {
+    let def = engine.def();
+    let mut measured: BTreeMap<String, u32> = BTreeMap::new();
+    for pair in counters {
+        let (name, value) = pair
+            .split_once('=')
+            .ok_or(format!("--counter takes name=value, got '{pair}'"))?;
+        let parsed = value
+            .parse()
+            .map_err(|_| format!("--counter {name} needs a whole number, got '{value}'"))?;
+        measured.insert(name.to_string(), parsed);
+    }
+    if let Some(creation) = &def.creation {
+        let unmeasured: Vec<&str> = creation
+            .spends
+            .iter()
+            .filter(|name| !measured.contains_key(name.as_str()))
+            .map(String::as_str)
+            .collect();
+        if !unmeasured.is_empty() {
+            return Err(format!(
+                "filing spends {}, and this tool cannot count it for you: a filing ceiling \
+                 bounds a branch or a cycle rather than the record being filed, so what it \
+                 is measured against is yours to derive. Pass each as \
+                 --counter <name>=<value>",
+                unmeasured.join(", ")
+            ));
+        }
+    }
+    let mut attempt = Attempt::new(role, &def.initial);
+    if let Some(text) = note {
+        attempt = attempt.saying(text);
+    }
+    let decision = engine.authorize_create(&attempt, &measured);
+    match &decision {
+        Decision::Deny { reason } => return Err(format!("refused: {reason}")),
+        // No record is created: the matter escalates, and there is nothing
+        // yet to carry it. Saying which ceiling and where it routes is the
+        // whole content of that refusal.
+        Decision::Exhausted { to, counter } => {
+            return Err(format!(
+                "'{counter}' is spent: nothing was filed, and the definition routes that \
+                 to '{to}'"
+            ));
+        }
+        Decision::Allow { .. } => {}
+    }
+    let event = Event {
+        actor: actor.to_string(),
+        role: role.to_string(),
+        // A filed record came from nowhere, which is not the same as coming
+        // from a state name that is merely blank.
+        from_state: None,
+        decision: decision.clone(),
+        note: note.map(str::to_string),
+    };
+    let record = ledger.create(scope, &decision, &event).map_err(|e| e.to_string())?;
+
+    let mut line = format!("record {} filed into '{}'", record.id.0, def.initial);
+    if !scope.filters().is_empty() {
+        let labels: Vec<String> =
+            scope.filters().iter().map(|(k, v)| format!("{k}={v}")).collect();
+        let _ = write!(line, " [{}]", labels.join(", "));
+    }
+    let mut spent = false;
+    if let Decision::Allow { counter_updates, .. } = &decision {
+        if !counter_updates.is_empty() {
+            spent = true;
+            let changes: Vec<String> = counter_updates
+                .iter()
+                .map(|(name, new)| {
+                    let old = measured.get(name).copied().unwrap_or(0);
+                    format!("{name} {old} → {new}")
+                })
+                .collect();
+            let _ = write!(line, " ({})", changes.join(", "));
+        }
+    }
+    let _ = write!(line, " (version {})", record.version.0);
+    // ⚠ Say where that new value went, because it did not go onto a record.
+    // An operator who passes the same number next time gets the same answer
+    // forever, and a ceiling that never advances is one that never fires.
+    // Last, on its own line, so the outcome stays the thing you read first.
+    if spent {
+        let _ = write!(
+            line,
+            "\n  ⚠ a filing spend is scope-level: it is in this record's history, not on the \
+             record. Derive the next value from there rather than repeating this one."
+        );
+    }
+    Ok(line)
 }
 
 fn do_move(
@@ -1076,6 +1249,167 @@ mod tests {
             4,
             "a refused rescope changed the ledger"
         );
+    }
+
+    /// The shipped example that says who may file, and what filing costs.
+    fn filing_engine() -> Engine {
+        let def =
+            WorkflowDef::from_json(include_str!("../../examples/product-review.json")).unwrap();
+        Engine::new(def).unwrap()
+    }
+
+    fn empty_ledger() -> (tempfile::TempDir, SqliteLedger) {
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = SqliteLedger::open(dir.path().join("ledger.db")).unwrap();
+        (dir, ledger)
+    }
+
+    /// ⚠⚠ The zero-install path had no way in. A store with a console of its
+    /// own can be handed a record without the referee ever being asked —
+    /// which is exactly why the roadmap wanted a second adapter — and SQLite
+    /// has no console to hide behind. So a stranger following the README
+    /// could reach every surface here except the one that starts a loop.
+    #[test]
+    fn filing_is_how_a_record_reaches_a_ledger_that_has_no_console() {
+        let (_dir, ledger) = empty_ledger();
+        let engine = filing_engine();
+        let scope = Scope::all().with("release_line", "0.1.x");
+        let out = do_file(
+            &engine,
+            &ledger,
+            &scope,
+            "owner",
+            &[String::from("reviews_queued=0")],
+            Some("cutting 0.1.1"),
+            "Ada",
+        )
+        .unwrap();
+        assert!(out.contains("filed into 'queued'"), "{out}");
+        assert!(out.contains("reviews_queued 0 → 1"), "a filing that costs must say so: {out}");
+        // ⚠ And must say where that number went, because it did not go onto
+        // the record. An operator who passes the same value next time gets
+        // the same answer forever, and a ceiling that never advances never
+        // fires.
+        assert!(out.contains("scope-level"), "the spend's home is not stated: {out}");
+
+        let rows = records_with_status(&engine, &ledger, &scope, true).unwrap();
+        assert_eq!(rows.len(), 1, "the record is in the ledger");
+        assert_eq!(rows[0].0.snapshot.state, "queued", "filed into the initial state");
+        assert!(
+            rows[0].0.snapshot.counters.is_empty(),
+            "a filing spend bounds a population, so it is not stored on the one record it filed"
+        );
+        // Filed into a unit of work, and invisible from another.
+        let elsewhere = Scope::all().with("release_line", "0.2.x");
+        assert!(records_with_status(&engine, &ledger, &elsewhere, true).unwrap().is_empty());
+    }
+
+    /// Every way filing is refused, and the shared requirement: none of them
+    /// leaves a record behind.
+    #[test]
+    fn every_filing_refusal_names_what_is_wrong_and_files_nothing() {
+        let (_dir, ledger) = empty_ledger();
+        let filing = filing_engine();
+        let scope = Scope::all();
+        let measured = || vec![String::from("reviews_queued=0")];
+
+        // ⚠ The one this tool has to get right by itself. A ceiling measured
+        // against a number nobody supplied would pass every time — a guard
+        // reporting success having checked nothing.
+        let unmeasured =
+            do_file(&filing, &ledger, &scope, "owner", &[], Some("why"), "Ada").unwrap_err();
+        assert!(unmeasured.contains("--counter"), "the remedy is not in the message: {unmeasured}");
+
+        let malformed = do_file(
+            &filing,
+            &ledger,
+            &scope,
+            "owner",
+            &[String::from("reviews_queued=lots")],
+            Some("why"),
+            "Ada",
+        )
+        .unwrap_err();
+        assert!(malformed.contains("whole number"), "{malformed}");
+
+        let wrong_role =
+            do_file(&filing, &ledger, &scope, "product_reviewer", &measured(), Some("why"), "Ada")
+                .unwrap_err();
+        assert!(wrong_role.contains("may not file"), "{wrong_role}");
+
+        let silent =
+            do_file(&filing, &ledger, &scope, "owner", &measured(), None, "Ada").unwrap_err();
+        assert!(silent.contains("requires a note"), "{silent}");
+
+        // Exhaustion here means the matter escalates and no record exists to
+        // carry it — different from every other exhausted decision.
+        let spent = do_file(
+            &filing,
+            &ledger,
+            &scope,
+            "owner",
+            &[String::from("reviews_queued=4")],
+            Some("why"),
+            "Ada",
+        )
+        .unwrap_err();
+        assert!(spent.contains("nothing was filed"), "{spent}");
+        assert!(spent.contains("stalled"), "the refusal must say where that routes: {spent}");
+
+        // A definition that never said who may file grants it to nobody,
+        // rather than to anybody.
+        let nobody =
+            do_file(&engine(), &ledger, &scope, "reviewer", &[], Some("why"), "Ada").unwrap_err();
+        assert!(nobody.contains("does not say who may file"), "{nobody}");
+
+        assert!(
+            records_with_status(&filing, &ledger, &Scope::all(), true).unwrap().is_empty(),
+            "a refused filing left a record behind"
+        );
+    }
+
+    /// `create` is the ledger interface's word, `file` is the definition's,
+    /// and a person reaching for either has said the same thing. Answering
+    /// only the preferred spelling is the mistake `--help` already made.
+    #[test]
+    fn both_spellings_of_filing_reach_the_same_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = format!("sqlite:{}", dir.path().join("ledger.db").display());
+        for (n, spelling) in ["file", "create"].iter().enumerate() {
+            let counter = format!("reviews_queued={n}");
+            let out = run(&argv(&[
+                spelling,
+                "--workflow",
+                "../examples/product-review.json",
+                "--store",
+                &store,
+                "--role",
+                "owner",
+                "--counter",
+                &counter,
+                "--note",
+                "either word means this",
+            ]))
+            .unwrap();
+            assert!(out.contains("filed into 'queued'"), "{spelling}: {out}");
+        }
+    }
+
+    /// Filing is a permission like any other and default-deny like any
+    /// other, so the surface that says what a definition permits has to say
+    /// so — not least because the `file` usage text points here.
+    #[test]
+    fn explain_says_who_may_file_and_says_nobody_out_loud() {
+        let granted = explain(&filing_engine());
+        assert!(
+            granted.contains("filing: owner may file into 'queued'"),
+            "{granted}"
+        );
+        assert!(granted.contains("spends reviews_queued"), "filing's cost is missing: {granted}");
+        assert!(granted.contains("needs a reason"), "{granted}");
+        // ⚠ The absent case is the one worth printing: a heading that is not
+        // there leaves a reader to conclude default-deny for themselves.
+        assert!(explain(&engine()).contains("filing: nobody"), "default-deny is not stated");
     }
 
     /// ⚠⚠ A rescope moves a record between units of work, not between
