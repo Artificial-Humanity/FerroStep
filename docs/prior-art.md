@@ -29,6 +29,14 @@ human **operator** above them. The rules:
    the actors are written in whatever they're written in.
 8. Deployment is **a library plus the database you already run**. No new
    server.
+9. **The set of actors is not knowable when the loop is designed.** New ones
+   arrive that nobody foresaw — a different vendor's runtime, a colleague's
+   script, an agent an end user stood up this morning — and each needs an
+   identity the loop can gate on *without the loop being rewritten*. This is
+   the same shape as the adapter rule the project already holds for message
+   transports: the target to design against is the one nobody has thought of
+   yet. It is listed last because it was learned last, and it is the
+   requirement the managed platforms have moved on hardest.
 
 ## Placing the existing tools against it
 
@@ -75,6 +83,91 @@ of times and then parks indefinitely on a human is against the grain of the
 model — cycles, long waits, and per-record authorization all fight the
 abstraction.
 
+## The managed agent platforms, and where identity landed (2026)
+
+The three large platforms moved fastest on requirement 9, and an honest
+reading grants them ground. Surveyed 2026-08-25; this section is the one most
+likely to age, so check it before quoting it.
+
+**LangGraph Platform.** Custom authentication through an `@auth.authenticate`
+handler, with `@auth.on` handlers giving resource-level authorization, RBAC,
+and metadata filtering on list and read. Two things to be precise about: it
+authorizes **its own resources** — threads, assistants, crons — so "may this
+role move this work item to that state" remains the graph's business and not
+the platform's; and it is a **platform** capability, reached by deploying on
+LangGraph Platform rather than by using the library.
+
+**Amazon Bedrock AgentCore** (GA October 2025). AgentCore Identity handles
+non-human identities across SigV4, OAuth 2.0 and API keys. ⚠ **Its temporal
+policies are the closest thing to this project's core that exists in
+production**: stateful rules evaluating authorization from an agent's session
+history, expressly to enforce workflow sequencing, cap financial exposure, and
+require human approval for high-value actions. Transitions, ceilings and
+escalation, in someone else's product. Their human-in-the-loop pauses agent
+execution pending an asynchronous approval.
+
+**Microsoft Foundry, with Entra Agent ID.** The strongest identity position of
+the three: every agent gets a first-class directory identity under the same
+management as human users. At Build 2026 this extended to "autopilot" agents
+carrying an email address, a presence in Teams, and a place in the org chart,
+governed and audited through Agent 365.
+
+### What they settled, and what it costs
+
+They settled requirement 9 the same way, and they are right: **an agent is a
+principal in a directory you already run.** Nobody should adopt a referee that
+cannot sit behind Entra, Auth0, or an OIDC provider they already operate.
+
+What it costs is the rest of the list. All three scope authorization to a
+**session or an agent invocation**; the test loop's unit is a **record with a
+durable lifetime** that outlives every session and is edited by a human at a
+console. Their human approval is a pause in a running program — something has
+to be alive to be paused. Escalation here is a *state a record sits in*, which
+needs nothing running to hold, survives every process dying, and is visible to
+anyone who opens the database. That is requirements 1, 2 and 6 again, arriving
+from a new direction.
+
+### Bind, don't mint
+
+The identity question splits into two answers, and only one of them is ours.
+
+**Minting** is owning an account store: the tool issues actor credentials, and
+an actor exists because the tool says so. Entra and AgentCore mint, correctly
+— they *are* directories, or are hosted runtimes fronting one.
+
+**Binding** is owning no accounts at all. The store authenticates whoever it
+authenticates; the referee looks up exactly one fact about that principal —
+**which role it may act in** — and refuses any request claiming a different
+one. Authentication is somebody else's job, permanently.
+
+⚠ **Requirement 9 is why this is not a preference.** Minting requires
+enumerating your actors at design time, which is the assumption the
+requirement says will be false. Under binding, an actor nobody foresaw is a
+new principal in a directory that already exists, plus one row saying which
+role it plays — no code, no release, no schema change here.
+
+Two consequences worth stating, because they are what makes this different
+from the platforms rather than a smaller version of them:
+
+- **The role is data in the definition; the binding is data in the store.** So
+  "who may move this record" has one answer whether the engine is asked, the
+  store is asked, or a person reads the configuration. LangGraph's `@auth.on`
+  handlers are *code you maintain per resource* — expressive, and a second
+  place for the answer to live. Nobody else can collapse the two, because
+  nobody else has a definition to be the single source.
+- **It composes with all three rather than competing.** An agent with an Entra
+  Agent ID, or an AgentCore workload identity, authenticates to your store as
+  itself; the referee binds that principal to a role and gates the transition.
+  Being uninterested in how the principal was authenticated is exactly what
+  lets it sit downstream of any of them.
+
+⚠ **Where this project is behind, plainly.** There is no OIDC or OAuth story
+here yet; binding assumes the store authenticated somebody, and for a store
+that cannot authenticate at all the engine is the only gate — a fact the
+adapter has to state rather than a milestone to fake. Until B6 lands, actors
+authenticate as a store administrator and the roster is *attribution, not
+authentication*. On requirement 9 the platforms are ahead today.
+
 ## The gap, stated
 
 Every tool above wants to **be the loop** — to host the code, own the
@@ -89,20 +182,27 @@ every actor including the human is just a client of the truth — is the whole
 project. It is also precisely the property none of the above can retrofit,
 because each is architecturally committed to owning the execution.
 
-| Requirement | Agent runtimes | Graph frameworks | Durable execution | Burr | Dataflow | FerroStep |
-|---|---|---|---|---|---|---|
-| 1. Independent-process actors, no shared runtime | — | ✗ | ✗ | ✗ | ✗ | ✓ |
-| 2. Human acts by editing the DB directly | — | ◐ api | ◐ signals | ✗ | ✗ | ✓ |
-| 3. Role-gated transitions | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
-| 4. Crash-priced loop ceilings | ✗ | ✗ | ◐ retries | ✗ | ◐ retries | ✓ |
-| 5. Escalation as routing | ✗ | ◐ | ✗ | ◐ | ✗ | ✓ |
-| 6. State legible/editable in a DB browser | — | ✗ | ✗ | ◐ | ✗ | ✓ |
-| 7. One rulebook, many languages | — | ✗ | ◐ per-lang | ✗ | ✗ | ✓ |
-| 8. Library + your existing DB, no new server | ✓ | ◐ | ◐ DBOS ✓ / Temporal ✗ | ✓ | ◐ | ✓ |
+| Requirement | Agent runtimes | Graph frameworks | Durable execution | Burr | Dataflow | Managed platforms | FerroStep |
+|---|---|---|---|---|---|---|---|
+| 1. Independent-process actors, no shared runtime | — | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ |
+| 2. Human acts by editing the DB directly | — | ◐ api | ◐ signals | ✗ | ✗ | ✗ | ✓ |
+| 3. Role-gated transitions | ✗ | ✗ | ✗ | ✗ | ✗ | ◐ policies | ✓ |
+| 4. Crash-priced loop ceilings | ✗ | ✗ | ◐ retries | ✗ | ◐ retries | ◐ per-session | ✓ |
+| 5. Escalation as routing | ✗ | ◐ | ✗ | ◐ | ✗ | ◐ pause | ✓ |
+| 6. State legible/editable in a DB browser | — | ✗ | ✗ | ◐ | ✗ | ✗ | ✓ |
+| 7. One rulebook, many languages | — | ✗ | ◐ per-lang | ✗ | ✗ | ✗ | ✓ |
+| 8. Library + your existing DB, no new server | ✓ | ◐ | ◐ DBOS ✓ / Temporal ✗ | ✓ | ◐ | ✗ | ✓ |
+| 9. Unforeseen actors, identity from your directory | — | ✗ | ✗ | ✗ | ✗ | **✓** | ◐ B6 |
 
 ◐ = partially, or through the tool's own runtime/API rather than the ledger.
 "—" = out of scope for that layer. The columns are categories; individual
 tools vary — see prose above for the honest per-tool nuance.
+
+⚠ **Row 9 is the one this project does not win, and the table is more useful
+for having a row like that in it.** A comparison where the author sweeps every
+line is a comparison whose requirements were chosen after the answers. Row 9
+was added because the platforms made it obvious, not because it was foreseen —
+which is itself the requirement demonstrating itself.
 
 ## When to buy instead
 
@@ -116,6 +216,12 @@ FerroStep is the right tool only inside its gap. Reach for something else when:
 - **You want a batteries-included TS agent stack**: Mastra.
 - **You need an agent runtime**: PydanticAI / smolagents — and use it *as an
   actor* in a FerroStep loop rather than instead of one.
+- **You are already inside one cloud and want agents governed like employees**:
+  Microsoft Foundry with Entra Agent ID, or Bedrock AgentCore. They give
+  directory identity, token brokering and audit that this project does not and
+  should not try to reproduce. ⚠ **This is a "use both", not a "use instead"**
+  — an agent holding one of their identities is a perfectly good actor in a
+  refereed loop, and binding it to a role is the seam where the two meet.
 
 ## What FerroStep borrows from each
 
@@ -130,3 +236,13 @@ FerroStep is the right tool only inside its gap. Reach for something else when:
 - From **LangGraph**, negatively: what happens when the framework owns the
   runtime — every actor must live inside it. FerroStep's core rule (pure
   engine, no IO) exists to make that capture structurally impossible.
+- From **Entra Agent ID and AgentCore Identity**: that an agent is a principal
+  in a directory, not an account a workflow tool invents. It is the settled
+  answer to requirement 9 and this project adopts it rather than arguing with
+  it — which is what *bind, don't mint* means in one line.
+- From **AgentCore's temporal policies**, as confirmation rather than
+  borrowing: an independent team reached sequencing, spend caps and mandatory
+  human approval from a different starting point. Convergent design is the
+  best available evidence that a problem is real. ⚠ It is also the closest
+  competitor to the core, and pretending otherwise in this document would make
+  the rest of it untrustworthy.
