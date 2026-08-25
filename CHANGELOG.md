@@ -7,6 +7,15 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-cli`: the audit no longer reads a state change out of a rescope.
+  A rescope moves a record between units of work and leaves it in the state it
+  was already in, so its event carries `to` equal to `from_state` — which
+  satisfied both the escalation test (arrived somewhere halted) and the release
+  test (departed somewhere halted) at once. Rescoping a paused record therefore
+  reported an escalation *and* a release for a record that had not moved. Not a
+  crash and not a visibly wrong number: a **plausible story**, on the one
+  surface offered to a person who is deliberately not opening a database
+  console to check. Both tallies now ask whether the record moved at all.
 - `ferrostep-roster`: the actor roster as a product surface. A deployment's
   `config.yaml` names its agents by title; each entry carries the identity work
   is signed under and the persona document that tells that agent how to behave.

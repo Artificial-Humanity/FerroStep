@@ -487,6 +487,29 @@ fn render_awaiting(engine: &Engine, rows: &[(Record, Status)]) -> String {
     out
 }
 
+/// Whether an event moved the record from one state to another.
+///
+/// ⚠ **Not every event does, and reading a history as if they all did is how
+/// a report invents things that never happened.** A rescope is
+/// `Allow { to: <the state the record is already in> }` — it moves the record
+/// between units of work, and the record stays exactly where it was. It is
+/// therefore neither an arrival nor a departure, and the two tallies below
+/// counted it as both: rescoping a paused record reported an escalation *and*
+/// a release, which is a plausible story about a record that did not move.
+///
+/// Asking here rather than testing for scope updates keeps this about the
+/// question the tallies actually mean. Any other event that lands a record
+/// where it already was is the same non-move, whether or not scope is why.
+fn changed_state(event: &Event) -> bool {
+    let landed = match &event.decision {
+        Decision::Allow { to, .. } | Decision::Exhausted { to, .. } => Some(to.as_str()),
+        // A denial persists nothing, so it never reaches a history at all.
+        Decision::Deny { .. } => None,
+    };
+    // A filed record came from nowhere and arrived somewhere, which is a move.
+    landed.is_some_and(|to| event.from_state.as_deref() != Some(to))
+}
+
 fn render_audit(
     engine: &Engine,
     ledger: &dyn Ledger,
@@ -510,9 +533,12 @@ fn render_audit(
     for (record, status) in rows {
         let history = ledger.history(&record.id).map_err(|e| e.to_string())?;
         // An escalation is any arrival in a halted state, by whichever door:
-        // a spent ceiling routing there, or an actor sending it there.
+        // a spent ceiling routing there, or an actor sending it there. A
+        // release is the departure. Both ask `changed_state` first, because
+        // an event in a history is not necessarily a move.
         let escalations = history
             .iter()
+            .filter(|e| changed_state(&e.event))
             .filter(|e| match &e.event.decision {
                 Decision::Exhausted { .. } => true,
                 Decision::Allow { to, .. } => def.halted.contains(to),
@@ -521,6 +547,7 @@ fn render_audit(
             .count();
         let releases = history
             .iter()
+            .filter(|e| changed_state(&e.event))
             .filter(|e| e.event.from_state.as_ref().is_some_and(|s| def.halted.contains(s)))
             .count();
         let status_word = match status {
@@ -1045,6 +1072,69 @@ mod tests {
                 .len(),
             4,
             "a refused rescope changed the ledger"
+        );
+    }
+
+    /// ⚠⚠ A rescope moves a record between units of work, not between
+    /// states — so it is neither an arrival nor a departure, and the audit
+    /// must not read one out of it. It used to read BOTH: rescoping a record
+    /// that sits in a halted state satisfied the escalation test (`to` is
+    /// halted) and the release test (`from_state` is halted) at once, and
+    /// reported an escalation and a release for a record that had not moved.
+    ///
+    /// That is the dangerous shape for a report: not a crash and not an
+    /// obviously wrong number, but a plausible story a reader cannot tell
+    /// from a true one — on the surface B4 offers to somebody who is
+    /// deliberately not opening a database console to check.
+    ///
+    /// The halted state is the case that must be tested, because it is the
+    /// only one where both tallies fire, and it is an ordinary thing to want:
+    /// a record parked for a person is exactly the kind that gets moved to
+    /// another unit of work.
+    #[test]
+    fn rescoping_a_paused_record_is_neither_an_escalation_nor_a_release() {
+        let (_dir, ledger, ids) = seeded();
+        let engine = engine_with_rescopes();
+        let paused = ids["paused"].0.clone();
+        let line_for = |out: &str| {
+            out.lines()
+                .find(|l| l.starts_with(&format!("  record {paused}:")))
+                .expect("the paused record is in the report")
+                .to_string()
+        };
+        let audit = || {
+            let rows = records_with_status(&engine, &ledger, &Scope::all(), true).unwrap();
+            line_for(&render_audit(&engine, &ledger, &rows).unwrap())
+        };
+
+        let before = audit();
+        assert!(
+            before.contains("1 escalation(s)") && before.contains("0 release(s)"),
+            "fixture: the record escalated once and was never released: {before}"
+        );
+
+        do_rescope(
+            &engine,
+            &ledger,
+            &paused,
+            "worker",
+            &[String::from("branch=release-2")],
+            Some("moved to the release branch"),
+            "Ada",
+        )
+        .unwrap();
+
+        let after = audit();
+        // The move count DOES rise: a rescope is a real event with real
+        // history. What must not rise is the reading of it as a state change.
+        assert!(after.contains("3 move(s)"), "the rescope is in the history: {after}");
+        assert!(
+            after.contains("1 escalation(s)"),
+            "a rescope was counted as an escalation: {after}"
+        );
+        assert!(
+            after.contains("0 release(s)"),
+            "a rescope was counted as a release: {after}"
         );
     }
 
