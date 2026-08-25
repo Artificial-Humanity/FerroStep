@@ -372,13 +372,32 @@ SQLite cannot. From there SQLite's lack of a console was reframed as a
 and that argument is good and stays. But a suggestion had been answered with
 a reason it was fine not to do, and nothing recorded that it had been.
 
-**Scope.** Browsable and editable records, per requirement 8 — not a live
-tail; `awaiting` and `audit` already answer *what is happening*. ⚠ It reads
-and writes through the ledger interface rather than the database file, or it
-becomes a second writer with none of the referee's bookkeeping — the very
-thing rescope exists to have ended.
-*Done when:* a person inspects and corrects a SQLite-backed loop without
-reaching for a SQL client.
+**Scope — small on purpose** (owner, 2026-08-25): **it need not be as robust
+or as configurable as a mature store's admin UI.** Requirement 8's bar
+describes what such a console gives you for free; this is not held to it, and
+recording that now is what keeps it from growing toward one. No theming, no
+custom views, no configuration surface of its own.
+
+Concretely: list the records in a scope with their state and counters, open
+one to see its fields and its history, and take the moves the definition
+allows. Not a live tail — `awaiting` and `audit` already answer *what is
+happening*.
+
+⚠ **It goes through the ledger interface, never the database file.** A console
+writing rows directly is a second writer with none of the referee's
+bookkeeping, which is the thing rescope exists to have ended. That has a
+consequence better stated than discovered: **arbitrary field editing is
+therefore not on offer**, because the interface has no such operation.
+Requirement 8's *"editable view of every row"* is answered by a store's own
+console and deliberately not by this one — the escape hatch for a SQLite loop
+stays a SQL client, used knowingly.
+
+**One question, cheap to defer to the item:** built against `Ledger` this
+works for every adapter at no extra cost, and only the *need* is
+SQLite-specific. The trait is the leaning.
+
+*Done when:* a person inspects a SQLite-backed loop and resolves what it is
+waiting on, without reaching for a SQL client.
 
 ---
 
