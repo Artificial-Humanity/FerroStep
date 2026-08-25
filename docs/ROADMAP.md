@@ -7,15 +7,24 @@ configuration, no speculative scenarios, the admission bar of a real consuming
 loop) live in [AGENTS.md](../AGENTS.md) and the north star, and every
 milestone below inherits them.
 
-**Where it stands (2026-08-24):** the baseline through B4 is built and
-tested — the referee core, both ledger adapters with their measured
+**Where it stands (2026-08-25):** the baseline through B5 is built, tested
+and running — the referee core, both ledger adapters with their measured
 batteries, the decision surface and its resolving move, the notification
-boundary with its default, and the audit report. The author's lane runs on
-the engine: its store carries the referee (a mapped collection with
-generated transactional routes), and the first real record has completed
-the full refereed cycle — claim, escalation, owner release, close. 0.1.0 is
-cut on that basis. Nothing is published to a registry yet; the lane's
-procedure switch sits with its reviewer to land.
+boundary with its default, and the audit report. The author's lane has
+finished its migration: the workflow machinery it ran on before is retired
+rather than running alongside, its store carries the referee (a mapped
+collection with generated transactional routes), and real records have run
+the full refereed cycle — claim, escalation, owner release, close —
+including a refereed move between units of work. 0.1.0 is cut on that basis
+and nothing is published to a registry yet.
+
+⚠ **What that migration cost the adopter is the tier's most valuable
+output, and it is written down:**
+[`notes/adoption-friction.md`](../notes/adoption-friction.md) is the
+evidence file the expansion tier is meant to be argued from, so "a real loop
+needs this" stops being a claim made from memory. Where an entry there
+produced a change, the entry names it — which is how to tell what the
+migration actually bought without counting anything here.
 
 ## Releases — the named points on the road
 
@@ -198,6 +207,13 @@ definition (see B6) or be retired into it; it must not survive as a
 hand-written peer. Worth deciding before a cutover rather than during one.
 *Done when:* a real change ships through a FerroStep-refereed loop with a
 ceiling spent and an escalation exercised for real, not in a fixture.
+✅ **Met 2026-08-24.** A real record ran claim, spend, escalation, owner
+release and close through the referee, in the ledger's own history. The
+two-referees warning above was answered the way it asks for rather than the
+way that is easier: the store-side hook that performed a transition became
+generated output of the definition, and the loop's prior workflow machinery
+was retired in the same migration instead of being left to agree with the
+definition by luck.
 
 **B6 — Defense in depth: compile the rules into the database.**
 The engine is consulted, not in the write path — by design. This milestone

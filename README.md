@@ -35,9 +35,12 @@ The core encodes lessons from running real agent loops in production:
   transitions, counters), validated structurally at load time — unknown states,
   dead ends, exits from terminal states, and a pause nobody can release all
   fail before the first record moves.
-- **Loop ceilings that survive crashes.** Counters spend on *entry* to work
-  (claiming a pass costs it), so an agent that crashes mid-pass has already
-  paid. A crash loop cannot become an infinite loop.
+- **Loop ceilings priced so a crash still costs.** Counters spend on *entry*
+  to work (claiming a pass costs it), so an agent that crashes mid-pass has
+  already paid, and the engine never hands back a budget the work did not
+  finish spending. Persist the state flip and the spend in one write and a
+  crash loop cannot become an infinite loop — split them and it can, which is
+  why they come back in a single decision.
 - **Exhaustion is routing, not an error.** When a ceiling is spent the engine
   answers with the state to route to instead — typically escalate-to-human.
 - **An ending and a pause are different things.** A `terminal` state is final
