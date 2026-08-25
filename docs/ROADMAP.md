@@ -262,11 +262,23 @@ collection anybody authenticated may. **The generated rules should be derived
 from the records collection rather than assumed**, since the whole point is
 that the history is no more visible than its subject.
 
-⚠ **Actors authenticate as a store administrator** until this milestone
-lands, which is the condition the B1 note above says makes every enforcement
-story a promise. Role-scoped accounts are the fix, and the two are one design:
-what an actor may read is the same question as what an events collection may
-expose.
+✅ **Role-scoped actors — the mechanism landed 2026-08-25.** The write routes
+took `role` from the request body, so any authenticated caller could act as
+any role. It now comes from the authenticated principal and a contradicting
+claim is refused. ⚠ **Bind, don't mint** (prior-art §requirement 9): the
+binding names an auth collection the deployment already has and reads one
+field on it; it creates no identities, because owning accounts would mean
+enumerating actors at design time and that is the assumption which fails
+first. What remains for this milestone is the *deployment* half — creating
+actors, granting them read on the records collection, and flipping
+`allow_unbound` to `false`, after which a principal with no role cannot move a
+record even holding administrator credentials.
+
+⚠ **A mapped deployment must widen its own records collection**, and this
+project must not do it for them: actors need read on a collection the adopter
+owns, under rules only they can weigh. The generic shape creates that
+collection and so can grant it; the mapped shape says so and stops. Same line
+as the read-rule fix above, in the other direction.
 
 *Done when:* an illegal transition is blocked by the store itself with the
 engine bypassed entirely, on a store capable of it — and no generated

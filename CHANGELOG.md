@@ -7,6 +7,30 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-pocketbase`: **role-scoped actors — the write routes stop
+  believing the request about who is asking.** Every route authenticated and
+  then wrote `role` straight from the request body, so any authenticated
+  caller could act as any role. That is invisible while every actor shares one
+  credential and is the entire point once they do not. The acting role is now
+  read from the **authenticated principal**, and a request claiming a
+  different one is refused by name.
+  ⚠ **Bind, don't mint** (`docs/prior-art.md` §requirement 9). `ActorBinding`
+  names an auth collection the deployment already has and one field on it; it
+  creates no identities and is not an account store. The store authenticates
+  whoever it authenticates — a password, an OAuth provider, a directory
+  federated behind it — and the only thing read here is which role that
+  principal may act in. Owning accounts would mean enumerating the actors when
+  the loop is designed, and the actors are exactly what a deployment cannot
+  enumerate up front: an agent nobody foresaw should be a new principal in a
+  directory that already exists plus one row naming its role.
+  **Defaults work on a stock instance** — a `ferrostep_actors` auth collection
+  with a `role` field, created by the migration only when absent, superuser-only
+  to read. `allow_unbound` is `true` by default and that is a *transition, not
+  a position*: a deployment with no actors yet authenticates as an
+  administrator, so refusing unbound principals on install would be an outage.
+  Set it `false` once your actors exist — from then on a principal with no role
+  cannot move a record even holding administrator credentials, which is why the
+  check lives in a hook rather than an access rule.
 - `ferrostep-pocketbase`: **a generated history no longer outranks the records
   it describes.** The mapped migration created its events collection with an
   authenticated-user read rule — matching in the generic shape, which creates

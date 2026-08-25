@@ -12,8 +12,13 @@ fn main() {
     let dir = std::env::args()
         .nth(1)
         .expect("usage: install <pocketbase working directory>");
-    let (migration, hooks) =
-        ferrostep_pocketbase::install_files(std::path::Path::new(&dir)).expect("writable dir");
+    // The default binding: a `ferrostep_actors` auth collection, roles read
+    // from its `role` field. Nothing to configure for a first deployment —
+    // and a deployment with its own auth collection points this at that one
+    // instead of creating a second place identities live.
+    let actors = ferrostep_pocketbase::ActorBinding::default();
+    let (migration, hooks) = ferrostep_pocketbase::install_files(std::path::Path::new(&dir), &actors)
+        .expect("writable dir");
     println!("wrote {}", migration.display());
     println!("wrote {}", hooks.display());
 }
