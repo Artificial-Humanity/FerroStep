@@ -207,6 +207,20 @@ to argue against, not a constraint — the section says so itself).
   frozen at filing while the tree keeps moving underneath it, which makes it the
   worst possible home for a hardcoded count and the last place anyone thinks to
   look.
+- ⚠⚠ **A correction in prose does not correct the runnable thing beside it**
+  (2026-08-25, measured in this workspace). A document recorded a fix — *"the
+  first deployed version let the reviewer escalate"* — four lines above a
+  copy-pasteable command block that still told a reader to do exactly that.
+  **The document carried the correction and the defect simultaneously**, and
+  the half people paste is the one that matters. Nothing was stale in the
+  usual sense: the prose was current, the example was wrong, and each read
+  fine on its own.
+  ⚠ This is the neighbour of *derive counts* below and of friction entry 13,
+  but it inverts them: there, prose carried the error and the refusal carried
+  the truth. So the rule is not "trust the code" — it is **when a fix lands,
+  find every runnable form of the thing and fix those first.** A command, a
+  snippet, a fixture, a `--help` string: those are what get executed, and
+  prose beside them is not a correction, it is a note about one.
 - ⚠ **A guard must ask the question it actually means, and must fail when it
   checked nothing** (2026-08-21, both measured here). Two ways a green guard
   lies, and neither is visible from its passing output:
