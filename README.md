@@ -144,26 +144,105 @@ illustrations, never standards: FerroStep ships **no canonical workflow**, and
 the engine knows nothing about any particular one. Fluid configuration is the
 product; the configurations are yours.
 
+## Running a loop on it
+
+The engine decides. Everything else here carries a decision to a store, and a
+person to the decision — each piece an adapter, and each one optional.
+
+**The ledger is a store you already run.** Two adapters ship as maintained
+defaults, and being the worked example somebody copies to write a third is
+part of the job.
+
+- **SQLite** — the zero-install path: one WAL-mode file, no server, no
+  account. Every actor is a separate process on one host, which is exactly
+  the case WAL supports. ⚠ And exactly where it stops: a database file on a
+  network share is corruption waiting, not a small-team deployment.
+- **PocketBase** — a stock instance plus a generated migration and
+  transactional routes. It can referee its own collections, or *map* onto a
+  collection you already have, so the store's console stays the human view of
+  the one truth.
+
+An adapter states what it **cannot** promise as readily as what it can:
+atomic apply, compare-and-swap and append-only history are per-store facts,
+not interface-wide ones, and an audit implying more than the store delivers
+is worse than one that admits the gap.
+
+**A person decides from the `ferrostep` binary.**
+
+```sh
+ferrostep awaiting --workflow loop.json --store sqlite:loop.db
+
+ferrostep move --workflow loop.json --store sqlite:loop.db \
+  --record 42 --role operator --to awaiting_worker \
+  --note "reproduced locally; worth another pass"
+```
+
+`awaiting` lists the records that need a person and what each of their moves
+would *actually* do right now. `move` resolves one without opening a database
+console. `audit` reports what happened — moves, escalations, releases, the
+last note — reading the same enumeration `awaiting` does, so the two views
+cannot disagree. `notify` sends one message per awaiting record through the
+notifier adapter; nothing here polls or schedules, so a caller decides when.
+
+`explain` takes no store at all. Besides what a definition permits, it prints
+the numbers the definition asserts **and their off-by-one neighbours** — the
+list you want when a ceiling moves into a definition and the arithmetic
+derived from it stays behind in a guard, a help string, or a brief handed to
+an agent. A search for the ceiling finds none of those.
+
+Filing is not a subcommand. Records are created by your application through
+the adapter, or by whatever procedure the collection already has; the binary
+is the surface over records that exist.
+
+**Scope is which unit of work a record belongs to** — a branch, a cycle, a
+tenant. Every query that finds work filters on it, so a record whose scope
+names a finished unit is invisible to all of them. Moving one is therefore a
+refereed operation rather than a field edit: `ferrostep rescope` performs it,
+a definition grants it per label and per role or nobody has it, and it lands
+versioned and evented like any other move. ⚠ Refused on a finished record,
+and that is not configurable — a terminal record's scope is the provenance of
+what it was resolved against.
+
+**The roster answers the other half of an actor's question.** The engine says
+what may be done; a `config.yaml` says who is doing it — each agent's title,
+the identity its work is signed under, and the persona document a launcher
+hands it. `ferrostep agent-env` reads it, and takes neither a workflow nor a
+store, because who the actors are is knowable without one.
+
 ## Layout
 
 | crate | what |
 |---|---|
 | `ferrostep-core` | Pure Rust engine: definitions, validation, decisions. No IO, no async, no database. |
+| `ferrostep-ledger` | The interface a ledger adapter implements, and the capabilities it has to state honestly. Holds no IO of its own. |
+| `ferrostep-sqlite` | SQLite adapter, and the zero-install path: one WAL-mode file on one host. |
+| `ferrostep-pocketbase` | PocketBase adapter: a stock instance plus the migration and transactional routes it generates. |
+| `ferrostep-notify` | The notification — which record, why, how urgently, how to get back — and the `Notifier` boundary it is delivered through. ntfy is the maintained default. |
+| `ferrostep-roster` | Who the actors are: title, the identity work is signed under, and the persona document a launcher hands them. |
+| `ferrostep-cli` | The `ferrostep` binary: the decision surface, the moves that resolve it, the audit, the notify wiring, and the roster reader. |
 | `ferrostep-py` | PyO3/maturin bindings; installs as the `ferrostep` Python package. |
 | `ferrostep-github` | Represents an agent roster to GitHub as a GitHub App; today it emits the registration manifest ([roadmap](docs/github-agents-roadmap.md)). |
 
 TypeScript bindings (NAPI-RS) are planned and the workspace leaves room for
 them; they land when there is a TypeScript consumer to drive their API.
 
+[`docs/deployment-map.md`](docs/deployment-map.md) records what ships through
+which channel, and what never leaves the repo.
+
 ## Building
 
 ```sh
-cargo test -p ferrostep-core          # core + acceptance fixture
+cargo test --workspace                # engine, adapters, CLI
+cargo install --path ferrostep-cli    # the `ferrostep` binary
 
 # Python bindings (uses uv; any PEP-517 installer works)
 uv venv && uv pip install ./ferrostep-py pytest
 .venv/bin/pytest ferrostep-py/tests
 ```
+
+The PocketBase adapter's live end-to-end and concurrency tests are
+`#[ignore]` by default; they need a real instance and are run against one
+deliberately.
 
 ## Roadmap
 
