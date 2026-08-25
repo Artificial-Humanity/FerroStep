@@ -301,14 +301,17 @@ fn explain(engine: &Engine) -> String {
             c.on_exhausted,
             if c.exhausted_requires_note { "; the spending attempt must say why" } else { "" }
         );
+        // ⚠ Saturating, not `+ 1`. The ceiling is a number out of a file
+        // somebody else wrote, and a maximal one made this panic in a debug
+        // build — in the subcommand whose whole audience is a person who has
+        // not got the system working yet. At the top of the range there is no
+        // next number, and saying so twice beats crashing.
+        let neighbour = c.max.saturating_add(1);
         let _ = writeln!(
             out,
             "      search your tree for {} AND for {} — a ceiling of {} usually means {} \
              rounds counting the first, and that derived number is the one that hides",
-            c.max,
-            c.max + 1,
-            c.max,
-            c.max + 1
+            c.max, neighbour, c.max, neighbour
         );
     }
     let _ = writeln!(
@@ -1161,6 +1164,24 @@ mod tests {
         assert!(out.contains("[initial]") && out.contains("[ending]") && out.contains("[pause]"),
             "states are not marked: {out}");
         assert!(out.contains("[person]"), "human roles are not marked: {out}");
+    }
+
+    /// ⚠ A ceiling is a number out of a file somebody else wrote, and this is
+    /// the subcommand aimed at a person who has not got the system working
+    /// yet — the worst possible audience for a crash. A maximal ceiling used
+    /// to panic here on `max + 1` in a debug build, and in release would have
+    /// wrapped, sending the reader hunting through their tree for `0`.
+    #[test]
+    fn explain_survives_a_ceiling_with_no_next_number() {
+        let mut def =
+            WorkflowDef::from_json(include_str!("../../examples/review-loop.json")).unwrap();
+        def.counters[0].max = u32::MAX;
+        let out = explain(&Engine::new(def).unwrap());
+        assert!(out.contains(&u32::MAX.to_string()), "the asserted value is missing: {out}");
+        assert!(
+            !out.contains("AND for 0"),
+            "a wrapped neighbour would send the reader hunting for 0: {out}"
+        );
     }
 
     /// ⚠ A move that costs something must say what it cost. Confirming a

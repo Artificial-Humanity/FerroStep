@@ -7,6 +7,13 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-cli`: `explain` no longer panics on a maximal ceiling. It prints
+  each asserted number *and its off-by-one neighbour*, and computed that
+  neighbour with `max + 1` — which overflows at the top of the range: a crash
+  in a debug build, and in release a wrap to `0` that would have sent the
+  reader hunting their tree for the wrong number entirely. A ceiling is a
+  value out of a file somebody else wrote, and this is the subcommand whose
+  audience is a person who has not got the system working yet.
 - `ferrostep-cli`: the audit no longer reads a state change out of a rescope.
   A rescope moves a record between units of work and leaves it in the state it
   was already in, so its event carries `to` equal to `from_state` — which
