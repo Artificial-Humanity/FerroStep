@@ -44,14 +44,31 @@ use serde::Deserialize;
 /// The file a roster lives in, at the root of the repo it describes.
 pub const ROSTER_FILE: &str = "config.yaml";
 
-/// A parsed roster, and the file it was read from. The source travels with
-/// it because a `persona` is written relative to the roster's own directory,
-/// and because an error that cannot name the file it read is hard to act on.
+/// A parsed roster: every file that contributed to it, and what they said.
+///
+/// **Layered.** A workspace holding several repos can put shared values in a
+/// `config.yaml` above them and let each repo's own file override what it
+/// needs. Discovery collects every file from the working directory upward,
+/// nearest last, and the nearest wins.
+///
+/// ⚠ **Every value remembers the file it came from**, because a relative
+/// path is resolved against *that* file's directory and against nothing else.
+/// A parent's `workflow/DEVELOPER.md` means the parent's `workflow/`, whether
+/// it is read from the parent or inherited by a repo three levels down.
 #[derive(Debug, Clone)]
 pub struct Roster {
-    source: PathBuf,
+    /// Contributing files, furthest first — so the last is the nearest.
+    sources: Vec<PathBuf>,
     default_agent: Option<String>,
-    agents: BTreeMap<String, Agent>,
+    agents: BTreeMap<String, Entry>,
+    auth: Option<Auth>,
+}
+
+/// One agent's entry, and the file that supplied it.
+#[derive(Debug, Clone)]
+struct Entry {
+    agent: Agent,
+    source: PathBuf,
 }
 
 /// One agent's entry.
@@ -62,14 +79,60 @@ pub struct Agent {
     persona: String,
 }
 
+/// Where an actor's credential comes from.
+///
+/// **A type, not a lookup.** The first one is a file, which is right for one
+/// operator on one host and honest about being that. Naming it as a *kind* is
+/// what leaves room for a keyring, an environment source, or a secrets
+/// service without every consumer having to learn a new shape.
+///
+/// ⚠ **This crate never reads the secret.** It says which identity is acting
+/// and where that deployment keeps credentials; the caller does the lookup.
+/// That is not squeamishness — it is what keeps a password out of the
+/// environment, and an exported password is inherited by every subprocess,
+/// including one launched to act as somebody else.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Auth {
+    /// A file of credentials keyed by identity. The path is absolute,
+    /// resolved against the config file that named it.
+    Simple { path: PathBuf },
+}
+
+impl Auth {
+    /// The word a deployment writes for this kind, and that a caller
+    /// switches on.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Auth::Simple { .. } => "simple",
+        }
+    }
+
+    /// Where the credentials live.
+    pub fn path(&self) -> &Path {
+        match self {
+            Auth::Simple { path } => path,
+        }
+    }
+}
+
+/// The wire shape of [`Auth`]: a discriminated union, so an unknown type is a
+/// loud parse failure rather than a silently ignored block.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum AuthRepr {
+    Simple { path: String },
+}
+
 /// The deserialized shape. Separate from [`Roster`] so the public type can
-/// carry its source and keep its invariants.
+/// carry its sources and keep its invariants.
 #[derive(Debug, Deserialize)]
 struct RosterFile {
     #[serde(default)]
     default_agent: Option<String>,
     #[serde(default)]
     agents: BTreeMap<String, Agent>,
+    #[serde(default)]
+    auth: Option<AuthRepr>,
 }
 
 impl Roster {
@@ -86,18 +149,65 @@ impl Roster {
     /// Find the roster by walking up from `start`, so a caller works from any
     /// subdirectory of the repo. Walking beats a path baked in at build time,
     /// which goes stale the moment a checkout moves.
+    ///
+    /// ⚠ **Every file on the way up contributes**, not just the first one
+    /// found. That is what lets a workspace share values across the repos
+    /// beneath it; the nearest file wins wherever two speak.
     pub fn discover(start: impl AsRef<Path>) -> Result<Roster, RosterError> {
         let start = start.as_ref();
+        let mut found = Vec::new();
         let mut dir = start.to_path_buf();
         loop {
             let candidate = dir.join(ROSTER_FILE);
             if candidate.is_file() {
-                return Roster::load(candidate);
+                found.push(candidate);
             }
             if !dir.pop() {
-                return Err(RosterError::NotFound { from: start.to_path_buf() });
+                break;
             }
         }
+        if found.is_empty() {
+            return Err(RosterError::NotFound { from: start.to_path_buf() });
+        }
+        // Collected nearest-first by the walk; layering wants furthest-first
+        // so the nearest is applied last and wins.
+        found.reverse();
+        let mut layers = Vec::with_capacity(found.len());
+        for path in found {
+            layers.push(Roster::load(path)?);
+        }
+        Ok(Roster::layer(layers))
+    }
+
+    /// Fold rosters together, furthest first, so the last wins.
+    ///
+    /// ⚠ **`agents` merges per title and `auth` does not merge at all.** A
+    /// title is taken from the nearest file that names it, *whole* — entries
+    /// are never field-merged, because half an identity assembled from two
+    /// files is worse than either of them complete. `auth` is replaced as a
+    /// block for the sharper version of the same reason: a `type` from one
+    /// file meeting a `path` meant for another is a configuration nobody
+    /// wrote and nobody can debug.
+    fn layer(layers: Vec<Roster>) -> Roster {
+        let mut merged = Roster {
+            sources: Vec::new(),
+            default_agent: None,
+            agents: BTreeMap::new(),
+            auth: None,
+        };
+        for layer in layers {
+            merged.sources.extend(layer.sources);
+            if layer.default_agent.is_some() {
+                merged.default_agent = layer.default_agent;
+            }
+            if layer.auth.is_some() {
+                merged.auth = layer.auth;
+            }
+            for (title, entry) in layer.agents {
+                merged.agents.insert(title, entry);
+            }
+        }
+        merged
     }
 
     /// Find the roster by walking up from the current directory.
@@ -117,17 +227,42 @@ impl Roster {
                 path: source.clone(),
                 cause: cause.to_string(),
             })?;
-        Ok(Roster { source, default_agent: file.default_agent, agents: file.agents })
+        let root = source.parent().unwrap_or(Path::new(".")).to_path_buf();
+        // ⚠ Resolved here, against THIS file, and not later against whatever
+        // file happened to win the merge. A path inherited from a parent still
+        // means the parent's directory.
+        let auth = file.auth.map(|repr| match repr {
+            AuthRepr::Simple { path } => Auth::Simple { path: resolve_against(&root, &path) },
+        });
+        let agents = file
+            .agents
+            .into_iter()
+            .map(|(title, agent)| (title, Entry { agent, source: source.clone() }))
+            .collect();
+        Ok(Roster { sources: vec![source], default_agent: file.default_agent, agents, auth })
     }
 
-    /// The file this roster was read from.
+    /// The nearest file that contributed — the one a reader thinks of as
+    /// "the" roster, and the right one to name in an error.
     pub fn source(&self) -> &Path {
-        &self.source
+        self.sources.last().map(PathBuf::as_path).unwrap_or(Path::new(ROSTER_FILE))
     }
 
-    /// The directory a `persona` path is relative to — the roster's own.
+    /// Every file that contributed, furthest first.
+    pub fn sources(&self) -> &[PathBuf] {
+        &self.sources
+    }
+
+    /// The directory the nearest file sits in.
     pub fn root(&self) -> &Path {
-        self.source.parent().unwrap_or(Path::new("."))
+        self.source().parent().unwrap_or(Path::new("."))
+    }
+
+    /// Where this deployment keeps actor credentials, if it says.
+    ///
+    /// ⚠ The secret itself is deliberately not read here — see [`Auth`].
+    pub fn auth(&self) -> Option<&Auth> {
+        self.auth.as_ref()
     }
 
     /// The title an unmarked session adopts, if the roster names one.
@@ -147,29 +282,39 @@ impl Roster {
         let title = match title {
             Some(title) => title,
             None => self.default_title().ok_or_else(|| RosterError::NoDefault {
-                path: self.source.clone(),
+                path: self.source().to_path_buf(),
             })?,
         };
-        let (title, agent) = self.agents.get_key_value(title).ok_or_else(|| {
+        let (title, entry) = self.agents.get_key_value(title).ok_or_else(|| {
             RosterError::UnknownTitle {
                 title: title.to_string(),
                 known: self.titles().into_iter().map(str::to_owned).collect(),
-                path: self.source.clone(),
+                path: self.source().to_path_buf(),
             }
         })?;
+        let agent = &entry.agent;
         for (field, value) in
             [("name", &agent.name), ("email", &agent.email), ("persona", &agent.persona)]
         {
             if value.trim().is_empty() {
+                // The file that supplied THIS entry, which in a layered
+                // roster is not always the nearest one.
                 return Err(RosterError::IncompleteEntry {
                     title: title.clone(),
                     field,
-                    path: self.source.clone(),
+                    path: entry.source.clone(),
                 });
             }
         }
-        Ok(Resolved { roster: self, title, agent })
+        Ok(Resolved { roster: self, title, entry })
     }
+}
+
+/// Resolve a configured path against the directory of the file that wrote it.
+/// An absolute path is already answered.
+fn resolve_against(root: &Path, written: &str) -> PathBuf {
+    let written = Path::new(written);
+    if written.is_absolute() { written.to_path_buf() } else { root.join(written) }
 }
 
 /// A title and the complete entry behind it.
@@ -177,7 +322,7 @@ impl Roster {
 pub struct Resolved<'a> {
     roster: &'a Roster,
     title: &'a str,
-    agent: &'a Agent,
+    entry: &'a Entry,
 }
 
 impl<'a> Resolved<'a> {
@@ -188,25 +333,37 @@ impl<'a> Resolved<'a> {
 
     /// The name work is signed under.
     pub fn name(&self) -> &'a str {
-        &self.agent.name
+        &self.entry.agent.name
     }
 
-    /// The address work is signed under.
+    /// The address work is signed under, and the key a credential source is
+    /// looked up by — see [`Auth`].
     pub fn email(&self) -> &'a str {
-        &self.agent.email
+        &self.entry.agent.email
     }
 
     /// The persona path exactly as the roster writes it.
     pub fn persona(&self) -> &'a str {
-        &self.agent.persona
+        &self.entry.agent.persona
     }
 
-    /// The persona path resolved against the roster's directory. A caller
-    /// hands this to a launcher without having to know where the roster was
-    /// found, which is the join it would otherwise get wrong.
+    /// The file that supplied this entry, which in a layered roster is not
+    /// necessarily the nearest one.
+    pub fn defined_in(&self) -> &'a Path {
+        &self.entry.source
+    }
+
+    /// The persona path resolved against the directory of the file that
+    /// *wrote* it — not the nearest file, and not the working directory.
+    ///
+    /// ⚠ An entry inherited from a workspace-level roster names a persona
+    /// beside THAT file. Resolving it against the repo that inherited it
+    /// yields a path which works from one directory and not another, and
+    /// reads as an environment problem for as long as it takes to stop
+    /// believing that.
     pub fn persona_path(&self) -> PathBuf {
-        let written = Path::new(&self.agent.persona);
-        if written.is_absolute() { written.to_path_buf() } else { self.roster.root().join(written) }
+        let root = self.entry.source.parent().unwrap_or(Path::new("."));
+        resolve_against(root, &self.entry.agent.persona)
     }
 
     /// The roster this entry came from.
@@ -225,9 +382,9 @@ impl<'a> Resolved<'a> {
         if !persona.is_file() {
             return Err(RosterError::MissingPersona {
                 title: self.title.to_string(),
-                written: self.agent.persona.clone(),
+                written: self.entry.agent.persona.clone(),
                 resolved: persona,
-                path: self.roster.source.clone(),
+                path: self.entry.source.clone(),
             });
         }
         Ok(persona)
@@ -239,14 +396,31 @@ impl<'a> Resolved<'a> {
         // ⚠ Every emitted key is a literal written here. Deriving one from
         // the file would let a roster introduce an identifier into the
         // caller's shell, and the caller `eval`s this.
-        Ok(format!(
+        let mut out = format!(
             "AGENT_TITLE={}\nAGENT_NAME={}\nAGENT_EMAIL={}\nAGENT_PERSONA={}\nAGENT_ROSTER={}",
             shell_quote(self.title),
             shell_quote(self.name()),
             shell_quote(self.email()),
             shell_quote(&persona.to_string_lossy()),
-            shell_quote(&self.roster.source.to_string_lossy()),
-        ))
+            shell_quote(&self.roster.source().to_string_lossy()),
+        );
+        // ⚠⚠ The credential source, and never the credential. A password put
+        // in the environment is inherited by every subprocess — including one
+        // launched to act as somebody *else*, which is how an actor ends up
+        // authenticating as whoever spawned it while everything appears to
+        // work. What is emitted is where to look and which identity to look
+        // up (`AGENT_EMAIL`); the lookup is the caller's.
+        //
+        // Absent rather than empty when unconfigured, so a consumer under
+        // `set -u` fails loudly instead of authenticating as nobody.
+        if let Some(auth) = self.roster.auth() {
+            out.push_str(&format!(
+                "\nAGENT_AUTH_TYPE={}\nAGENT_AUTH_PATH={}",
+                shell_quote(auth.kind()),
+                shell_quote(&auth.path().to_string_lossy()),
+            ));
+        }
+        Ok(out)
     }
 }
 
@@ -330,6 +504,134 @@ agents:
     email: grace@example.com
     persona: workflow/REVIEWER.md
 ";
+
+    /// A workspace holding a parent roster and a child repo beneath it, each
+    /// with its own persona directory. Returns the temp dir and the child's
+    /// working directory to discover from.
+    fn layered(parent: &str, child: &str) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        for (root, text) in [(dir.path().to_path_buf(), parent), (repo.clone(), child)] {
+            std::fs::create_dir_all(root.join("workflow")).unwrap();
+            std::fs::write(root.join("workflow/DEVELOPER.md"), "# persona").unwrap();
+            std::fs::write(root.join("workflow/REVIEWER.md"), "# persona").unwrap();
+            std::fs::write(root.join(ROSTER_FILE), text).unwrap();
+        }
+        (dir, repo)
+    }
+
+    /// ⚠⚠ The correctness property layering turns on. A parent's
+    /// `workflow/DEVELOPER.md` means the PARENT's `workflow/`, and resolving
+    /// an inherited entry against the repo that inherited it gives a path
+    /// that works from one directory and not another.
+    #[test]
+    fn an_inherited_entry_resolves_its_persona_against_the_file_that_wrote_it() {
+        let (dir, repo) = layered(
+            "agents:\n  reviewer:\n    name: Grace\n    email: g@example.com\n    persona: workflow/REVIEWER.md\n",
+            "default_agent: developer\nagents:\n  developer:\n    name: Ada\n    email: a@example.com\n    persona: workflow/DEVELOPER.md\n",
+        );
+        let roster = Roster::discover(&repo).unwrap();
+
+        // The child's own entry resolves under the child.
+        let dev = roster.resolve(Some("developer")).unwrap();
+        assert_eq!(dev.persona_path(), repo.join("workflow/DEVELOPER.md"));
+        assert_eq!(dev.defined_in(), repo.join(ROSTER_FILE));
+
+        // The inherited one resolves under the PARENT, not the child — and
+        // both files exist, so a wrong join would still be a real file and
+        // the mistake would be invisible.
+        let rev = roster.resolve(Some("reviewer")).unwrap();
+        assert_eq!(rev.persona_path(), dir.path().join("workflow/REVIEWER.md"));
+        assert_ne!(rev.persona_path(), repo.join("workflow/REVIEWER.md"));
+        rev.require_persona_file().unwrap();
+    }
+
+    /// The nearest file wins a title outright — whole, never field-merged.
+    #[test]
+    fn the_nearest_file_wins_a_title_and_takes_the_entry_whole() {
+        let (_dir, repo) = layered(
+            "default_agent: reviewer\nagents:\n  developer:\n    name: Parent\n    email: parent@example.com\n    persona: workflow/DEVELOPER.md\n",
+            "default_agent: developer\nagents:\n  developer:\n    name: Child\n    email: child@example.com\n    persona: workflow/DEVELOPER.md\n",
+        );
+        let roster = Roster::discover(&repo).unwrap();
+        assert_eq!(roster.default_title(), Some("developer"), "the nearer default wins");
+        let dev = roster.resolve(None).unwrap();
+        assert_eq!(dev.name(), "Child");
+        // ⚠ The whole entry came from the child. A field-merge would have
+        // left the parent's address on the child's name — half an identity,
+        // which is worse than either of them complete.
+        assert_eq!(dev.email(), "child@example.com");
+        assert_eq!(roster.sources().len(), 2, "both files contributed");
+    }
+
+    /// ⚠ `auth` is replaced as a block, never field-merged: a `type` from one
+    /// file meeting a `path` meant for another is configuration nobody wrote.
+    /// And its path resolves against its own file, like a persona does.
+    #[test]
+    fn auth_is_taken_whole_from_the_nearest_file_that_names_it() {
+        let (dir, repo) = layered(
+            "auth:\n  type: simple\n  path: secrets/actors.json\nagents: {}\n",
+            "default_agent: developer\nagents:\n  developer:\n    name: Ada\n    email: a@example.com\n    persona: workflow/DEVELOPER.md\n",
+        );
+        // Only the parent names auth, so the child inherits it — resolved
+        // against the PARENT's directory.
+        let roster = Roster::discover(&repo).unwrap();
+        let auth = roster.auth().expect("inherited from the parent");
+        assert_eq!(auth.kind(), "simple");
+        assert_eq!(auth.path(), dir.path().join("secrets/actors.json"));
+
+        // A child that names its own replaces the block entirely.
+        std::fs::write(
+            repo.join(ROSTER_FILE),
+            "auth:\n  type: simple\n  path: own.json\nagents:\n  developer:\n    name: Ada\n    email: a@example.com\n    persona: workflow/DEVELOPER.md\n",
+        )
+        .unwrap();
+        let roster = Roster::discover(&repo).unwrap();
+        assert_eq!(roster.auth().unwrap().path(), repo.join("own.json"));
+    }
+
+    /// An auth type this build does not implement is a refusal naming the
+    /// file, not a silently ignored block — a deployment that thinks it
+    /// configured a keyring and got nothing is the failure to avoid.
+    #[test]
+    fn an_unknown_auth_type_is_refused_rather_than_ignored() {
+        let text = "auth:\n  type: vault\n  path: x\nagents: {}\n";
+        let err = Roster::parse(text, "/tmp/config.yaml").unwrap_err();
+        assert!(matches!(err, RosterError::Malformed { .. }), "{err}");
+        assert!(err.to_string().contains("config.yaml"), "the file must be named: {err}");
+    }
+
+    /// ⚠⚠ The emitters hand over the credential SOURCE and the identity to
+    /// look up — never the secret. An exported password is inherited by every
+    /// subprocess, including one launched to act as a different actor, and
+    /// that failure works perfectly while being completely wrong.
+    #[test]
+    fn the_emitters_carry_where_credentials_live_and_never_a_credential() {
+        let (dir, repo) = layered(
+            "auth:\n  type: simple\n  path: secrets/actors.json\nagents: {}\n",
+            "default_agent: developer\nagents:\n  developer:\n    name: Ada\n    email: a@example.com\n    persona: workflow/DEVELOPER.md\n",
+        );
+        // A real credential file sitting where the config points.
+        std::fs::create_dir_all(dir.path().join("secrets")).unwrap();
+        std::fs::write(
+            dir.path().join("secrets/actors.json"),
+            r#"{"accounts":{"a@example.com":{"password":"hunter2"}}}"#,
+        )
+        .unwrap();
+
+        let roster = Roster::discover(&repo).unwrap();
+        let block = roster.resolve(None).unwrap().shell_assignments().unwrap();
+        assert!(block.contains("AGENT_AUTH_TYPE='simple'"), "{block}");
+        assert!(block.contains("AGENT_AUTH_PATH="), "{block}");
+        assert!(!block.contains("hunter2"), "a secret reached the environment: {block}");
+        assert!(!block.contains("PASSWORD"), "{block}");
+
+        // Unconfigured: absent, not empty. An empty value under `set -u`
+        // reads as configured-and-blank, which authenticates as nobody.
+        let (_d2, plain) = roster_on_disk(SAMPLE, &["workflow/DEVELOPER.md"]);
+        let block = plain.resolve(None).unwrap().shell_assignments().unwrap();
+        assert!(!block.contains("AGENT_AUTH"), "{block}");
+    }
 
     /// A roster on disk, with the persona files its entries name.
     fn roster_on_disk(text: &str, personas: &[&str]) -> (tempfile::TempDir, Roster) {

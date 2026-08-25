@@ -400,14 +400,25 @@ fn agent_env(flags: &Flags) -> Result<String, String> {
         // step that can go wrong, in a caller that only wanted a name.
         "json" => {
             let persona = agent.require_persona_file().map_err(|e| e.to_string())?;
-            Ok(serde_json::json!({
+            let mut out = serde_json::json!({
                 "title": agent.title(),
                 "name": agent.name(),
                 "email": agent.email(),
                 "persona": persona.to_string_lossy(),
                 "roster": agent.roster().source().to_string_lossy(),
-            })
-            .to_string())
+            });
+            // ⚠ The credential SOURCE, never the credential — see
+            // `Resolved::shell_assignments`. This format is also the one that
+            // needs no environment at all: a caller reading it from a pipe
+            // gets the answer without exporting anything, so nothing can be
+            // inherited by a subprocess acting as a different actor.
+            if let Some(auth) = agent.roster().auth() {
+                out["auth"] = serde_json::json!({
+                    "type": auth.kind(),
+                    "path": auth.path().to_string_lossy(),
+                });
+            }
+            Ok(out.to_string())
         }
         other => Err(format!("--format takes shell or json, got '{other}'")),
     }

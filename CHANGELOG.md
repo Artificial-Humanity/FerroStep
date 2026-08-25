@@ -7,6 +7,34 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-roster`: **layered rosters and a credential *source*.** Discovery
+  collected the first `config.yaml` above the working directory and stopped;
+  it now collects every one and layers them, nearest last. That is what lets a
+  workspace of several repos share values from a file above them while each
+  repo overrides what it needs. ⚠ **`agents` merges per title and takes an
+  entry whole** — never field-merged, because half an identity assembled from
+  two files is worse than either of them complete — and **`auth` is replaced
+  as a block**, so a `type` from one file can never meet a `path` meant for
+  another.
+  ⚠⚠ **Every value resolves its relative paths against the file that WROTE
+  it**, not against the nearest file and not against the working directory. An
+  entry inherited from a workspace roster names a persona beside *that* file.
+  Getting this wrong is close to invisible: in a layered tree the wrong join
+  frequently lands on a real file, so the actor loads somebody else's persona
+  and nothing fails.
+  `auth` names a **type** with a path — `simple` to begin with, a file of
+  credentials keyed by the identity in the roster's `email`. An unrecognised
+  type is a refusal naming the file rather than an ignored block, because a
+  deployment that believes it configured something and got nothing is the
+  failure worth preventing.
+  ⚠⚠ **This crate never reads the secret.** `agent-env` emits where credentials
+  live and which identity to look up; the lookup is the caller's. A password
+  put in the environment is inherited by every subprocess — including one
+  launched to act as a *different* actor, which authenticates as whoever
+  spawned it while everything appears to work. `--format json` is the
+  inheritance-proof path: a caller reads it from a pipe and exports nothing.
+  Absent rather than empty when unconfigured, so a consumer under `set -u`
+  fails loudly instead of authenticating as nobody.
 - `ferrostep-pocketbase`: **role-scoped actors — the write routes stop
   believing the request about who is asking.** Every route authenticated and
   then wrote `role` straight from the request body, so any authenticated
