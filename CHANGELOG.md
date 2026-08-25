@@ -7,6 +7,19 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-py`: `authorize_rescope`. The core, both ledger adapters and the
+  CLI grew rescope; the binding did not, and nothing said so — which left the
+  Decision JSON contract a strict superset of what a first-class binding could
+  produce, and left a Python consumer wanting to move a record between units
+  of work with the raw store write as its only option. That is precisely the
+  hole rescope exists to close, still open in one language. No counters are
+  asked for, because a rescope spends nothing.
+- `examples/product-review.json` grows a `rescopes` rule: a review belongs to
+  a release line, and only the owner may move it to another, with a reason.
+  The newest concept in the engine had no illustration, and the guard that
+  keeps `examples/` honest had never validated a definition carrying one.
+  `review-loop.json` deliberately keeps none, so the pair also shows what
+  absent means — nobody may, rather than anybody.
 - `ferrostep-cli`: `explain` no longer panics on a maximal ceiling. It prints
   each asserted number *and its off-by-one neighbour*, and computed that
   neighbour with `max + 1` — which overflows at the top of the range: a crash

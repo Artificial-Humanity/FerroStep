@@ -5,6 +5,8 @@
 //! in `python/ferrostep/__init__.py` turns those into dicts, so the bridge
 //! stays free of pyo3 <-> serde conversion machinery.
 
+use std::collections::BTreeMap;
+
 use ferrostep_core::{Attempt, Engine as CoreEngine, Snapshot, WorkflowDef};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -37,6 +39,26 @@ impl Engine {
     ) -> PyResult<String> {
         let snap = parse_snapshot(snapshot_json)?;
         let decision = self.inner.authorize(&snap, &Attempt { role, to, note });
+        serde_json::to_string(&decision).map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    /// A rescope moves a record between units of work and nothing else: no
+    /// state change, no counter spent. The snapshot still arrives whole
+    /// because that is the shape every other entry point here takes, and
+    /// because what the engine reads from it is the engine's business to
+    /// change, not this bridge's to predict.
+    #[pyo3(signature = (snapshot_json, role, updates_json, note=None))]
+    fn authorize_rescope_json(
+        &self,
+        snapshot_json: &str,
+        role: &str,
+        updates_json: &str,
+        note: Option<&str>,
+    ) -> PyResult<String> {
+        let snap = parse_snapshot(snapshot_json)?;
+        let updates: BTreeMap<String, String> = serde_json::from_str(updates_json)
+            .map_err(|e| PyValueError::new_err(format!("invalid scope updates JSON: {e}")))?;
+        let decision = self.inner.authorize_rescope(&snap, role, &updates, note);
         serde_json::to_string(&decision).map_err(|e| PyValueError::new_err(e.to_string()))
     }
 

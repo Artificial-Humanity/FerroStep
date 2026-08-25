@@ -9,6 +9,9 @@
   "counters": [
     { "name": "review_attempts", "max": 2, "on_exhausted": "stalled" }
   ],
+  "rescopes": [
+    { "label": "release_line", "role": "owner", "requires_note": true }
+  ],
   "transitions": [
     { "from": "queued", "to": "reviewing", "role": "product_reviewer", "spends": ["review_attempts"] },
     { "from": "reviewing", "to": "delivered", "role": "product_reviewer" },

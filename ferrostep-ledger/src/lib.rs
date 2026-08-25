@@ -437,6 +437,46 @@ mod tests {
         assert_eq!(decided_snapshot(&current, &denied), None);
     }
 
+    /// The companion to the test above, and it exists for the same reason:
+    /// this is the *one* implementation of "what does applying mean", so an
+    /// adapter that reads it wrong is every adapter reading it wrong.
+    ///
+    /// ⚠ The instruction is **absolute writes to named labels, never a
+    /// merge of whole scopes**. A rescope says what it moves and nothing
+    /// about the rest, which is what stops an adapter holding a stale copy of
+    /// a record's other labels from dropping them.
+    #[test]
+    fn a_decision_hands_over_the_scope_labels_it_moves_and_no_others() {
+        // The ordinary move: empty, so an adapter can skip touching scope at
+        // all — a write that always fires is a write that can always go wrong.
+        assert!(decided_scope_updates(&allow()).is_empty());
+        // Routing does not move a record between units of work, and a denial
+        // persists nothing.
+        assert!(
+            decided_scope_updates(&Decision::Exhausted {
+                to: "escalated".to_string(),
+                counter: "passes".to_string(),
+            })
+            .is_empty()
+        );
+        assert!(
+            decided_scope_updates(&Decision::Deny { reason: "not yours".to_string() }).is_empty()
+        );
+
+        // A rescope: the labels it names, and only those. `cycle` is absent
+        // rather than carried over, because this is an instruction and not a
+        // resulting scope — the adapter merges it against what is stored.
+        let rescope = Decision::Allow {
+            to: "awaiting_review".to_string(),
+            counter_updates: BTreeMap::new(),
+            scope_updates: BTreeMap::from([("branch".to_string(), "release-2".to_string())]),
+        };
+        let moved = decided_scope_updates(&rescope);
+        assert_eq!(moved.len(), 1, "only the named label travels: {moved:?}");
+        assert_eq!(moved["branch"], "release-2");
+        assert!(!moved.contains_key("cycle"), "an unnamed label is not an instruction");
+    }
+
     #[test]
     fn a_scope_matches_on_every_filter_and_an_empty_one_matches_all() {
         let labels = BTreeMap::from([

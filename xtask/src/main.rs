@@ -144,4 +144,50 @@ mod tests {
              classify each under Ships or Never ships"
         );
     }
+
+    /// Every shipped example must be named by the core's
+    /// `shipped_examples_stay_valid`, so adding one forces validating it.
+    ///
+    /// ⚠ **The core guard enumerates by hand, and a hand-written list names
+    /// whatever it happens to name.** The example somebody adds next is
+    /// exactly the one it will not name — and it would go green having
+    /// skipped precisely the new thing, which is the failure that looks most
+    /// like success. The core cannot read the directory itself: it is pure by
+    /// rule, and `include_str!` is a compile-time read rather than IO. So the
+    /// coverage question is asked from here, where reading a directory is
+    /// ordinary, in the same shape as the deployment map above.
+    #[test]
+    fn every_example_is_validated_by_the_core_guard() {
+        let root = repo_root();
+        let guard = std::fs::read_to_string(root.join("ferrostep-core/src/lib.rs"))
+            .expect("ferrostep-core/src/lib.rs is missing");
+        // The index, not the working tree: an example that ships is one a
+        // fresh clone gets, and a stray local file is not this guard's
+        // business.
+        let examples: Vec<String> = tracked_files(&root)
+            .into_iter()
+            .filter(|p| p.starts_with("examples/") && p.ends_with(".json"))
+            .collect();
+        assert!(
+            !examples.is_empty(),
+            "no tracked examples were enumerated — this guard checked nothing, \
+             which is not the same as finding nothing wrong"
+        );
+        let unguarded: Vec<&String> = examples
+            .iter()
+            .filter(|path| {
+                // The core names them by stem, as `include_str!` arguments.
+                let stem = path
+                    .trim_start_matches("examples/")
+                    .trim_end_matches(".json");
+                !guard.contains(&format!("examples/{stem}.json"))
+            })
+            .collect();
+        assert!(
+            unguarded.is_empty(),
+            "examples not named by ferrostep-core's shipped_examples_stay_valid: \
+             {unguarded:?} — an example nothing validates is an illustration of \
+             something the engine might reject"
+        );
+    }
 }

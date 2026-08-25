@@ -104,3 +104,65 @@ def test_filing_is_refused_when_the_workflow_does_not_define_it(engine):
     decision = engine.authorize_create({}, "reviewer", "awaiting_worker", note="found one")
     assert decision["kind"] == "deny"
     assert "who may file" in decision["reason"]
+
+
+# Loaded, not copied, for the same reason as the loop above. This is the
+# shipped example that carries `rescopes`; review-loop deliberately has none,
+# which makes the pair a default-deny test as well as a permission one.
+PRODUCT_REVIEW = json.loads(
+    (Path(__file__).resolve().parents[2] / "examples" / "product-review.json").read_text()
+)
+
+
+@pytest.fixture
+def reviewing():
+    return Engine(PRODUCT_REVIEW)
+
+
+def test_a_rescope_moves_the_labels_it_names_and_nothing_else(reviewing):
+    decision = reviewing.authorize_rescope(
+        "delivered", "owner", {"release_line": "0.2.x"}, note="slipped a release"
+    )
+    assert decision == {
+        "kind": "allow",
+        # The record does not move: `to` is where it already is, so a caller
+        # with one atomic write path needs no second one.
+        "to": "delivered",
+        "counter_updates": {},
+        "scope_updates": {"release_line": "0.2.x"},
+    }
+
+
+def test_scope_updates_are_absent_from_an_ordinary_move(engine):
+    # The whole reason `scope_updates` could be added without a fourth
+    # decision kind: a consumer written before rescope existed reads exactly
+    # the bytes it always read.
+    decision = engine.authorize("awaiting_worker", {"agent_passes": 0}, "worker", "working")
+    assert "scope_updates" not in decision
+
+
+def test_rescope_is_default_deny_and_refused_on_a_finished_record(reviewing, engine):
+    # A workflow with no `rescopes` grants it to nobody, rather than to anyone.
+    nobody = engine.authorize_rescope("awaiting_worker", "worker", {"branch": "other"})
+    assert nobody["kind"] == "deny"
+    assert "does not say who" in nobody["reason"]
+
+    # Granted, but not to this role.
+    wrong_role = reviewing.authorize_rescope(
+        "delivered", "product_reviewer", {"release_line": "0.2.x"}, note="why not"
+    )
+    assert wrong_role["kind"] == "deny"
+    assert "product_reviewer" in wrong_role["reason"]
+
+    # Granted to the right role, with the reason the definition demands left off.
+    silent = reviewing.authorize_rescope("delivered", "owner", {"release_line": "0.2.x"})
+    assert silent["kind"] == "deny"
+    assert "requires a note" in silent["reason"]
+
+    # ⚠ And refused on a finished record whatever the definition says: its
+    # scope is the provenance of what it was resolved against.
+    finished = reviewing.authorize_rescope(
+        "acknowledged", "owner", {"release_line": "0.2.x"}, note="tidying"
+    )
+    assert finished["kind"] == "deny"
+    assert "terminal" in finished["reason"]

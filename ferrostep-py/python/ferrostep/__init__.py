@@ -86,6 +86,40 @@ class Engine:
             self._core.authorize_create_json(json.dumps(counters), role, to, note)
         )
 
+    def authorize_rescope(
+        self,
+        state: str,
+        role: str,
+        updates: dict[str, str],
+        note: str | None = None,
+    ) -> dict:
+        """May ``role`` move this record to a different unit of work?
+
+        A record's scope says which unit of work it belongs to, and every
+        query that finds work filters on it — so a record whose scope names a
+        finished unit is invisible to all of them. Moving one is a real
+        operation rather than a field edit, and a definition grants it per
+        label and per role (``rescopes``) or **nobody may**::
+
+            {"kind": "allow", "to": ..., "counter_updates": {},
+             "scope_updates": {"branch": "release-2"}}
+
+        On ``allow``, persist ``scope_updates`` in the same atomic write as
+        everything else. They are **absolute writes to the labels named**, not
+        a whole scope: set exactly these and leave the record's other labels
+        alone. ``to`` is the state the record is already in — a rescope does
+        not move it — so a caller with one write path needs no second one.
+
+        No counters are asked for because a rescope spends nothing. ⚠ It is
+        refused on a record in a terminal state, and that is not configurable:
+        a finished record's scope is the provenance of what it was resolved
+        against, and no later reader can re-derive it.
+        """
+        snapshot = json.dumps({"state": state, "counters": {}})
+        return json.loads(
+            self._core.authorize_rescope_json(snapshot, role, json.dumps(updates), note)
+        )
+
     def next_moves(self, state: str, counters: dict[str, int], role: str) -> list[dict]:
         """Every move ``role`` could attempt from ``state``, each carrying what
         it would actually do.
