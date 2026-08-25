@@ -112,6 +112,18 @@ pub struct CollectionMap {
     /// deliberately, and know what it costs: a console hand-edit of a counter
     /// stops working too. The operator's supported path becomes the release
     /// hook and the routes — which is the point, and is not free.
+    ///
+    /// ⚠⚠ **Audit for dormant generic writers before turning it on, not just
+    /// live ones.** Reported by the first adopter's resident while checking
+    /// their own lane: the code most likely to trip this guard first was a
+    /// `patch(id, body)` helper that was *defined and never called* — a
+    /// "PATCH any field onto a record" method with zero call sites. Reviewing
+    /// the existing call sites finds nothing, because there are none. What
+    /// happens instead is that the next person needing a PATCH reaches for
+    /// the obvious helper, and the guard's first violation arrives as a
+    /// runtime refusal in new code rather than as a review comment on old
+    /// code. **Grep for methods that can write any field, not only for
+    /// writes that happen today.**
     #[serde(default)]
     pub guard_refereed_fields: bool,
 }
