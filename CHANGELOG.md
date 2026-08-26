@@ -7,6 +7,23 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-core` / `ferrostep-cli`: **an agent's queue is visible and
+  notifiable — it was neither.** `awaiting` and `notify` both selected on
+  "does this need a person", so a record handed from a reviewer back to a
+  developer appeared in no listing and rang no doorbell. It is `Status::Live`,
+  which is true and useless: `Live` says *some* automated role can act and
+  never which, so a loop with two agent roles has two queues and the
+  enumeration could see neither. ⚠ **In a worker/reviewer loop that handover
+  is the ordinary case, not an edge** — the actor whose turn it now was had no
+  way to find out except by querying the database directly, which is the thing
+  these surfaces exist to replace.
+  `Engine::awaits(snapshot, role)` answers *whose turn is it*, asked of one
+  role, and `--role` on both subcommands scopes them to it. Without the flag
+  they behave exactly as before, so the person-scoped question B2 was built
+  for is unchanged. ⚠ An **exhausted** move is not a turn: a role whose every
+  option would route the record away is not waiting, and reporting otherwise
+  sends an actor to do work the referee is about to refuse.
+
 - `ferrostep-pocketbase`: **`CollectionMap::guard_refereed_fields` — the
   refereed columns can be closed to direct writes.** The engine is consulted,
   not in the write path, so a client holding credentials could edit `state` or

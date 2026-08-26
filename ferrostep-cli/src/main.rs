@@ -69,6 +69,11 @@ COMMON:
                         referees an existing collection instead of the
                         generic ferrostep ones
   --scope <key=value>   narrow to records labelled key=value (repeatable)
+  --role <role>         for `awaiting` and `notify`: whose queue to report.
+                        ⚠ Without it they ask whether a PERSON must act, which
+                        cannot see a record handed from one agent to another —
+                        the ordinary handover in a worker/reviewer loop. Name a
+                        role to ask what is waiting on that actor instead.
 
 file:                          (also spelled `create`; files a new record)
   --role <role> [--note <text>] [--actor <name>] [--scope …]
@@ -183,7 +188,7 @@ fn run(args: &[String]) -> Result<String, String> {
     match command.as_str() {
         "awaiting" => {
             let rows = records_with_status(&engine, ledger.as_ref(), &scope, false)?;
-            Ok(render_awaiting(&engine, &rows))
+            Ok(render_awaiting(&engine, &rows, flags.get("role")))
         }
         "audit" => {
             let rows = records_with_status(&engine, ledger.as_ref(), &scope, true)?;
@@ -235,7 +240,7 @@ fn run(args: &[String]) -> Result<String, String> {
             if let Some(token) = flags.get("ntfy-token") {
                 notifier = notifier.with_token(token);
             }
-            send_notifications(&engine, &rows, &notifier)
+            send_notifications(&engine, &rows, &notifier, flags.get("role"))
         }
         other => Err(format!("unknown subcommand '{other}'\n\n{USAGE}")),
     }
@@ -493,46 +498,87 @@ fn records_with_status(
         .collect())
 }
 
-fn waiting_reason(engine: &Engine, record: &Record, status: &Status) -> &'static str {
+fn waiting_reason(
+    engine: &Engine,
+    record: &Record,
+    status: &Status,
+    role: Option<&str>,
+) -> &'static str {
     match status {
         Status::WillEscalate => "every remaining move would escalate",
         Status::NeedsPerson if engine.def().halted.contains(&record.snapshot.state) => {
             "paused; a person decides what happens next"
         }
         Status::NeedsPerson => "only a person can act",
+        // ⚠ Selected BECAUSE this role has a move, so the person-shaped
+        // reason would be both true and useless here: a record waiting on a
+        // developer does not await a person, and saying so is not the answer
+        // to the question that was asked.
+        Status::Live if role.is_some() => "this actor's turn",
         _ => "does not await a person",
     }
 }
 
-fn render_awaiting(engine: &Engine, rows: &[(Record, Status)]) -> String {
+/// Which records this invocation is about, and what to call them.
+///
+/// ⚠ **Two different questions, and the second one had no surface at all.**
+/// Without `--role` this answers "does a person need to act", which is what
+/// B2 was built for. With one it answers "what is waiting on *this* actor" —
+/// including a non-human one, whose queue was invisible: a record handed from
+/// a reviewer back to a developer reads as `Status::Live`, so it appeared in
+/// no listing and raised no notification. In a worker/reviewer loop that is
+/// the ordinary handover, not an edge case.
+fn select_waiting<'a>(
+    engine: &Engine,
+    rows: &'a [(Record, Status)],
+    role: Option<&str>,
+) -> (Vec<&'a (Record, Status)>, String) {
+    match role {
+        Some(role) => (
+            rows.iter().filter(|(r, _)| engine.awaits(&r.snapshot, role)).collect(),
+            format!("await '{role}'"),
+        ),
+        None => (
+            rows.iter()
+                .filter(|(_, s)| matches!(s, Status::NeedsPerson | Status::WillEscalate))
+                .collect(),
+            "await a person".to_string(),
+        ),
+    }
+}
+
+fn render_awaiting(engine: &Engine, rows: &[(Record, Status)], role: Option<&str>) -> String {
     let def = engine.def();
-    let waiting: Vec<&(Record, Status)> = rows
-        .iter()
-        .filter(|(_, s)| matches!(s, Status::NeedsPerson | Status::WillEscalate))
-        .collect();
+    let (waiting, whom) = select_waiting(engine, rows, role);
     let mut out = String::new();
     // The population is named so an empty answer reads as "checked and none"
     // rather than "checked nothing".
     let _ = writeln!(
         out,
-        "{} of {} open record(s) await a person in '{}'",
+        "{} of {} open record(s) {whom} in '{}'",
         waiting.len(),
         rows.len(),
         def.name
     );
+    // Whose options to render: the role that asked, or every person when
+    // nobody did.
+    let audience: Vec<&str> = match role {
+        Some(role) => vec![role],
+        None => def.human_roles().collect(),
+    };
     for (record, status) in waiting {
         let _ = writeln!(
             out,
             "\n  record {} — {} ({})",
             record.id.0,
             record.snapshot.state,
-            waiting_reason(engine, record, status)
+            waiting_reason(engine, record, status, role)
         );
         for counter in &def.counters {
             let held = record.snapshot.counters.get(&counter.name).copied().unwrap_or(0);
             let _ = writeln!(out, "    {}: {held} of {} spent", counter.name, counter.max);
         }
-        for role in def.human_roles() {
+        for role in audience.iter().copied() {
             let moves = engine.next_moves(&record.snapshot, role);
             if moves.is_empty() {
                 continue;
@@ -872,10 +918,15 @@ fn do_rescope(
 
 /// One notification per awaiting record. Pure assembly; the send is the
 /// adapter's.
-fn notifications_for(engine: &Engine, rows: &[(Record, Status)]) -> Vec<Notification> {
+fn notifications_for(
+    engine: &Engine,
+    rows: &[(Record, Status)],
+    role: Option<&str>,
+) -> Vec<Notification> {
     let def = engine.def();
-    rows.iter()
-        .filter(|(_, s)| matches!(s, Status::NeedsPerson | Status::WillEscalate))
+    let (waiting, _) = select_waiting(engine, rows, role);
+    waiting
+        .into_iter()
         .map(|(record, status)| {
             let spent: Vec<String> = def
                 .counters
@@ -885,7 +936,7 @@ fn notifications_for(engine: &Engine, rows: &[(Record, Status)]) -> Vec<Notifica
                     (held >= c.max).then(|| format!("{}: {held} of {} spent", c.name, c.max))
                 })
                 .collect();
-            let mut reason = waiting_reason(engine, record, status).to_string();
+            let mut reason = waiting_reason(engine, record, status, role).to_string();
             if !spent.is_empty() {
                 reason = format!("{reason} — {}", spent.join(", "));
             }
@@ -911,8 +962,9 @@ fn send_notifications(
     engine: &Engine,
     rows: &[(Record, Status)],
     notifier: &dyn Notifier,
+    role: Option<&str>,
 ) -> Result<String, String> {
-    let notifications = notifications_for(engine, rows);
+    let notifications = notifications_for(engine, rows, role);
     let population = notifications.len();
     for n in &notifications {
         notifier
@@ -1021,7 +1073,7 @@ mod tests {
         let (_dir, ledger, ids) = seeded();
         let engine = engine();
         let rows = records_with_status(&engine, &ledger, &Scope::all(), false).unwrap();
-        let rendered = render_awaiting(&engine, &rows);
+        let rendered = render_awaiting(&engine, &rows, None);
 
         assert!(rendered.starts_with("2 of 3 open record(s)"), "{rendered}");
         assert!(rendered.contains(&format!("record {} — escalated", ids["paused"].0)));
@@ -1037,13 +1089,55 @@ mod tests {
         assert!(!rendered.contains(&format!("record {} ", ids["ended"].0)));
     }
 
+    /// ⚠⚠ **The reported gap: a review completes and nobody is told.** Both
+    /// surfaces filtered on `NeedsPerson | WillEscalate`, so a record handed
+    /// back to an agent — `Status::Live` — appeared in no listing and raised
+    /// no notification. The actor whose turn it now was had no way to find
+    /// out except by asking the database directly, which is the thing these
+    /// surfaces exist to replace.
+    #[test]
+    fn an_agents_queue_is_visible_and_notified_not_only_a_persons() {
+        let (_dir, ledger, ids) = seeded();
+        let engine = engine();
+        let rows = records_with_status(&engine, &ledger, &Scope::all(), false).unwrap();
+
+        // The person-scoped question is unchanged, and deliberately blind here.
+        let person = render_awaiting(&engine, &rows, None);
+        assert!(person.contains("await a person"), "{person}");
+
+        // The worker's own queue: records it can actually claim. `live` and
+        // `ended` are seeded in `awaiting_worker`; `ended` has moved on, and
+        // `stuck` has its ceiling spent so it is NOT the worker's turn.
+        let worker = render_awaiting(&engine, &rows, Some("worker"));
+        assert!(worker.contains("await 'worker'"), "{worker}");
+        assert!(worker.contains(&format!("record {}", ids["live"].0)), "{worker}");
+        assert!(
+            !worker.contains(&format!("record {}", ids["stuck"].0)),
+            "a spent ceiling is not a turn — it would send an actor to be refused: {worker}"
+        );
+        // And the reason names the turn rather than reporting the absence of
+        // a person, which is true and answers a question nobody asked.
+        assert!(worker.contains("this actor's turn"), "{worker}");
+
+        // ⚠ Notification follows the same selection, or the listing and the
+        // doorbell disagree about who is waiting.
+        let for_person = notifications_for(&engine, &rows, None);
+        let for_worker = notifications_for(&engine, &rows, Some("worker"));
+        assert!(!for_worker.is_empty(), "an agent's turn must be notifiable");
+        assert_ne!(
+            for_person.iter().map(|n| &n.record).collect::<Vec<_>>(),
+            for_worker.iter().map(|n| &n.record).collect::<Vec<_>>(),
+            "the two questions must select different records, or one of them is not being asked"
+        );
+    }
+
     #[test]
     fn awaiting_reports_the_population_even_when_nobody_waits() {
         let dir = tempfile::tempdir().unwrap();
         let ledger = SqliteLedger::open(dir.path().join("ledger.db")).unwrap();
         let engine = engine();
         let rows = records_with_status(&engine, &ledger, &Scope::all(), false).unwrap();
-        let rendered = render_awaiting(&engine, &rows);
+        let rendered = render_awaiting(&engine, &rows, None);
         assert!(
             rendered.starts_with("0 of 0 open record(s)"),
             "an empty answer names its population: {rendered}"
@@ -1144,7 +1238,7 @@ mod tests {
         let (_dir, ledger, _ids) = seeded();
         let engine = engine();
         let rows = records_with_status(&engine, &ledger, &Scope::all(), false).unwrap();
-        let notifications = notifications_for(&engine, &rows);
+        let notifications = notifications_for(&engine, &rows, None);
         assert_eq!(notifications.len(), 2, "one per waiting record, none for the live one");
         let paused = notifications.iter().find(|n| n.state == "escalated").unwrap();
         assert_eq!(paused.urgency, Urgency::High);

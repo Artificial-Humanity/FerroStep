@@ -969,6 +969,27 @@ impl Engine {
         }
     }
 
+    /// Whether `role` has a move it could actually make right now — *whose
+    /// turn is it*, asked of one role.
+    ///
+    /// ⚠ **[`Engine::status`] deliberately does not answer this**, and the
+    /// difference is a gap rather than a nuance. `Status::Live` says *some*
+    /// automated role can act and never which one; a loop with two agent
+    /// roles has two queues, and a record sitting in one of them reads as
+    /// `Live` from every angle. So an enumeration that asks only "does this
+    /// need a person?" cannot see a record handed from one agent to another —
+    /// which is the ordinary case in a worker/reviewer loop, not an edge.
+    ///
+    /// ⚠ An exhausted move does not count. A role whose every option would
+    /// route the record away is not waiting on that role; it is waiting on
+    /// whoever the ceiling escalates to, and reporting otherwise would send
+    /// an actor to do work the referee is about to refuse.
+    pub fn awaits(&self, snap: &Snapshot, role: &str) -> bool {
+        self.next_moves(snap, role)
+            .iter()
+            .any(|(_, decision)| matches!(decision, Decision::Allow { .. }))
+    }
+
     /// Every move `role` could attempt from the record's current state, each
     /// paired with what [`Engine::authorize`] would answer for it right now.
     ///
@@ -1139,6 +1160,43 @@ mod tests {
         let engine = Engine::new(review_loop()).unwrap();
         let d = engine.authorize(&snap("limbo", 0), &Attempt::new("worker", "working"));
         assert!(matches!(d, Decision::Deny { .. }));
+    }
+
+    /// ⚠⚠ **The queue `status` cannot see.** A record handed from one agent
+    /// to another is `Live` from every angle — which is true and useless: it
+    /// says *somebody* automated can act and never which, so an enumeration
+    /// asking only "does this need a person?" reports nothing about either
+    /// agent's queue. In a worker/reviewer loop that handover is the ordinary
+    /// case, and it was invisible.
+    #[test]
+    fn awaits_answers_whose_turn_it_is_where_status_cannot() {
+        let engine = Engine::new(review_loop()).unwrap();
+
+        let handed_to_reviewer = snap("awaiting_review", 1);
+        assert_eq!(engine.status(&handed_to_reviewer), Status::Live, "status sees only 'live'");
+        assert!(engine.awaits(&handed_to_reviewer, "reviewer"), "it is the reviewer's turn");
+        assert!(!engine.awaits(&handed_to_reviewer, "worker"), "and not the worker's");
+
+        let handed_back = snap("awaiting_worker", 1);
+        assert!(engine.awaits(&handed_back, "worker"));
+        assert!(!engine.awaits(&handed_back, "reviewer"));
+
+        // ⚠ A spent ceiling is not the worker's turn. Every move it has would
+        // route the record away, so reporting it as waiting would send an
+        // actor to do work the referee is about to refuse.
+        let spent = snap("awaiting_worker", 3);
+        assert_eq!(engine.status(&spent), Status::WillEscalate);
+        assert!(!engine.awaits(&spent, "worker"), "an exhausted move is not a turn");
+
+        // A pause is the operator's turn and nobody else's.
+        let paused = snap("escalated", 3);
+        assert!(engine.awaits(&paused, "operator"));
+        assert!(!engine.awaits(&paused, "worker"));
+
+        // Nothing is ever anyone's turn once it has ended.
+        for role in ["worker", "reviewer", "operator"] {
+            assert!(!engine.awaits(&snap("approved", 1), role), "{role} on an ended record");
+        }
     }
 
     #[test]
