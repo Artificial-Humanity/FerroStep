@@ -148,6 +148,71 @@ impl Flags {
     fn all(&self, name: &str) -> &[String] {
         self.0.get(name).map(Vec::as_slice).unwrap_or_default()
     }
+
+    /// Refuse any flag this subcommand does not read.
+    ///
+    /// ⚠⚠ **Without this a flag is silently ignored, and the two ways that
+    /// bites are both expensive.** A *typo* — `--scpoe branch=main` — quietly
+    /// widens a scoped query, so an audit reports on records it was never
+    /// asked about and exits 0. And a **binary older than the flag** accepts
+    /// it, ignores it, and answers confidently: `--role developer` against a
+    /// build that predates role scoping returned "0 of 12 await a person",
+    /// which is *correct for the question it actually asked* and completely
+    /// wrong for the one that was asked of it. Measured on this workspace's
+    /// own installed binary, 2026-08-26.
+    ///
+    /// ⚠ This is the convention AGENTS.md already holds for generated files,
+    /// arriving at a surface that had not been held to it: **an older thing
+    /// meeting a newer request must refuse the part it does not understand,
+    /// never accept and ignore it.** The ping's `writes` exists for exactly
+    /// this reason. A CLI's flags outlive the binary that parses them the
+    /// same way a hook outlives the adapter that generated it.
+    ///
+    /// The refusal doubles as the version diagnostic: a caller that gets
+    /// "this build does not accept --role" knows immediately what is wrong,
+    /// where a silent zero tells them nothing and looks like an answer.
+    fn reject_unknown(&self, command: &str, accepted: &[&str]) -> Result<(), String> {
+        let unknown: Vec<&str> =
+            self.0.keys().map(String::as_str).filter(|f| !accepted.contains(f)).collect();
+        if unknown.is_empty() {
+            return Ok(());
+        }
+        Err(format!(
+            "'{command}' does not accept: {}\n  it accepts: {}\n\n\
+             ⚠ If you expected this flag to work, this build may predate it — \
+             check `ferrostep --help` against the version you meant to run. \
+             A flag that is accepted and ignored answers the wrong question \
+             confidently, which is why this refuses instead.",
+            unknown.iter().map(|f| format!("--{f}")).collect::<Vec<_>>().join(", "),
+            accepted.iter().map(|f| format!("--{f}")).collect::<Vec<_>>().join(", "),
+        ))
+    }
+}
+
+/// Every flag each subcommand reads. ⚠ Derived into the refusal message, so a
+/// flag added to a command without being listed here is refused rather than
+/// silently working — which is the safe direction for the mistake to fall.
+fn accepted_flags(command: &str) -> &'static [&'static str] {
+    const LEDGER: [&str; 5] = ["workflow", "store", "token", "map", "scope"];
+    match command {
+        "awaiting" => &["workflow", "store", "token", "map", "scope", "role"],
+        "audit" => &LEDGER,
+        "file" | "create" => {
+            &["workflow", "store", "token", "map", "scope", "role", "counter", "note", "actor"]
+        }
+        "move" => {
+            &["workflow", "store", "token", "map", "scope", "record", "role", "to", "note", "actor"]
+        }
+        "rescope" => {
+            &["workflow", "store", "token", "map", "scope", "record", "role", "set", "note", "actor"]
+        }
+        "notify" => {
+            &["workflow", "store", "token", "map", "scope", "role", "ntfy", "topic", "ntfy-token"]
+        }
+        "explain" => &["workflow"],
+        "agent-env" => &["agent", "roster", "format"],
+        _ => &[],
+    }
 }
 
 fn run(args: &[String]) -> Result<String, String> {
@@ -164,6 +229,14 @@ fn run(args: &[String]) -> Result<String, String> {
         return Err(format!("no subcommand given\n\n{USAGE}"));
     };
     let flags = Flags::parse(&args[1..])?;
+    // ⚠ Before anything is opened or read. An unknown flag is refused rather
+    // than ignored — see `Flags::reject_unknown`. Checked only for commands
+    // this build knows, so an unknown SUBCOMMAND still gets its own error
+    // rather than a confusing complaint about its flags.
+    let accepted = accepted_flags(command);
+    if !accepted.is_empty() {
+        flags.reject_unknown(command, accepted)?;
+    }
     // The roster is not a question about a ledger, so it answers before one
     // is opened. Requiring a workflow and a store to ask who the developer is
     // would put the actor's own identity behind the very machinery an actor
@@ -1659,6 +1732,54 @@ mod tests {
     /// person typing it has already said they do not know how this works.
     /// Answering "--help needs a value" to `--help` is the tool being clever
     /// at the exact moment it should be plain.
+    /// ⚠⚠ **An ignored flag answers the wrong question confidently.** Two
+    /// ways it bit, both measured on this workspace 2026-08-26: a *typo*
+    /// (`--scpoe`) silently widened a scoped audit to every record and exited
+    /// 0; and a *binary older than a flag* accepted `--role`, ignored it, and
+    /// reported "0 of 12 await a person" — correct for the question it
+    /// actually asked, and completely wrong for the one asked of it.
+    ///
+    /// This is AGENTS.md's generated-files convention arriving at a surface
+    /// that had not been held to it: an older thing meeting a newer request
+    /// refuses the part it does not understand rather than accepting and
+    /// ignoring it. The refusal doubles as the version diagnostic, which is
+    /// why no separate capability probe is needed.
+    #[test]
+    fn an_unknown_flag_is_refused_rather_than_ignored() {
+        let store = "sqlite:/tmp/ferrostep-unknown-flag.db";
+        // A flag no build has ever had.
+        let refused = run(&argv(&[
+            "awaiting", "--workflow", "../examples/review-loop.json", "--store", store,
+            "--totally-made-up", "v",
+        ]))
+        .unwrap_err();
+        assert!(refused.contains("--totally-made-up"), "{refused}");
+        assert!(refused.contains("it accepts:"), "the remedy must be in the message: {refused}");
+        assert!(refused.contains("predate"), "the version case must be named: {refused}");
+
+        // ⚠ The typo case, which is worse than the version case because it is
+        // silent in BOTH builds: `--scpoe` widened the query and exited 0.
+        let typo = run(&argv(&[
+            "audit", "--workflow", "../examples/review-loop.json", "--store", store,
+            "--scpoe", "branch=main",
+        ]))
+        .unwrap_err();
+        assert!(typo.contains("--scpoe"), "{typo}");
+
+        // A flag that IS accepted here still works, and one accepted by a
+        // different subcommand is still refused by this one.
+        run(&argv(&[
+            "awaiting", "--workflow", "../examples/review-loop.json", "--store", store,
+            "--role", "worker",
+        ]))
+        .expect("--role is accepted by awaiting");
+        let wrong_command = run(&argv(&[
+            "explain", "--workflow", "../examples/review-loop.json", "--record", "1",
+        ]))
+        .unwrap_err();
+        assert!(wrong_command.contains("--record"), "explain takes no --record: {wrong_command}");
+    }
+
     #[test]
     fn every_way_of_asking_for_help_gets_help() {
         for spelling in [

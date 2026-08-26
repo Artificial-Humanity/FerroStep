@@ -7,6 +7,24 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-cli`: **an unknown flag is refused, not ignored.** `Flags::parse`
+  accepted any `--name value` and the code read only what it asked for, so
+  anything else was silently dropped. Two ways that bit, both measured
+  2026-08-26: a **typo** — `--scpoe branch=main` — quietly widened a scoped
+  audit to every record and exited 0; and a **binary older than a flag**
+  accepted `--role`, ignored it, and reported *"0 of 12 await a person"*, which
+  is correct for the question it actually asked and completely wrong for the
+  one asked of it. The second was found by an adopter whose installed binary
+  predated the flag by two days.
+  ⚠ This is AGENTS.md's generated-files convention arriving at a surface that
+  had never been held to it: **an older thing meeting a newer request refuses
+  the part it does not understand, rather than accepting and ignoring it.** The
+  PocketBase ping's `writes` exists for exactly this reason; a CLI's flags
+  outlive the binary that parses them the same way a hook outlives its adapter.
+  The refusal names the flag, lists what the subcommand accepts, and says the
+  build may predate it — so it doubles as the version diagnostic and no
+  separate capability probe is needed.
+
 - `ferrostep-core` / `ferrostep-cli`: **an agent's queue is visible and
   notifiable — it was neither.** `awaiting` and `notify` both selected on
   "does this need a person", so a record handed from a reviewer back to a
