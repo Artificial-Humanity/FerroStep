@@ -57,7 +57,7 @@ const USAGE: &str = "ferrostep — the person-facing surface over a FerroStep-re
 
 USAGE:
   ferrostep <awaiting|audit|file|move|rescope|notify> --workflow <def.json> --store <target> [options]
-  ferrostep explain --workflow <def.json>
+  ferrostep explain --workflow <def.json> [--map <map.json>]
   ferrostep agent-env [--agent <title>] [--roster <config.yaml>]
 
 COMMON:
@@ -96,6 +96,11 @@ notify:
 explain:                       (takes no --store)
   what the definition permits, and the numbers it asserts — including the
   off-by-one neighbours that derived arithmetic hides behind
+  --map <path>          also list the columns the referee owns, and the sweep
+                        to run before closing them to direct writes. ⚠ Sweep
+                        PROSE as well as code: a persona or a skill file that
+                        tells an actor to write one of those columns is a
+                        write path with no call site to find.
 
 agent-env:                     (takes no --workflow and no --store)
   --agent <title>       the roster entry to resolve (default: its default_agent)
@@ -209,7 +214,7 @@ fn accepted_flags(command: &str) -> &'static [&'static str] {
         "notify" => {
             &["workflow", "store", "token", "map", "scope", "role", "ntfy", "topic", "ntfy-token"]
         }
-        "explain" => &["workflow"],
+        "explain" => &["workflow", "map"],
         "agent-env" => &["agent", "roster", "format"],
         _ => &[],
     }
@@ -248,7 +253,16 @@ fn run(args: &[String]) -> Result<String, String> {
     // A definition is readable without a ledger, and the person most in need
     // of reading one has not connected anything yet.
     if command == "explain" {
-        return Ok(explain(&engine));
+        // The map is deployment configuration, not part of the definition —
+        // but the columns it names are the ones an adopter has to sweep their
+        // tree for before closing them, and this is the subcommand that hands
+        // over lists to go hunting with. Optional: a definition explains
+        // itself without one.
+        let map = match flags.get("map") {
+            Some(path) => Some(load_map(path)?),
+            None => None,
+        };
+        return Ok(explain(&engine, map.as_ref()));
     }
     let ledger = open_ledger(flags.require("store")?, flags.get("token"), flags.get("map"))?;
     let mut scope = Scope::all();
@@ -333,7 +347,7 @@ fn run(args: &[String]) -> Result<String, String> {
 /// So this prints the asserted values *and* their off-by-one neighbours: not
 /// because the engine knows what an adopter derived, but because it is the
 /// list they need in hand before they can go looking.
-fn explain(engine: &Engine) -> String {
+fn explain(engine: &Engine, map: Option<&ferrostep_pocketbase::CollectionMap>) -> String {
     let def = engine.def();
     let mut out = String::new();
     let _ = writeln!(out, "workflow '{}'", def.name);
@@ -422,6 +436,11 @@ fn explain(engine: &Engine) -> String {
 
     if def.counters.is_empty() {
         let _ = writeln!(out, "\nthis definition asserts no numbers.");
+        // ⚠ Falls through rather than returning. This used to return here,
+        // which would have skipped every section added after it — and a
+        // section that silently does not print for some inputs is the exact
+        // shape of defect the columns section below exists to warn about.
+        explain_refereed_columns(&mut out, map);
         return out;
     }
     let _ = writeln!(out, "\n⚠ NUMBERS THIS DEFINITION ASSERTS — and what to search for:");
@@ -454,7 +473,80 @@ fn explain(engine: &Engine) -> String {
          diagrams, and any prose handed to an actor: a refusal announces itself when it\n  \
          fires, a brief never does."
     );
+    explain_refereed_columns(&mut out, map);
     out
+}
+
+/// The columns the referee owns, and the sweep to run before closing them.
+///
+/// ⚠ **Same argument as the numbers section, one layer out.** There the engine
+/// owns a ceiling and knows nothing about the arithmetic derived from it; here
+/// it owns a set of columns and knows nothing about who writes them. Turning on
+/// `guard_refereed_fields` closes those columns to every writer at once, and
+/// the adopter is the only party who can enumerate the writers. What this can
+/// do is hand over the terms to enumerate *with* — which is the artifact that
+/// was missing all three times a writer was missed.
+///
+/// ⚠⚠ **The third instance is why the sweep says "and your prompts".** An
+/// adopter enumerated four scripted call sites, a second party checked that
+/// enumeration, and the guard's first refusal came from none of them: prose in
+/// a persona telling an agent to move the state column with a generic
+/// record-mutation tool. No call site, no import, and **no authentication step
+/// to grep for** — the tool server had already authenticated. Two correct
+/// passes over the same population, and the writer was never in it. The third
+/// was worse still: a machine-wide skill file, loaded by sessions with no lane
+/// persona and therefore no fallback to stumble onto.
+fn explain_refereed_columns(out: &mut String, map: Option<&ferrostep_pocketbase::CollectionMap>) {
+    let Some(map) = map else {
+        return;
+    };
+    let fields = map.refereed_fields();
+    let route = map.apply_route();
+    let _ = writeln!(out, "\n⚠ COLUMNS THIS REFEREE OWNS in '{}':", map.records);
+    let _ = writeln!(out, "  {}", fields.join(", "));
+    if map.guard_refereed_fields {
+        let _ = writeln!(
+            out,
+            "\n  guard_refereed_fields is ON — these move through {route} or they do not\n  \
+             move. Anything still writing them directly is failing NOW, and reporting it\n  \
+             as the store refusing writes."
+        );
+    } else {
+        let _ = writeln!(
+            out,
+            "\n  guard_refereed_fields is OFF — any writer holding credentials can still\n  \
+             edit these directly, and the referee never hears about it. The sweep below\n  \
+             is what to run before you turn it on."
+        );
+    }
+    let _ = writeln!(
+        out,
+        "\n  Search your tree for each column name AND for '{}' — code AND PROSE.\n  \
+         A persona, a brief, a skill file or a README that tells an actor to write one\n  \
+         of these IS a write path: no call site, no import, and no authentication step,\n  \
+         because whatever tool it names authenticated already. Enumerating the code\n  \
+         finds every writer except those, and reports itself complete.",
+        map.records
+    );
+    let _ = writeln!(
+        out,
+        "\n  ⚠ Three kinds this sweep will NOT find, so decide about them by reading:\n  \
+           • prose naming neither a column nor a tool — \"update its status in the\n    \
+             tracker\" is a write path and matches nothing;\n  \
+           • files loaded outside the loop — a machine-wide skill or an editor rule\n    \
+             reaches sessions that never see your personas;\n  \
+           • an actor improvising a direct write because nothing told it not to.\n  \
+         The first two are found by reading every file that instructs an actor. The\n  \
+         third is what the guard is for."
+    );
+    let _ = writeln!(
+        out,
+        "\n  ⚠⚠ Read the FALLBACKS in those files before you flip this. An agent reports\n  \
+         what it concluded, not what it read: one told 'if the tracker is unreachable,\n  \
+         put the findings in your summary' can answer a refused column by discarding a\n  \
+         finished review. A file with no fallback at all fails worse — it has nothing\n  \
+         to fall back TO. Point them at {route} first; flip second."
+    );
 }
 
 /// Resolve one roster entry into shell assignments the caller `eval`s.
@@ -510,6 +602,14 @@ fn load_engine(path: &str) -> Result<Engine, String> {
     Engine::new(def).map_err(|e| format!("workflow '{path}' does not validate: {e}"))
 }
 
+/// One reader for the mapping file, because two subcommands now want it and
+/// only one of them opens a store.
+fn load_map(path: &str) -> Result<ferrostep_pocketbase::CollectionMap, String> {
+    let source =
+        std::fs::read_to_string(path).map_err(|e| format!("cannot read map '{path}': {e}"))?;
+    serde_json::from_str(&source).map_err(|e| format!("map '{path}' does not parse: {e}"))
+}
+
 fn open_ledger(
     store: &str,
     token: Option<&str>,
@@ -531,11 +631,7 @@ fn open_ledger(
             .ok_or("a pocketbase: store needs --token or FERROSTEP_POCKETBASE_TOKEN")?;
         let ledger = match map {
             Some(path) => {
-                let source = std::fs::read_to_string(path)
-                    .map_err(|e| format!("cannot read map '{path}': {e}"))?;
-                let map: ferrostep_pocketbase::CollectionMap = serde_json::from_str(&source)
-                    .map_err(|e| format!("map '{path}' does not parse: {e}"))?;
-                ferrostep_pocketbase::PocketBaseLedger::connect_mapped(url, &token, map)
+                ferrostep_pocketbase::PocketBaseLedger::connect_mapped(url, &token, load_map(path)?)
             }
             None => ferrostep_pocketbase::PocketBaseLedger::connect(url, &token),
         }
@@ -1578,7 +1674,7 @@ mod tests {
     /// so — not least because the `file` usage text points here.
     #[test]
     fn explain_says_who_may_file_and_says_nobody_out_loud() {
-        let granted = explain(&filing_engine());
+        let granted = explain(&filing_engine(), None);
         assert!(
             granted.contains("filing: owner may file into 'queued'"),
             "{granted}"
@@ -1587,7 +1683,7 @@ mod tests {
         assert!(granted.contains("needs a reason"), "{granted}");
         // ⚠ The absent case is the one worth printing: a heading that is not
         // there leaves a reader to conclude default-deny for themselves.
-        assert!(explain(&engine()).contains("filing: nobody"), "default-deny is not stated");
+        assert!(explain(&engine(), None).contains("filing: nobody"), "default-deny is not stated");
     }
 
     /// ⚠⚠ A rescope moves a record between units of work, not between
@@ -1661,7 +1757,7 @@ mod tests {
     #[test]
     fn explain_names_the_derived_number_a_search_would_miss() {
         let engine = engine_with_rescopes();
-        let out = explain(&engine);
+        let out = explain(&engine, None);
         assert!(out.contains("agent_passes = 3"), "the asserted value is missing: {out}");
         assert!(
             out.contains("for 3 AND for 4"),
@@ -1678,6 +1774,106 @@ mod tests {
         assert!(out.contains("[person]"), "human roles are not marked: {out}");
     }
 
+    fn cli_test_map(guard: bool) -> ferrostep_pocketbase::CollectionMap {
+        ferrostep_pocketbase::CollectionMap {
+            records: "tickets".to_string(),
+            events: "ticket_events".to_string(),
+            state_field: "stage".to_string(),
+            version_field: "fs_version".to_string(),
+            counter_fields: vec!["attempts".to_string()],
+            scope_fields: vec!["lane".to_string()],
+            guard_refereed_fields: guard,
+        }
+    }
+
+    /// ⚠⚠ **The list the guard closes and the list this prints must be the
+    /// same list, and this is the test that says so.** Two derivations would
+    /// drift the first time a counter is added to a map — and they would drift
+    /// in the direction that reports a clean sweep, which is the direction
+    /// nothing goes red in. Asserted against the generated hook text rather
+    /// than against a second copy of the field names, so a change to either
+    /// side has to keep them agreeing.
+    #[test]
+    fn the_columns_explain_lists_are_exactly_the_columns_the_guard_closes() {
+        let map = cli_test_map(true);
+        let hooks = ferrostep_pocketbase::hooks_file_mapped(
+            &map,
+            None,
+            &ferrostep_pocketbase::ActorBinding::default(),
+        );
+        let guarded = hooks
+            .split_once("const REFEREED = [")
+            .and_then(|(_, tail)| tail.split_once(']'))
+            .map(|(list, _)| list.to_string())
+            .expect("the guard's field list is not where this test looks for it");
+        let out = explain(&engine(), Some(&map));
+        // ⚠ A floor first: an empty list would satisfy every containment
+        // check below and prove nothing.
+        let fields = map.refereed_fields();
+        assert!(fields.len() >= 4, "the fixture stopped exercising this: {fields:?}");
+        for field in &fields {
+            assert!(
+                guarded.contains(&format!("\"{field}\"")),
+                "the guard does not close '{field}': {guarded}"
+            );
+            assert!(out.contains(field.as_str()), "explain does not list '{field}': {out}");
+        }
+    }
+
+    /// ⚠⚠ The sweep has to say PROSE out loud. An adopter enumerated four
+    /// scripted call sites, a second party checked that enumeration, and the
+    /// guard's first refusal came from neither list — it came from a persona
+    /// naming a record-mutation tool, and later from a machine-wide skill
+    /// file. A hunting list that implies "grep your code" reproduces exactly
+    /// the sweep that missed them twice.
+    #[test]
+    fn the_column_sweep_says_prose_and_says_what_it_cannot_find() {
+        let out = explain(&engine(), Some(&cli_test_map(false)));
+        assert!(out.contains("PROSE"), "the sweep reads as a code sweep: {out}");
+        assert!(out.contains("skill file"), "{out}");
+        assert!(
+            out.contains("update its status in the\n    tracker"),
+            "the un-greppable case has to be named, not implied: {out}"
+        );
+        assert!(
+            out.contains("no authentication step"),
+            "why a code sweep misses it is the actionable half: {out}"
+        );
+        // The state of the flag changes what the reader should do next, so it
+        // is reported rather than assumed.
+        assert!(out.contains("is OFF"), "{out}");
+        assert!(out.contains("/api/ferrostep/tickets/apply"), "{out}");
+        let on = explain(&engine(), Some(&cli_test_map(true)));
+        assert!(on.contains("is ON") && on.contains("failing NOW"), "{on}");
+        // ⚠ NEGATIVE CONTROL. Without it every assertion above would pass on a
+        // section that printed unconditionally, which is a section that cannot
+        // be wrong and cannot be right.
+        let bare = explain(&engine(), None);
+        assert!(!bare.contains("COLUMNS THIS REFEREE OWNS"), "printed without a map: {bare}");
+    }
+
+    /// ⚠ The columns section is emitted after the numbers section, and the
+    /// numbers section used to `return` early when a definition asserted none.
+    /// A section that silently does not print for some inputs is the exact
+    /// defect it exists to warn about, so the no-counters path is asserted
+    /// rather than assumed.
+    #[test]
+    fn a_definition_with_no_numbers_still_gets_its_columns() {
+        let mut def =
+            WorkflowDef::from_json(include_str!("../../examples/review-loop.json")).unwrap();
+        def.counters.clear();
+        for t in &mut def.transitions {
+            t.spends.clear();
+            t.resets.clear();
+        }
+        if let Some(creation) = &mut def.creation {
+            creation.spends.clear();
+        }
+        let out = explain(&Engine::new(def).unwrap(), Some(&cli_test_map(false)));
+        assert!(out.contains("asserts no numbers"), "{out}");
+        assert!(out.contains("COLUMNS THIS REFEREE OWNS"), "the early return is back: {out}");
+    }
+
     /// ⚠ A ceiling is a number out of a file somebody else wrote, and this is
     /// the subcommand aimed at a person who has not got the system working
     /// yet — the worst possible audience for a crash. A maximal ceiling used
@@ -1688,7 +1884,7 @@ mod tests {
         let mut def =
             WorkflowDef::from_json(include_str!("../../examples/review-loop.json")).unwrap();
         def.counters[0].max = u32::MAX;
-        let out = explain(&Engine::new(def).unwrap());
+        let out = explain(&Engine::new(def).unwrap(), None);
         assert!(out.contains(&u32::MAX.to_string()), "the asserted value is missing: {out}");
         assert!(
             !out.contains("AND for 0"),

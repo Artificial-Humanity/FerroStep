@@ -148,6 +148,31 @@ pub struct CollectionMap {
     pub guard_refereed_fields: bool,
 }
 
+impl CollectionMap {
+    /// Every column the referee owns: the ones the guard closes, and the ones
+    /// an adopter must go hunting for before closing them.
+    ///
+    /// ⚠ **One derivation, deliberately, because the guard and the hunting
+    /// list disagreeing is the whole failure they exist to prevent.** A second
+    /// copy would go stale the first time a counter is added to a map — and it
+    /// would go stale in the direction that reports a clean sweep, which is
+    /// the direction nothing goes red in.
+    pub fn refereed_fields(&self) -> Vec<String> {
+        std::iter::once(&self.state_field)
+            .chain(std::iter::once(&self.version_field))
+            .chain(self.counter_fields.iter())
+            .chain(self.scope_fields.iter())
+            .cloned()
+            .collect()
+    }
+
+    /// The route those columns move through once the guard is on — the one
+    /// place a refused writer has to be pointed at.
+    pub fn apply_route(&self) -> String {
+        format!("/api/ferrostep/{}/apply", self.records)
+    }
+}
+
 /// A store-side release: writing a decision field *is* taking a transition,
 /// so the console's one-save flow survives the cutover with the referee's
 /// bookkeeping attached. Generated into the hooks file from the definition's
@@ -1018,12 +1043,12 @@ routerAdd("POST", "/api/ferrostep/{records}/apply", (e) => {{
     // and are not its business. Reversing the order would have the guard
     // refuse the release it is supposed to permit.
     if map.guard_refereed_fields {
-        let refereed: Vec<String> = std::iter::once(state)
-            .chain(std::iter::once(version_field))
-            .chain(map.counter_fields.iter())
-            .chain(map.scope_fields.iter())
-            .map(|f| format!("\"{f}\""))
-            .collect();
+        // ⚠ Through `refereed_fields`, never inline — `ferrostep explain`
+        // prints the same list as the set to sweep for before this is turned
+        // on, and a guard closing one set while the list names another is the
+        // failure both halves exist to prevent.
+        let refereed: Vec<String> =
+            map.refereed_fields().iter().map(|f| format!("\"{f}\"")).collect();
         let list = refereed.join(", ");
         out.push_str(&format!(
             r#"

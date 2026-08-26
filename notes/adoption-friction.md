@@ -452,16 +452,50 @@ working fallback elsewhere, for an unrelated reason. So the guard's worst case
 is not a failed write; it is a completed piece of work with nowhere to land,
 reported as "the tracker is refusing me".
 
-**Changed:** the `guard_refereed_fields` doc comment now says to audit personas
-as well as code, and says which ones are expensive — the ones describing a
-fallback for *"the store is refusing me"*.
+⚠⚠ **THIRD INSTANCE, AND IT IS THE WIDEST — reported the same day, and it is
+what moved this from recorded to built.** Not a lane persona this time but a
+**skill file**, symlinked into the adopter's per-user skills directory, so it
+loads for **every agent session on that machine** and not only the two in the
+lane. It carried a who-does-what table instructing both roles to set the state
+column and the counter column directly, plus a raw REST filter URL against the
+records collection.
 
-**Not changed, and recorded rather than built:** the generator knows the
-refereed field names and the route the moment it emits the guard, so it could
-hand over the hunting list the way `explain` does for a definition's numbers
-(entry 13) — *"before you enable this, search your tree AND your prompts for
-these field names"*. That is the artifact that was missing both times. One data
-point, so it is written down instead of shipped.
+⚠⚠ **And the third instance sharpens the cost, against what this entry said
+above.** The lane's reviewer recovered because its persona happened to name a
+working fallback elsewhere. **A session holding only the skill file has no lane
+persona and therefore nothing to fall back to** — it would read the refusal,
+conclude the tracker will not take writes, and act on that. So the reread is
+not only "the personas that describe a fallback". ⚠ **The files that describe
+NO fallback fail worse, and they are the ones nobody classifies as a persona in
+the first place** — a skill, an editor rule, a README.
+
+⚠ **The adopter stated their search space, which is the part worth copying.**
+Every `*.md`, `*.sh` and `*.txt` under the workspace root, for the write tool
+by name and for write-verbs within 80 characters of a refereed column name,
+excluding sites already naming the sanctioned script or the apply route. Three
+found. **And what it cannot reach, said out loud: prose that names neither a
+column nor a tool** — *"update the issue's status in the tracker"* — for which
+there is no query short of reading every file that instructs an actor. That
+stated limit is the argument for the generator emitting the list rather than
+each adopter inventing a sweep.
+
+**Changed, both halves:**
+1. The `guard_refereed_fields` doc comment says to audit personas as well as
+   code, and which ones are expensive.
+2. **`ferrostep explain --map <map.json>`** now prints the columns the referee
+   owns, whether the guard is on or off, the apply route to point a refused
+   writer at, and the sweep — *code AND prose* — together with the three kinds
+   it cannot find. Same argument as entry 13's numbers section one layer out:
+   the engine cannot see an adopter's writers and should not pretend to; what
+   it can do is hand over the terms to go hunting with.
+   ⚠ **The guard and the list share one derivation** (`CollectionMap::
+   refereed_fields`), and a test asserts the printed list against the generated
+   hook text rather than against a second copy of the names. Two derivations
+   would drift the first time a counter was added to a map — and drift toward
+   *reporting a clean sweep*, which is the direction nothing goes red in.
+
+**Still not built:** replaying a loop's history against a candidate definition
+(entry 6). Unrelated, and still on one data point.
 
 ---
 

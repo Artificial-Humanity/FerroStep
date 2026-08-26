@@ -7,6 +7,29 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-cli` / `ferrostep-pocketbase`: **`explain --map` hands over the
+  sweep to run before closing a column to direct writes.** `guard_refereed_
+  fields` closes the refereed columns to every writer at once, and only the
+  adopter can enumerate the writers — so the engine now prints the terms to
+  enumerate *with*: the columns it owns, whether the guard is on or off, the
+  apply route to point a refused writer at, and the sweep.
+  ⚠⚠ **The sweep says code AND PROSE, because that is what was measured.** An
+  adopter enumerated their lane's four scripted call sites and a second party
+  checked the enumeration; the guard's first refusal came from neither list. It
+  came from a persona telling an agent to move the state column with a generic
+  record-mutation tool — **no call site, no import, and no authentication step
+  to grep for**, because the tool server had authenticated already. The third
+  instance was a machine-wide skill file, reaching sessions with no lane
+  persona at all. Two correct passes over one population that never held the
+  writer; the output names the three kinds it still cannot find, rather than
+  implying a clean sweep.
+  ⚠ Same argument as `explain`'s numbers section one layer out — the engine
+  cannot see an adopter's writers and does not pretend to. The guard and the
+  printed list share **one** derivation (`CollectionMap::refereed_fields`), and
+  a test asserts the list against the generated hook text rather than a second
+  copy of the names: two derivations would drift toward *reporting a clean
+  sweep*, which is the direction nothing goes red in.
+
 - `ferrostep-cli`: **an unknown flag is refused, not ignored.** `Flags::parse`
   accepted any `--name value` and the code read only what it asked for, so
   anything else was silently dropped. Two ways that bit, both measured
