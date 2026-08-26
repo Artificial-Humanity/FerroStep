@@ -177,6 +177,7 @@ ferrostep file --workflow loop.json --store sqlite:loop.db \
   --role reviewer --scope branch=main --note "found in the release audit"
 
 ferrostep awaiting --workflow loop.json --store sqlite:loop.db
+ferrostep awaiting --workflow loop.json --store sqlite:loop.db --role reviewer
 
 ferrostep move --workflow loop.json --store sqlite:loop.db \
   --record 42 --role operator --to awaiting_worker \
@@ -185,8 +186,18 @@ ferrostep move --workflow loop.json --store sqlite:loop.db \
 
 `file` starts a loop — it is how a record gets into a store that has no
 console of its own, which is the zero-install path's whole situation.
-`awaiting` lists the records that need a person and what each of their moves
-would *actually* do right now. `move` resolves one without opening a database
+`awaiting` lists what is waiting and what each available move would
+*actually* do right now — by default the records that need a **person**, and
+with `--role` the queue of any one actor, including a non-human one.
+
+⚠ **That flag is not a convenience.** Without it the question is "does a
+person need to act", which cannot see a record handed from one agent to
+another: it is `Live`, and `Live` says *some* automated role can act without
+saying which. In a worker/reviewer loop that handover is the ordinary case,
+so a reviewer finishing and passing work back raises nothing at all unless
+somebody asks whose turn it is.
+
+`move` resolves one without opening a database
 console. `audit` reports what happened — moves, escalations, releases, the
 last note — reading the same enumeration `awaiting` does, so the two views
 cannot disagree. `notify` sends one message per awaiting record through the
