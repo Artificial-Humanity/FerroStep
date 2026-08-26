@@ -408,6 +408,61 @@ deployments and no existing one. Fixing those is a hand act per deployment.
 Role-scoped actor accounts remain ROADMAP B6, at 0.2.0: what an actor may
 read and what a history may expose are one question.
 
+## 15. A prompt is a write path, and our cutover advice only knew about code
+
+**Hit:** turning on `guard_refereed_fields`. The adopter audited their lane
+first and enumerated **four** scripted call sites that write the refereed
+columns; that enumeration was reported here and independently checked from this
+side before the guard went on. The guard's first refusal came from **none of
+them**. It came from a persona file — prose handed to a reviewing agent — that
+named a generic record-mutation tool and told the agent to move `state` with
+it. That persona had never been updated for the cutover; its sibling had.
+
+⚠ **Why the enumeration reported complete.** That write path has no call site,
+no import, and **no authentication step to grep for** — the tool server had
+already authenticated, so the agent never touches a credential. Every search
+term that finds a scripted writer finds nothing here. *Two* passes over the
+code, by two parties, each correct against the code, and the fifth writer was
+never in the population either was searching.
+
+⚠ **It is not the seam between two scopes** — that shape is one pass owning
+each half and neither owning the join. Here both passes owned the *same* half.
+A second reviewer is no defence against a population defined too narrowly;
+only asking what else can write is. **"I enumerated the writers" is a claim
+about a search space, and the search space is the thing to state out loud.**
+
+**What is squarely ours.** The stale persona is the adopter's file and they are
+fixing it. Ours is the cutover: this option is off by default *because* turning
+it on is a behaviour change, and everything we said about preparing for that
+change assumed the writers were code. The doc comment already warned about
+dormant `patch(id, body)`-shaped helpers — the same class, caught one pass
+earlier — and still framed the audit as a code audit. **We shipped a guard whose
+blast radius includes artifacts our own advice does not mention.** An adopter
+running loops of agents has write paths written in English, and this project is
+*for* adopters running loops of agents.
+
+⚠⚠ **And the failure is misreported upward, which sets the cost.** The refusal
+names the route and the reason, and that held up — the reviewing agent
+diagnosed it rather than merely failing. But an agent reports *what it
+concluded*, not what it read. A persona that also says "an unreachable tracker
+means the findings are lost, dump them into the summary" — a correct and
+ordinary instruction — turns one refused field into **an abandoned review**.
+The adopter's reviewer recovered only because that file happened to mention a
+working fallback elsewhere, for an unrelated reason. So the guard's worst case
+is not a failed write; it is a completed piece of work with nowhere to land,
+reported as "the tracker is refusing me".
+
+**Changed:** the `guard_refereed_fields` doc comment now says to audit personas
+as well as code, and says which ones are expensive — the ones describing a
+fallback for *"the store is refusing me"*.
+
+**Not changed, and recorded rather than built:** the generator knows the
+refereed field names and the route the moment it emits the guard, so it could
+hand over the hunting list the way `explain` does for a definition's numbers
+(entry 13) — *"before you enable this, search your tree AND your prompts for
+these field names"*. That is the artifact that was missing both times. One data
+point, so it is written down instead of shipped.
+
 ---
 
 ## Open questions the migration has not answered yet

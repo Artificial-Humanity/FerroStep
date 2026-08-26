@@ -124,6 +124,26 @@ pub struct CollectionMap {
     /// runtime refusal in new code rather than as a review comment on old
     /// code. **Grep for methods that can write any field, not only for
     /// writes that happen today.**
+    ///
+    /// ⚠⚠ **Audit the PROMPTS as well as the code: an agent handed an
+    /// instruction naming a write tool is an adapter nobody wrote.** Measured
+    /// by the first adopter on the pass after the one above. Their audit
+    /// enumerated the lane's four scripted call sites and turned the guard on;
+    /// the first refusal came from none of them. It came from a persona file
+    /// telling a reviewing agent, in prose, to move `state` with a generic
+    /// record-mutation tool — a write path with no call site, no import, and
+    /// **no authentication step to grep for**, because the tool server had
+    /// already authenticated. Enumerating the code found four of five writers
+    /// and reported completeness.
+    ///
+    /// ⚠⚠ **And the refusal can be misread into a much larger loss than one
+    /// write.** That persona also told its agent — correctly — that an
+    /// unreachable tracker means findings must be abandoned to a summary. An
+    /// agent meeting this guard reports *what it concluded*, not what it read,
+    /// so a stale instruction can turn one refused field into a whole review
+    /// discarded. **Before turning the guard on, reread every persona that
+    /// names a write tool** — the ones that describe a fallback for
+    /// "the store is refusing me" are the expensive ones.
     #[serde(default)]
     pub guard_refereed_fields: bool,
 }

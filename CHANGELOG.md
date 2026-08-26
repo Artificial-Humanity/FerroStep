@@ -61,6 +61,15 @@ entry here is mandatory rather than courtesy.
   routes as the operator's supported path. The guarded columns are derived
   from the map, so a counter or scope label added later is covered because it
   is declared, not because somebody remembered.
+  ⚠⚠ **Before turning it on, audit the personas as well as the code.** The
+  first adopter enumerated their lane's four scripted writers, checked from
+  both sides, and the guard's first refusal came from none of them — it came
+  from prose telling a reviewing agent to move `state` with a generic
+  record-mutation tool. That write path has no call site, no import and **no
+  authentication step to grep for**, so every search that finds a scripted
+  writer misses it. ⚠ Worse than the refused write: an agent reports what it
+  *concluded*, and a persona that also says "an unreachable tracker means the
+  findings are lost" can turn one refused field into an abandoned review.
 - `ferrostep-roster`: **layered rosters and a credential *source*.** Discovery
   collected the first `config.yaml` above the working directory and stopped;
   it now collects every one and layers them, nearest last. That is what lets a
