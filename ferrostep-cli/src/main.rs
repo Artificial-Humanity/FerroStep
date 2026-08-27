@@ -1824,11 +1824,21 @@ mod tests {
             "the fixture stopped exercising this — or a category was dropped from the \
              derivation, which the pocketbase known-answer test names precisely: {fields:?}"
         );
+        // ⚠⚠ EQUALITY, NOT CONTAINMENT, AND THE EXTRA DIRECTION IS THE ONE
+        // THAT HURTS AN ADOPTER. Containment only asked whether the guard
+        // closes everything the sweep names; it never asked whether it closes
+        // anything the sweep does NOT. Measured 2026-08-27: push one more
+        // column into the generated list and the whole workspace suite stays
+        // green — the guard then refuses writes to a column no hunting list
+        // ever told the adopter to sweep for, which reads to them as the
+        // referee breaking rather than as a documented rule.
+        let closed: Vec<String> = guarded
+            .split(',')
+            .map(|f| f.trim().trim_matches('"').to_string())
+            .filter(|f| !f.is_empty())
+            .collect();
+        assert_eq!(closed, fields, "the guard closes a different set than the sweep names");
         for field in &fields {
-            assert!(
-                guarded.contains(&format!("\"{field}\"")),
-                "the guard does not close '{field}': {guarded}"
-            );
             assert!(out.contains(field.as_str()), "explain does not list '{field}': {out}");
         }
     }
