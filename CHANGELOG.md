@@ -27,6 +27,17 @@ entry here is mandatory rather than courtesy.
   column the map does not declare moves from 200 to 400. That is the point, and
   it is not free.
 
+  ⚠⚠ **SWEEP FOR PROSE DESCRIBING THE OLD BEHAVIOUR — INCLUDING IN YOUR OWN
+  TREE.** A behaviour change to a generated surface makes every comment, note
+  and persona that described the old behaviour false *while it still reads as a
+  current statement about the system*. The tell is a sentence saying a write is
+  "accepted, dropped and answered 200" with no version beside it. Four such
+  sentences were in this repo and are now scoped to the file age they are true
+  of. ⚠ Reported by the first adopter, who found the same thing in their own
+  tree in the sharpest possible form: **a comment written to warn about this
+  exact drift was made false by the fix** — the seam reproduced inside the
+  warning.
+
   ⚠⚠ **This was never a version-skew problem, and thinking it was is why it
   survived.** The known shape was *stale install meets newer binary*; this needs
   no skew at all — a current file from a current binary, generated from a map

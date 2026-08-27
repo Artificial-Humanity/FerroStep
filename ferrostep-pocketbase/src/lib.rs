@@ -535,8 +535,9 @@ impl PocketBaseLedger {
         if let Some(missing) = names.into_iter().find(|n| !admitted.contains(n)) {
             return Err(LedgerError::Unsupported(format!(
                 "write the {kind} '{missing}': the installed ferrostep hooks were generated \
-                 before it was mapped, and would accept the request, ignore that column and \
-                 answer 200 — regenerate them and reinstall"
+                 before it was mapped, so that column will not be written — and a file old \
+                 enough to lack the column allowlist will not say so, it drops the column and \
+                 answers 200. Regenerate them and reinstall"
             )));
         }
         Ok(())
@@ -999,8 +1000,10 @@ impl Ledger for PocketBaseLedger {
     /// from the ping and describes the *file that was installed*, which may
     /// be older than both the collection and this binary. A checker needs
     /// both because the failures are opposite: a column the collection lacks
-    /// is refused loudly, and a column the installed file lacks is accepted,
-    /// dropped and answered 200.
+    /// is refused loudly, and a column the installed file lacks does not get
+    /// written. ⚠ How loudly *that* fails depends on the file's age — one
+    /// generated before the column allowlist drops it and answers 200 — which
+    /// is why a checker wants this rather than a live probe.
     ///
     /// Every way this can fail returns a refusal that names what went wrong,
     /// because the caller's next move differs in each case and "could not

@@ -191,6 +191,25 @@ to argue against, not a constraint — the section says so itself).
   generation's abilities. The failure this prevents is the expensive kind: an
   older route accepting a request, ignoring the part it does not understand,
   and answering 200.
+  - ⚠⚠ **IT IS NOT A VERSION-SKEW RULE, AND FILING IT AS ONE IS WHY THE
+    GENERAL CASE SURVIVED** (measured 2026-08-27; named by the first adopter's
+    resident, reading their own copy of this rule back at themselves). A
+    generator emits one branch **per DECLARED name**, so a config that declares
+    nothing of a kind yields **no branch — not a rejecting one**. Current
+    binary, current file, silent drop. The rule generalises to: *an artifact
+    generated from a declaration can only handle what was declared, and must
+    **refuse** the rest rather than ignore it.*
+  - ⚠⚠ **A BEHAVIOUR CHANGE HERE INVALIDATES PROSE, NOT ONLY BEHAVIOUR — AND
+    NOT ONLY OURS.** When a generated route stops dropping and starts refusing,
+    every comment, note and persona that described the old behaviour becomes
+    false **while still reading as a current statement about the system**.
+    Found the same day, in the adopter's tree: a comment written to warn about
+    exactly this drift was itself made false by the fix — the seam reproduced
+    inside the warning. So: **prose about a generated artifact names the
+    version or the installed file it describes**, never "the system"; and a
+    changelog entry for a behaviour change says *sweep for prose describing the
+    old behaviour*, the same way `explain --map` already says to sweep prose for
+    column names.
 - Python tooling is **uv only** (`uv venv`, `uv pip install ./ferrostep-py`);
   never introduce bare pip/venv or poetry.
 - **Favor Rust when the choice of tool is ambiguous; otherwise pick the best

@@ -439,6 +439,24 @@ agreed with me and been wrong."* ⚠ **A behaviour change, so it needs a
 deliberate install** — a client sending a column the map does not declare moves
 from 200 to 400. That is the point, and it is not free.
 
+⚠⚠ **AND IT INVALIDATES PROSE, NOT ONLY BEHAVIOUR.** Reported by the adopting
+resident within the hour, about their own tree and in the sharpest form
+available: the comment they had committed at the affected call site said a POST
+of an undeclared column is *"accepted, ignored, answered 200"* — true when
+written, false the moment these hooks are installed, and still reading as a
+current statement about the system. **A comment written to warn about this
+exact drift was made false by the fix.** They scoped it to the file installed
+on their board and named the commit that changes it.
+
+Swept this repo for the same shape and found **four** sentences asserting a
+consequence that is now version-dependent — in `doctor`'s fault text, in the
+adapter's client-side refusal, and in two field docs. All four now say what is
+true in every version (*the write will not land*) and put the version-dependent
+part where it belongs (*a file too old to refuse drops it and answers 200*).
+⚠ **The tell is a consequence stated with no version beside it.** Written into
+`AGENTS.md` beside the generated-files convention, because the next behaviour
+change will do this again.
+
 ---
 
 ### 6. Smaller, and both real

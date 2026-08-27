@@ -711,8 +711,10 @@ fn diagnose(
                             MAP_INSTALLED,
                             format!(
                                 "'{name}' is declared in the map under {kind} and the installed \
-                                 write path cannot reach it — a write would be accepted, dropped, \
-                                 and answered 200. Regenerate the generated files and reinstall."
+                                 write path cannot reach it, so a write to it will not land. \
+                                 ⚠ A file old enough to lack the column allowlist will not even \
+                                 say so — it drops the column and answers 200. Regenerate the \
+                                 generated files and reinstall."
                             ),
                         );
                     }
@@ -2281,9 +2283,11 @@ mod tests {
         assert!(report.contains("never established"), "{report}");
     }
 
-    /// ⚠⚠ **THE SILENT ONE.** A column declared in the map that the installed
-    /// file was generated before is accepted, dropped and answered 200 — the
-    /// defect that cost the first adopter a ceiling reading zero forever.
+    /// ⚠⚠ **THE ONE THAT USED TO BE SILENT.** A column declared in the map
+    /// that the installed file was generated before does not get written — the
+    /// defect that cost the first adopter a ceiling reading zero forever. A
+    /// file old enough to lack the column allowlist does not even say so: it
+    /// drops the column and answers 200.
     #[test]
     fn a_column_the_installed_write_path_cannot_reach_is_a_fault_that_says_it_would_answer_200() {
         let mut shape = agreeing_shape();
@@ -2296,7 +2300,7 @@ mod tests {
         let report = doctor_report(engine().def(), Some(&doctor_map()), &Ok(shape))
             .expect_err("an unreachable column is a fault");
         assert!(report.contains("agent_passes"), "{report}");
-        assert!(report.contains("answered 200"), "{report}");
+        assert!(report.contains("answers 200"), "{report}");
         assert!(report.contains("Regenerate"), "the fault must say what to do: {report}");
     }
 

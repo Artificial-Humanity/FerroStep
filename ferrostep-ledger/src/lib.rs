@@ -314,9 +314,11 @@ pub struct StoreShape {
     /// adapter's grouping words, and a checker's job is to compare **names**
     /// and print the group it found them under. What makes this worth carrying
     /// at all is that an installed write path is deployed separately from the
-    /// binary talking to it, so it can be older than the mapping it serves —
-    /// and the failure that produces is a write that is accepted, dropped, and
-    /// answered success.
+    /// binary talking to it, so it can be older than the mapping it serves, and
+    /// a write it cannot reach does not land. ⚠ Whether it *says so* is the
+    /// adapter's business and varies with the installed version — the write
+    /// path that predates saying so accepts the request, drops the column, and
+    /// answers success.
     ///
     /// [`Answer::NothingToConstrain`] where the adapter writes columns
     /// directly and has no separately-deployed half that could be stale.
