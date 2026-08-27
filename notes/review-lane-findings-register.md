@@ -303,6 +303,57 @@ This is the smallest useful increment toward that, not an alternative to it.
 
 ---
 
+### 7. ⚠⚠ A rescope moves the label it is given, and the other labels then lie
+
+**Status: partially addressed here (`explain` now says it). The model question
+is open.**
+
+**Measured on the adopting loop, 2026-08-27.** Four records were rescoped to a
+new `repo`. They kept their old branch label, because that is a different label
+and nobody asked for it. A driver whose convergence filter selected on the
+branch alone then counted **four open records that its own queue could not act
+on** — records belonging to another repository and another agent — and would
+have spent every remaining review, at real cost per call, before reporting that
+it had not converged. **A loop that cannot finish, caused by records the loop
+is forbidden to touch.**
+
+⚠ **What surfaced it was two instruments disagreeing.** Two other tools in that
+lane filtered on the full tuple and were right; the third was not. The gate said
+*blocked by one issue* while the driver saw four extra, and only one of them
+could be correct. Nothing in this project would have told either.
+
+**The general shape:** a record's unit of work is a **tuple of scope labels**,
+and every query that finds work filters on it. Moving a proper subset does not
+relocate the record — **it leaves the record in no consistent unit at all**, and
+every untouched label keeps naming the old one. The mechanism to move them
+together already exists (`rescope` takes repeated `--set` pairs and authorises
+the whole map at once). What was missing is that **nothing said they were
+coordinates**, and the one surface that describes them said the opposite.
+
+**Taken now:** `ferrostep explain` printed each grant as
+*"`<role>` may change `'<label>'`"* — a list that reads as independent
+permissions. When a definition puts more than one label in the address it now
+also says the address is the tuple, names its members, and says what a partial
+move leaves behind. ⚠ Phrased as arithmetic on what the definition declares,
+**not** as a policy about which labels belong together: this engine has no
+opinion on that, and some deployments will have genuinely independent facets.
+The statement that holds either way is that an untouched label keeps naming the
+old unit.
+
+**Still open, and it is the interesting half.** `explain` is prose at a human.
+Nothing refuses, or even warns at the moment of the move, when a rescope sets a
+strict subset of the address. Whether that should be a refusal, a warning, or a
+declared property of the definition (*these labels move together*) is a design
+question, and it is close enough to entry 4 to be decided with it: **`doctor`
+asks whether a definition is satisfiable; this asks whether a record's scope
+tuple is coherent.**
+
+⚠ The adopting resident fixed their own filter and **declined to set the branch
+label on the routed records**, on the grounds that asserting a unit of work
+inside a repository they are not working in is the same overreach as granting a
+rescope to a role that cannot exercise it. That restraint is correct and it
+leaves a real question for whoever picks the records up — see below.
+
 ### On reset semantics, from the landed dispute lane
 
 The adopter's implementation makes a deliberate asymmetry worth recording,

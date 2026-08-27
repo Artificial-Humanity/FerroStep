@@ -432,6 +432,45 @@ fn explain(engine: &Engine, map: Option<&ferrostep_pocketbase::CollectionMap>) -
             let reason = if r.requires_note { "  (needs a reason)" } else { "" };
             let _ = writeln!(out, "  {} may change '{}'{}", r.role, r.label, reason);
         }
+        // ⚠⚠ THE LINES ABOVE READ AS INDEPENDENT PERMISSIONS AND THE LABELS ARE
+        // COORDINATES. A record's scope is the whole tuple, and every query that
+        // finds work filters on it — so setting one label and leaving the rest
+        // does not move the record to a new unit of work, it leaves the record
+        // in no consistent unit at all. Measured on the first adopter,
+        // 2026-08-27: one label was moved, a tool still selecting on the other
+        // counted four records its own queue could not act on, and would have
+        // spent every remaining review before reporting it had not converged.
+        // Two other tools in the same lane filtered on the full tuple and were
+        // right — the disagreement between them is what surfaced it.
+        //
+        // ⚠ Stated as arithmetic on what the definition declares, NOT as a
+        // policy about which labels belong together: this engine has no opinion
+        // on that, and some deployments will have genuinely independent facets.
+        // What is true either way is that an untouched label keeps naming the
+        // old unit.
+        let address: Vec<&str> = match map {
+            Some(m) => m.scope_fields.iter().map(String::as_str).collect(),
+            None => {
+                let mut seen: Vec<&str> = Vec::new();
+                for r in &def.rescopes {
+                    if !seen.contains(&r.label.as_str()) {
+                        seen.push(r.label.as_str());
+                    }
+                }
+                seen
+            }
+        };
+        if address.len() > 1 {
+            let joined =
+                address.iter().map(|l| format!("'{l}'")).collect::<Vec<_>>().join(" + ");
+            let _ = writeln!(
+                out,
+                "\n  ⚠ a record's unit of work is the TUPLE {joined}, not any one of them.\n  \
+                 Moving a subset leaves the rest naming the old unit, and every query that\n  \
+                 filters on an untouched label still finds the record there. Set them\n  \
+                 together in one rescope, or say why the record belongs in both."
+            );
+        }
     }
 
     if def.counters.is_empty() {
@@ -1772,6 +1811,49 @@ mod tests {
         assert!(out.contains("[initial]") && out.contains("[ending]") && out.contains("[pause]"),
             "states are not marked: {out}");
         assert!(out.contains("[person]"), "human roles are not marked: {out}");
+    }
+
+    fn map_with_scope(labels: &[&str]) -> ferrostep_pocketbase::CollectionMap {
+        ferrostep_pocketbase::CollectionMap {
+            scope_fields: labels.iter().map(|s| s.to_string()).collect(),
+            ..cli_test_map(false)
+        }
+    }
+
+    /// ⚠⚠ **The per-grant lines read as independent permissions, and the labels
+    /// are coordinates of one address.** Measured on the first adopter,
+    /// 2026-08-27: one scope label was moved, a tool still selecting on the
+    /// other counted four records its own queue could not act on, and would
+    /// have spent every remaining review before reporting it had not converged.
+    ///
+    /// ⚠ The assertions name BOTH labels rather than checking that a warning
+    /// appeared. A warning that fires without saying which labels are out of
+    /// step sends the reader back to the definition to work it out, which is
+    /// the work the line exists to save.
+    #[test]
+    fn explain_says_the_scope_labels_are_one_address_when_there_is_more_than_one() {
+        let map = map_with_scope(&["lane", "release_line"]);
+        let out = explain(&engine_with_rescopes(), Some(&map));
+        assert!(out.contains("TUPLE"), "no tuple warning at all: {out}");
+        assert!(out.contains("'lane'"), "warning does not name 'lane': {out}");
+        assert!(out.contains("'release_line'"), "does not name 'release_line': {out}");
+    }
+
+    /// The negative control. One label cannot be out of step with itself, and a
+    /// warning that fires on every definition is one readers learn to skip.
+    #[test]
+    fn explain_stays_quiet_about_tuples_when_the_scope_is_a_single_label() {
+        let single = explain(&engine_with_rescopes(), Some(&map_with_scope(&["lane"])));
+        assert!(!single.contains("TUPLE"), "warned about a one-label scope: {single}");
+        // With no map, the fallback counts DISTINCT rescope labels — this
+        // fixture grants exactly one, so it must stay quiet too.
+        let no_map = explain(&engine_with_rescopes(), None);
+        assert!(!no_map.contains("TUPLE"), "warned with one rescope label: {no_map}");
+        // ⚠ Floor. Without this, both assertions above pass on output that
+        // never reached the section at all — a negative control that proves
+        // nothing is the failure this repo keeps re-finding.
+        assert!(single.contains("unit-of-work moves:"), "{single}");
+        assert!(no_map.contains("unit-of-work moves:"), "{no_map}");
     }
 
     fn cli_test_map(guard: bool) -> ferrostep_pocketbase::CollectionMap {
