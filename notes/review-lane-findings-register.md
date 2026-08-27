@@ -69,6 +69,15 @@ attributed ruling whose words have been adjusted is the thing this workspace
 has been burned by. Everything outside a direct quote says *the adopting loop*,
 which is the convention `adoption-friction.md` already holds.
 
+⚠ **Agent names are the one substitution made inside quotes, and it is marked
+rather than silent.** This repo's roster and its commit history publish exactly
+one agent identity — its own. Another loop's agents are not ours to introduce,
+so a quote naming one carries a **square-bracketed role** instead. Brackets are
+the standard signal that an editor changed a word; scrubbing without them is
+what the paragraph above refuses. **Checked, not assumed:** the sweep that
+guards this file greps for the identities, and it found this one after the
+entry was written.
+
 ---
 
 ## Entries
@@ -107,15 +116,105 @@ agent harness's pattern syntax cannot reach the next one, and the corner is
 only visible from inside it.
 
 **Where it stands.** Owner, 2026-08-27, asked whether this was routing or new
-scope: *"Generally-speaking, these should go to Ozzy, in this case. However, in
-these early phases, we may miss very clear opportunities for improvement if we
-punt on these."* So the repair is the adopter's and the question is **open, not
+scope: *"Generally-speaking, these should go to [the adopting loop's developer], in
+this case. However, in these early phases, we may miss very clear
+opportunities for improvement if we punt on these."* So the repair is the adopter's and the question is **open, not
 closed** — recorded here so it is not lost, and not treated as decided in
 either direction.
 
 ⚠ Both residents independently reached *the finding is theirs, the lesson is
 ours* before the owner said it. That agreement is evidence the split is real;
 it is not a ruling, and neither of us should cite it as one.
+
+### 2. Should a definition model DISAGREEMENT as a first-class move?
+
+**Status: agreed in principle by the owner, 2026-08-27. Definition change is
+the adopting lane's to land.**
+
+**The evidence, measured against that loop's ledger rather than argued.** Across
+its whole history the reviewer has filed a few hundred findings. In the current
+era — since severity became a required field, so the numbers are comparable —
+they grade **2% high, 49% medium, 49% low**. Of the developer's several hundred
+comments, **58% are a plain "fixed in \<sha\>" and the count of recorded
+disputes is approximately zero.** Escalations, the only other way to disagree,
+run under 2%.
+
+⚠⚠ **The zero is not evidence the developer is compliant. It is evidence the
+loop has no word for disagreement.** Read the definition: the developer's exits
+from `open` are take-it (spends a counter), move-to-review, or escalate to a
+human. **`review` is the same state whether the work was a fix or a rebuttal** —
+the difference exists only in prose in a comment. So the disagreement rate is
+not low; it is *unrecorded*, and the owner's concern about it was
+**unfalsifiable in the system that would test it.**
+
+That is the finding, and it generalises past this adopter: **a referee that
+models attempts and outcomes but not contested outcomes cannot tell a loop's
+operator whether its reviewer is calibrated.** The counter says how many
+attempts a finding cost. Nothing says how many findings were wrong.
+
+**Shape proposed:**
+
+* One `disputed` state. **The dispute's KIND is a field on the required note —
+  finding / severity / scope — not a state per kind.** This repo's own
+  convention: grow a kind's fields, not the set of kinds. All three kinds share
+  one lifecycle, so they are one state.
+* `open → disputed` (developer, note required) **spends no attempt counter.**
+  Pricing disagreement at parity with compliance is the defect; a failed
+  dispute already lands back at `open`, where proceeding costs an attempt.
+* `disputed → closed` (reviewer, note) = withdrawn. `disputed → open`
+  (reviewer, note) = upheld.
+* Against re-dispute loops, **use the engine as designed**: a `disputes`
+  counter with `max: 1` and `on_exhausted: escalated`, so the second dispute of
+  one finding routes to the human. ⚠ Cost stated: on the mapped-column adapter
+  each counter is a column, so this is a store migration — see
+  `platform-comparison-friction.md` §1.
+
+⚠ **The case to watch**, named by the adopting loop before we did: a granted
+downgrade below the merge floor leaves a finding open *and* lets the branch
+land. That is the developer grading its own work. The change does not remove
+that outcome — it moves it onto a recorded path with a second party on it, and
+makes it **countable**, which it is not today.
+
+---
+
+### 3. ⚠⚠ The referee can only guard its own vocabulary, and a lane's gate may key on a field outside it
+
+**Status: an engine limitation, found while designing entry 2. Not yet a
+proposal.**
+
+`refereed_fields()` derives from **state, version, counters and scope**. There
+is no category for anything else, so a column outside those four cannot be
+placed under the referee at all — not guarded, not moved through the apply
+route, no event, no version bump.
+
+**Why that is not academic.** The adopting loop's merge gate keys on a
+**severity** grade: below the configured floor a finding rides and the branch
+lands, at or above it the branch is blocked. Severity is none of state,
+version, counter or scope. So **the field that decides every merge is the one
+field the referee cannot referee**, and the discipline around it lives in the
+adopter's own script:
+
+* raising a grade is open to anyone (raising cannot clear a gate);
+* lowering an existing grade is nominally the reviewer's alone;
+* and that restriction keys on a **self-declared author flag** — the script's
+  own comment says so plainly: *a convention, not a mechanism*, with no
+  authentication available to it.
+
+The adopter did the analysis honestly and reached the end of what a script can
+enforce about itself. **That is exactly the boundary this project exists to
+move.** A rule in a file is not an enforcement mechanism; the whole argument
+for a referee is that the mechanism lives somewhere the constrained party does
+not control.
+
+**The open question is the shape, and it is the hard part.** The obvious answer
+— a fifth category of "other refereed fields" — risks becoming a bag that
+anything can be dropped into, and the engine would be guarding fields whose
+*meaning* it has no opinion about. A narrower reading is that a gate value is
+not an arbitrary attribute at all but **a decision the definition should be
+able to describe**, in which case the missing concept is nearer to "a graded
+attribute with an ordered ladder and a threshold" than to "one more string
+column". ⚠ The standing interface test applies and it is the reason not to rush:
+shape it around what the thing *is*, not around how this one adopter spells it.
 
 ---
 
