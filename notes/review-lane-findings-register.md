@@ -253,8 +253,9 @@ shape it around what the thing *is*, not around how this one adopter spells it.
 
 ### 4. ⚠⚠ Nothing answers "is this definition satisfiable against this store?"
 
-**Status: the largest open item here. Reported by the adopting loop's resident,
-2026-08-27, at the moment of impact.**
+**Status: TAKEN 2026-08-27 — `ferrostep doctor`.** Reported by the adopting
+loop's resident, 2026-08-27, at the moment of impact. What follows is the
+original statement of the gap, then what was built.
 
 They added a state to a definition. The store's state column is a **select with
 a fixed value list**. Had the definition landed first, **every transition into
@@ -279,6 +280,62 @@ refusal, which is this project's stated preference already.
 and said so: their test pins definition-counters against map-counters and its
 docstring records that the live half is ours. That restraint is why this entry
 is well-posed rather than half-solved in the wrong repo.
+
+#### What was built
+
+`ferrostep doctor --workflow <def> --store <target> [--map <map>]`. Read-only,
+explicit, and backed by `Ledger::store_shape` so a binding gets the same check
+rather than reimplementing it. Four sections:
+
+| section | needs a store | catches |
+|---|---|---|
+| definition ↔ mapping | no | a counter with no column — a ceiling that can never fire |
+| definition ↔ store | yes | **this entry's own failure**: a state the store would refuse |
+| mapping ↔ store | yes | a refereed column that does not exist |
+| mapping ↔ installed write path | yes | a column the installed file drops and answers 200 (entry 5's failure, caught before the write instead of at it) |
+
+Three decisions worth keeping, because each was the second design rather than
+the first:
+
+⚠⚠ **An unchecked question exits non-zero, exactly like a fault.** Every cheap
+design produces the opposite: a check that cannot run has nothing to print, so
+it prints nothing, so the report reads clean. The report also **counts and
+shows what agreed**, because a run that checked nothing also has no complaints.
+
+⚠⚠ **`Answer` has three variants.** *This column takes any string, so no state
+can be wrong* and *nobody could tell me what this column takes* both reduce to
+nothing-to-report under an `Option`. The first draft used `Option` and
+collapsed them — the same defect this register is about, one level up. The
+zero-install SQLite path depends on the distinction: it genuinely constrains
+nothing, and under the collapsed type `doctor` would have failed there forever.
+
+⚠ **The store is read through a generated route, not through the admin API,
+and that was measured rather than assumed.** On a disposable instance,
+2026-08-27: an ordinary actor token gets **403** from the collections API and
+**200** from the generated route; an administrator credential gets 200 from
+both. So the admin-API design would have required `doctor`'s most likely
+caller — an agent running under the loop's own credential — to hold an
+administrator token, and *"could not check"* would have been the normal answer
+for everyone who was not one. The hooks read the schema in-process instead.
+⚠ The first draft of this paragraph asserted the 403 from memory; it happens to
+have been right, which is not the same as having known. ⚠ That route is **authenticated where the ping is anonymous**: a
+collection's field names and its select values are a different disclosure, and
+widening the anonymous route would have been the easy way to build it.
+
+⚠ **The one route whose answer is not fixed at generation time**, deliberately.
+The ping states what the installed file was *written* with; this reads the
+collection *now*. Baking the values in would have produced a check that always
+agrees with the map it came from — an agreement test in a store's clothes.
+
+Verified against a live instance before shipping: the route answers with real
+column types and select values, refuses an anonymous caller 401, and reports a
+missing collection as a refusal rather than an empty schema. All three drift
+classes were reproduced end-to-end and exit 1; the clean case exits 0.
+
+**Left undone, on purpose:** attributes get no definition-side check, because
+the engine has no vocabulary for them — `doctor` says so rather than covering
+three kinds of four in silence. That closes when graded attributes land (entry
+3, item B).
 
 ---
 

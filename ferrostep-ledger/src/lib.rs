@@ -232,6 +232,97 @@ pub struct Capabilities {
     pub append_only_history: bool,
 }
 
+/// One thing a store was asked about, and whether it actually answered.
+///
+/// ⚠⚠ **THREE ANSWERS, NOT TWO, BECAUSE TWO OF THEM LOOK IDENTICAL AND MEAN
+/// OPPOSITE THINGS.** "This column takes any string, so no state can be wrong"
+/// and "nobody could tell me what this column takes" both reduce to *nothing
+/// to report* if the type only has room for present and absent — and one of
+/// them is a verified all-clear while the other is an unasked question wearing
+/// its clothes. The first version of this type collapsed them, which is the
+/// same defect it exists to prevent, one level up.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Answer<T> {
+    /// The store answered, and this is what it said.
+    Said(T),
+    /// The store answered, and the answer is that it constrains nothing here:
+    /// a state column that accepts any string, a write path with no fixed
+    /// column list. **Checked** — a definition cannot disagree with it.
+    NothingToConstrain,
+    /// Nothing was learned. The adapter cannot look, the installed files
+    /// predate the route, the credential was refused.
+    ///
+    /// ⚠ **Never a pass, and a report that renders it as one is broken.** It
+    /// is the default so that a partially-filled [`StoreShape`] admits what it
+    /// does not know rather than implying it looked.
+    #[default]
+    Unknown,
+}
+
+impl<T> Answer<T> {
+    /// What the store said, if it said anything.
+    pub fn said(&self) -> Option<&T> {
+        match self {
+            Answer::Said(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// Whether this question went unanswered — the one case a caller must not
+    /// silently fold into "fine".
+    pub fn is_unknown(&self) -> bool {
+        matches!(self, Answer::Unknown)
+    }
+}
+
+/// What a store will actually accept — the other half of [`Capabilities`].
+///
+/// [`Capabilities`] says what an adapter can *do*; this says what the schema
+/// behind it will *take*. A definition asserts things about a store without
+/// ever checking them: its states must be values the state column accepts, and
+/// where an adapter maps counters and scope labels onto real columns, those
+/// columns must exist. Until this existed nothing verified any of it, and the
+/// drift ran in the direction nothing goes red in — the JSON looks right, the
+/// tests pass against the JSON, and the disagreement arrives as a refused
+/// write on the first live transition.
+///
+/// ⚠⚠ **EVERY FIELD IS AN [`Answer`], SO "NOTHING CONSTRAINS THIS" AND
+/// "NOBODY TOLD ME" CANNOT BE CONFUSED.** Only the first is a verified
+/// all-clear. A checker that collapses them reports a clean bill of health it
+/// never obtained — which is the failure mode that looks like success, and
+/// therefore the one worth spending a type on.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StoreShape {
+    /// Which collection, table or bucket this describes, in the store's own
+    /// words. A report that names a fault has to name where it is.
+    pub subject: String,
+    /// The values the state column will accept.
+    ///
+    /// [`Answer::NothingToConstrain`] is the honest answer for a plain text
+    /// column: it takes any string, so no state in any definition can be
+    /// wrong against it, and saying so is a real result.
+    pub accepted_states: Answer<Vec<String>>,
+    /// Columns that exist, by name, paired with the store's own word for the
+    /// type. The type is carried to be *shown*, not judged: an adapter knows
+    /// what its store calls a column and does not know what the column being
+    /// that type would cost.
+    pub columns: Answer<BTreeMap<String, String>>,
+    /// The column names the *installed* write path admits, grouped by whatever
+    /// the adapter calls those groups.
+    ///
+    /// ⚠ Deliberately not interpreted here. This crate has no opinion about an
+    /// adapter's grouping words, and a checker's job is to compare **names**
+    /// and print the group it found them under. What makes this worth carrying
+    /// at all is that an installed write path is deployed separately from the
+    /// binary talking to it, so it can be older than the mapping it serves —
+    /// and the failure that produces is a write that is accepted, dropped, and
+    /// answered success.
+    ///
+    /// [`Answer::NothingToConstrain`] where the adapter writes columns
+    /// directly and has no separately-deployed half that could be stale.
+    pub writable: Answer<BTreeMap<String, Vec<String>>>,
+}
+
 /// Why a ledger operation could not be completed.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LedgerError {
@@ -333,6 +424,23 @@ pub trait Ledger {
 
     /// One record's history, oldest first.
     fn history(&self, id: &RecordId) -> Result<Vec<StoredEvent>, LedgerError>;
+
+    /// What the store behind this adapter will accept, read from the store
+    /// itself — so a definition can be checked against it before a transition
+    /// proves it wrong.
+    ///
+    /// ⚠⚠ **PROVIDED, AND REFUSING BY DEFAULT, DELIBERATELY.** An adapter that
+    /// has not implemented this must not be indistinguishable from one that
+    /// looked and found nothing wrong. The default is the only safe answer,
+    /// and every other spelling of it — an empty [`StoreShape`], an `Ok` with
+    /// `None` everywhere — reads as a clean result to a caller that is not
+    /// being careful. A refusal cannot be misread that way.
+    ///
+    /// Read-only. Nothing here writes, and a caller may run it against a live
+    /// store without taking a lock, spending a ceiling or appending an event.
+    fn store_shape(&self) -> Result<StoreShape, LedgerError> {
+        Err(LedgerError::Unsupported("describe the schema it stores into".to_string()))
+    }
 }
 
 #[cfg(test)]
@@ -505,5 +613,94 @@ mod tests {
         };
         let message = e.to_string();
         assert!(message.contains("re-read"), "the message must name the remedy: {message}");
+    }
+
+    /// ⚠⚠ **AN ADAPTER THAT HAS NOT LOOKED MUST NOT ANSWER LIKE ONE THAT DID.**
+    /// The default is a refusal rather than an empty [`StoreShape`], and the
+    /// difference is the whole point: an empty shape is a value a caller can
+    /// render as "no problems found", and this repo has already shipped one
+    /// green signal that came from a check that never ran. A refusal cannot be
+    /// formatted into a pass.
+    ///
+    /// Written against a bare implementation — one that overrides nothing —
+    /// because that is exactly the adapter this protects a caller from.
+    #[test]
+    fn an_adapter_that_cannot_describe_its_store_refuses_rather_than_reporting_nothing_wrong() {
+        struct Bare;
+        impl Ledger for Bare {
+            fn capabilities(&self) -> Capabilities {
+                Capabilities {
+                    atomic_apply: false,
+                    compare_and_swap: false,
+                    append_only_history: false,
+                }
+            }
+            fn load(&self, id: &RecordId) -> Result<Record, LedgerError> {
+                Err(LedgerError::NotFound(id.clone()))
+            }
+            fn create(
+                &self,
+                _scope: &Scope,
+                _decision: &Decision,
+                _event: &Event,
+            ) -> Result<Record, LedgerError> {
+                Err(LedgerError::NothingToApply)
+            }
+            fn apply(&self, _record: &Record, _event: &Event) -> Result<Version, LedgerError> {
+                Err(LedgerError::NothingToApply)
+            }
+            fn select(&self, _scope: &Scope, _states: &[String]) -> Result<Vec<Record>, LedgerError> {
+                Ok(Vec::new())
+            }
+            fn history(&self, id: &RecordId) -> Result<Vec<StoredEvent>, LedgerError> {
+                Err(LedgerError::NotFound(id.clone()))
+            }
+        }
+
+        let err = Bare.store_shape().unwrap_err();
+        assert!(
+            matches!(err, LedgerError::Unsupported(_)),
+            "a store that cannot be described must refuse, got {err:?}"
+        );
+        // And the refusal has to read as one to a person, not as an absence.
+        let said = err.to_string();
+        assert!(said.contains("cannot"), "{said}");
+        assert!(said.contains("schema"), "{said}");
+    }
+
+    /// ⚠⚠ **THE THREE ANSWERS A CHECKER MUST NEVER COLLAPSE**, held apart by
+    /// the type rather than by everyone remembering. The first draft of
+    /// [`StoreShape`] used `Option`, which had room for two of them — and the
+    /// pair it merged was *verified all-clear* with *never asked*.
+    #[test]
+    fn nothing_to_constrain_and_nobody_said_are_different_answers() {
+        let never_asked: Answer<Vec<String>> = Answer::Unknown;
+        let nothing_constrains: Answer<Vec<String>> = Answer::NothingToConstrain;
+        let constrains_nothing_through: Answer<Vec<String>> = Answer::Said(Vec::new());
+
+        assert_ne!(never_asked, nothing_constrains);
+        assert_ne!(nothing_constrains, constrains_nothing_through);
+        assert_ne!(never_asked, constrains_nothing_through);
+
+        // Only one of the three is the unasked question, and it is the only
+        // one `is_unknown` may claim.
+        assert!(never_asked.is_unknown());
+        assert!(!nothing_constrains.is_unknown());
+        assert!(!constrains_nothing_through.is_unknown());
+
+        // `said` is for reading a list, and must not manufacture one.
+        assert_eq!(never_asked.said(), None);
+        assert_eq!(nothing_constrains.said(), None);
+        assert_eq!(constrains_nothing_through.said(), Some(&Vec::new()));
+    }
+
+    /// ⚠ A shape nobody filled in must admit that, field by field. The
+    /// default exists so a half-built report cannot imply it looked.
+    #[test]
+    fn a_shape_nobody_filled_in_admits_it_knows_nothing() {
+        let blank = StoreShape::default();
+        assert!(blank.accepted_states.is_unknown());
+        assert!(blank.columns.is_unknown());
+        assert!(blank.writable.is_unknown());
     }
 }

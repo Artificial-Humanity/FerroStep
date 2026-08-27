@@ -7,6 +7,71 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-cli`, `ferrostep-ledger`, `ferrostep-pocketbase`,
+  `ferrostep-sqlite`: **`ferrostep doctor` — is this definition satisfiable
+  against this store?** (owner, 2026-08-27). A definition asserts things about
+  a store that nothing checked: its states must be values the state column
+  accepts, its counters and scope labels must be columns that exist, and the
+  *installed* write path must be able to reach them. The drift ran in the
+  direction nothing goes red in — the JSON looks right, the tests pass against
+  the JSON, and the disagreement arrives as a refused write on the first live
+  transition. Reported by the first adopter at the moment of impact: they added
+  a state to a definition whose store keeps its state column as a fixed value
+  list, and **every transition into it would have been refused.** It was
+  avoided only because they happened to patch the store by hand first, in the
+  right order.
+  Read-only, and explicit rather than automatic — run it before landing a
+  definition change. Backed by `Ledger::store_shape`, so bindings and other
+  consumers get the same check rather than reimplementing it.
+
+  ⚠⚠ **An unchecked question exits non-zero, exactly like a fault.** A gate
+  that passes because it could not look is the defect this command exists to
+  remove, and every cheap design produces one: a check that cannot run has
+  nothing to print, so it prints nothing, so the report reads clean. The
+  levels are `fault`, `unchecked`, `note` and `agreed` — and the agreements are
+  **counted and shown**, because a run that checked nothing also has no
+  complaints.
+
+  ⚠⚠ **`Answer` has three variants, not two.** "This column takes any string,
+  so no state can be wrong" and "nobody could tell me what this column takes"
+  both reduce to *nothing to report* under an `Option` — and one is a verified
+  all-clear while the other is an unasked question wearing its clothes. The
+  first draft of the type collapsed them, which was the same defect it exists
+  to prevent, one level up.
+
+  ⚠ **The checks that need no store run first and run always.** A store that
+  cannot answer still leaves the definition-versus-mapping half fully
+  answerable, and a counter declared in a definition with no column to spend it
+  on is the cheapest, most certain fault here — two files and no connection.
+
+  ⚠ `Ledger::store_shape` is **provided, and refuses by default**: an adapter
+  that has not implemented it must not be indistinguishable from one that
+  looked and found nothing wrong. Every other spelling of that default — an
+  empty shape, an `Ok` with nothing in it — is a value a report can render as
+  "no problems found".
+
+- `ferrostep-pocketbase`: **a generated `schema` route**, and it is the one
+  route whose answer is not fixed at generation time. The ping states the
+  column names the installed file was *written* with; this reads the
+  collection at request time, because the collection is the half that moves
+  without anybody regenerating anything. ⚠ **Authenticated, where the ping is
+  deliberately anonymous** — a collection's field names and the accepted values
+  of its select columns are a different disclosure, and widening the anonymous
+  route to carry them would have been the easy way to build this.
+  ⚠ An installed file that predates the route produces a **refusal naming the
+  fix**, not an empty schema. Verified against a live instance before
+  shipping, in both directions: present it answers, absent the check goes red.
+
+- `ferrostep-pocketbase` (tests): **two guards were counting authenticated
+  routes as a proxy for write routes**, which was exact only while every
+  authenticated route was a write route. The first authenticated *read* route
+  made both fail on correct output. Rewritten to check the property directly
+  and in both directions — every write route binds a role, **and** a route that
+  binds no role cannot write — with a floor asserting such a route exists, so
+  the second half cannot pass vacuously. ⚠ Both the old check and its first
+  replacement matched `const boundRole` as a substring, so `const boundRole2`
+  satisfied them; **found by mutation, not by reading.**
+
 - `ferrostep-cli`: **a rescope that moves part of a record's address says what
   it left behind** (owner, 2026-08-27). A record's unit of work is the whole
   tuple of scope labels and every query that finds work filters on it, so

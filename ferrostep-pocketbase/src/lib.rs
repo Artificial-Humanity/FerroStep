@@ -50,7 +50,7 @@ use std::path::{Path, PathBuf};
 use ferrostep_core::{Decision, Snapshot};
 use ferrostep_ledger::{
     decided_scope_updates, decided_snapshot, Capabilities, Event, Ledger, LedgerError, Record,
-    RecordId, Scope, StoredEvent, Version,
+    Answer, RecordId, Scope, StoreShape, StoredEvent, Version,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -960,6 +960,113 @@ impl Ledger for PocketBaseLedger {
         }
         Ok(out)
     }
+
+    /// Ask the installed hooks what the collection accepts right now.
+    ///
+    /// ⚠⚠ **TWO DIFFERENT AGES OF TRUTH LAND IN ONE VALUE HERE, AND KEEPING
+    /// THEM APART IS THE POINT.** [`StoreShape::columns`] and
+    /// [`StoreShape::accepted_states`] are read live by the route, so they
+    /// describe the collection as it stands. [`StoreShape::writable`] comes
+    /// from the ping and describes the *file that was installed*, which may
+    /// be older than both the collection and this binary. A checker needs
+    /// both because the failures are opposite: a column the collection lacks
+    /// is refused loudly, and a column the installed file lacks is accepted,
+    /// dropped and answered 200.
+    ///
+    /// Every way this can fail returns a refusal that names what went wrong,
+    /// because the caller's next move differs in each case and "could not
+    /// check" with no reason is the same as no answer at all.
+    fn store_shape(&self) -> Result<StoreShape, LedgerError> {
+        let records = self.records_collection().to_string();
+        let resp = self
+            .agent
+            .get(format!("{}/api/ferrostep/{records}/schema", self.base))
+            .header("Authorization", &self.token)
+            .call()
+            .map_err(transport)?;
+        let (status, body) = read(resp);
+        match status {
+            200 => {}
+            // ⚠ The route is newer than the first generated files, so an
+            // installed deployment can be missing it entirely. That is not a
+            // fault in the definition and must not be reported as one.
+            404 => {
+                return Err(LedgerError::Unsupported(format!(
+                    "state the schema of '{records}': the installed ferrostep hooks predate the \
+                     schema route, so nothing about the store was checked — regenerate them and \
+                     reinstall"
+                )));
+            }
+            401 | 403 => {
+                return Err(LedgerError::Unsupported(format!(
+                    "read the schema of '{records}' with this token: the route requires an \
+                     authenticated caller and this one was refused — nothing was checked"
+                )));
+            }
+            other => {
+                return Err(LedgerError::Transport(format!(
+                    "schema answered {other}: {}",
+                    refusal(&body)
+                )));
+            }
+        }
+        // ⚠ The route reports a store-side failure inside a 200, because the
+        // alternative shapes are worse: a 404 would be indistinguishable from
+        // the route being absent, and a 500 from the store being down. Read it
+        // as the refusal it is rather than as an empty schema — an empty
+        // `columns` and a missing collection are nearly the same JSON and
+        // opposite facts.
+        if let Some(failed) = body.get("error").and_then(Value::as_str) {
+            return Err(LedgerError::Unsupported(format!(
+                "describe '{records}': the store answered '{failed}' — most often the collection \
+                 named in the map does not exist under that name"
+            )));
+        }
+        // ⚠ A route that answered without a `columns` key is one this build
+        // does not understand; that is unknown, not empty.
+        let columns = match body.get("columns").and_then(Value::as_object) {
+            Some(map) => Answer::Said(
+                map.iter()
+                    .map(|(name, ty)| (name.clone(), ty.as_str().unwrap_or("?").to_string()))
+                    .collect::<BTreeMap<String, String>>(),
+            ),
+            None => Answer::Unknown,
+        };
+        // ⚠⚠ THE THREE-WAY DISTINCTION IS MADE HERE AND NOWHERE ELSE, so it is
+        // worth being explicit about which wire value is which. A `states`
+        // ARRAY is a select column stating its values. `states: null` is the
+        // route saying it looked and the column constrains nothing — a text
+        // column takes any string, and every definition passes against it. A
+        // MISSING key is an installed file too old to have been asked, and
+        // that one is not a pass.
+        let accepted_states = match body.get("states") {
+            Some(Value::Array(values)) => Answer::Said(
+                values.iter().filter_map(|v| v.as_str().map(str::to_string)).collect(),
+            ),
+            Some(Value::Null) => Answer::NothingToConstrain,
+            _ => Answer::Unknown,
+        };
+        // From the ping, not from this route: what the INSTALLED file admits.
+        // ⚠ The generic shape stores counters and scope as JSON on the row, so
+        // there is no per-name column list that could go stale — that is
+        // "nothing to constrain", and reporting it as unknown would send an
+        // operator hunting for a file to regenerate that would not help.
+        let writable = match (&self.shape, self.writable.as_ref()) {
+            (Shape::Generic, _) => Answer::NothingToConstrain,
+            (Shape::Mapped(_), Some(known)) => Answer::Said(BTreeMap::from([
+                ("counters".to_string(), known.counters.clone()),
+                ("scope".to_string(), known.scope.clone()),
+                ("attributes".to_string(), known.attributes.clone()),
+            ])),
+            (Shape::Mapped(_), None) => Answer::Unknown,
+        };
+        Ok(StoreShape {
+            subject: records,
+            accepted_states,
+            columns,
+            writable,
+        })
+    }
 }
 
 /// The generated hook file for the **generic** shape: the transactional
@@ -968,12 +1075,96 @@ impl Ledger for PocketBaseLedger {
 /// self-contained — hook callbacks run in isolated runtimes where file-scope
 /// helpers are not visible, so the duplication between the routes is
 /// load-bearing, not tidiness waiting to happen.
+/// The `schema` route both generated files carry: what the collection will
+/// accept **right now**, read from the store at request time.
+///
+/// ⚠⚠ **THIS IS THE ONE ROUTE WHOSE ANSWER IS NOT FIXED AT GENERATION TIME**,
+/// and that is the entire reason it exists. The ping's `columns` states the
+/// names this file was *written* with — the right answer to "what can the
+/// installed file write". This states what the *collection* has, which is the
+/// half that moves without anyone regenerating anything: a select column gains
+/// a value, a column is renamed, a counter column is never created. A
+/// definition asserts things about exactly that half and nothing checked it,
+/// so a state the column would refuse read as a documented move right up until
+/// the first live transition failed.
+///
+/// ⚠ **Authenticated, deliberately.** The ping is anonymous because liveness
+/// and this file's own abilities are not worth protecting; a collection's field
+/// names and the accepted values of its select columns are a different
+/// disclosure, and widening an anonymous route to carry them would be a
+/// decision made by accident. A caller running `doctor` holds a token already.
+///
+/// ⚠⚠ **AND AN ORDINARY ONE IS ENOUGH, WHICH IS WHY THIS ROUTE EXISTS RATHER
+/// THAN A CALL TO THE COLLECTIONS API.** Measured on a live instance,
+/// 2026-08-27: an ordinary actor token is refused **403** by
+/// `/api/collections/<name>` and answered **200** here. Reading the schema
+/// through the admin API would have required the checker's most likely caller —
+/// an agent holding the loop's own credential — to be an administrator, and
+/// "could not check" would have been the normal answer for everyone else.
+///
+/// ⚠ **Only values that came back through `JSON.parse` go into the response.**
+/// The store's native collection object is reachable here and handing one
+/// straight to `e.json` was measured to work — but the parsed copy is plain
+/// data with no behaviour, which is what a wire format should carry. ⚠ Key
+/// order in the emitted object is **not** stable (measured against a live
+/// instance, 2026-08-27): nothing may parse this by position.
+///
+/// A collection this file names but the store does not have throws, and the
+/// route answers with the error rather than an empty schema — because an empty
+/// schema and a missing collection serialize to nearly the same JSON and are
+/// opposite facts.
+fn schema_route_js(path: &str, records: &str, state_field: &str, version: &str) -> String {
+    format!(
+        r##"
+routerAdd("GET", "/api/ferrostep/{path}/schema", (e) => {{
+    // Read at request time, never baked in: this answers what the collection
+    // accepts NOW, which is the only version of the question worth asking.
+    const columns = {{}};
+    let states = null;
+    let failed = "";
+    try {{
+        const col = JSON.parse(JSON.stringify($app.findCollectionByNameOrId("{records}")));
+        const fields = col.fields || [];
+        for (let i = 0; i < fields.length; i++) {{
+            columns[fields[i].name] = String(fields[i].type);
+            // `states` stays null unless the column actually constrains its
+            // values. A text column takes any string, and reporting that as
+            // "no accepted states" would invent a fault in every definition.
+            if (fields[i].name === "{state_field}" && fields[i].type === "select") {{
+                states = fields[i].values || [];
+            }}
+        }}
+    }} catch (err) {{
+        failed = String(err);
+    }}
+    if (failed !== "") {{
+        return e.json(200, {{ "ferrostep": "{version}", "collection": "{records}", "error": failed }});
+    }}
+    return e.json(200, {{
+        "ferrostep": "{version}",
+        "collection": "{records}",
+        "state_field": "{state_field}",
+        "columns": columns,
+        "states": states
+    }});
+}}, $apis.requireAuth());
+"##
+    )
+}
+
 pub fn hooks_file(actors: &ActorBinding) -> String {
     // Bound locally so the generated text and the adapter's matcher are
     // ONE derivation — see `CAS_CONFLICT`.
     let (cas_conflict, no_record) = (CAS_CONFLICT, NO_RECORD);
     let version = env!("CARGO_PKG_VERSION");
     let binding = role_binding_js(actors);
+    // The generic collection stores state as text and counters and scope as
+    // JSON, so this route will report a state column that constrains nothing
+    // and no per-name counter columns. That is the honest answer and it is
+    // worth stating: "checked, and this shape has nothing to disagree with"
+    // is a different result from "could not check", and only one of them
+    // should let a person stop looking.
+    let schema_route = schema_route_js(RECORDS_COLLECTION, RECORDS_COLLECTION, "state", version);
     format!(
         r#"// ferrostep.pb.js — generated by ferrostep-pocketbase v{version}.
 // Do not hand-edit; regenerate and reinstall instead. Each handler is
@@ -988,7 +1179,7 @@ routerAdd("GET", "/api/ferrostep/ferrostep_records/ping", (e) => {{
     // rather than sending it and being told 200.
     return e.json(200, {{ "ferrostep": "{version}", "writes": ["state", "counters", "scope"] }});
 }});
-
+{schema_route}
 routerAdd("POST", "/api/ferrostep/ferrostep_records/apply", (e) => {{
     const body = e.requestInfo().body;
 {binding}
@@ -1182,6 +1373,7 @@ pub fn hooks_file_mapped(
         json_list(&map.scope_fields),
         json_list(&map.attribute_fields),
     );
+    let schema_route = schema_route_js(records, records, state, version);
     let writes_list = if map.attribute_fields.is_empty() {
         r#"["state", "counters", "scope"]"#
     } else {
@@ -1201,7 +1393,7 @@ routerAdd("GET", "/api/ferrostep/{records}/ping", (e) => {{
     // routes can write, rather than assuming its own generation's abilities.
     return e.json(200, {{ "ferrostep": "{version}", "writes": {writes_list}, "columns": {columns_json} }});
 }});
-
+{schema_route}
 routerAdd("POST", "/api/ferrostep/{records}/apply", (e) => {{
     const body = e.requestInfo().body;
 {binding}
@@ -1996,6 +2188,264 @@ mod tests {
         );
     }
 
+    /// Every `routerAdd(...)` block in a generated file, each cut at **its
+    /// own** terminator rather than at the start of the next one — so the last
+    /// block cannot absorb the record hooks that follow it, which do write and
+    /// would make any "this route does not write" assertion below fail on
+    /// correct output.
+    ///
+    /// A route's close is a `}` in the first column followed by `)` (`});`) or
+    /// by `,` (`}, $apis.requireAuth());`). Everything nested inside a handler
+    /// is indented, so column zero is the route's own brace.
+    fn route_blocks(hooks: &str) -> Vec<&str> {
+        let mut out = Vec::new();
+        let mut rest = hooks;
+        while let Some(start) = rest.find("routerAdd(") {
+            let tail = &rest[start..];
+            let end = tail
+                .match_indices("\n}")
+                .find(|(i, _)| {
+                    let after = &tail[i + 2..];
+                    after.starts_with(')') || after.starts_with(',')
+                })
+                // ⚠ To the END OF THAT LINE, not to the brace: the
+                // terminator is `}, $apis.requireAuth());`, so cutting at the
+                // brace drops the middleware and every route reads as
+                // anonymous. Caught by the guard below going red on correct
+                // output — which is the guard doing its job on its own tool.
+                .map(|(i, _)| {
+                    let after = i + 2;
+                    tail[after..].find('\n').map(|n| after + n).unwrap_or(tail.len())
+                })
+                .unwrap_or(tail.len());
+            out.push(&tail[..end]);
+            rest = &tail[end..];
+        }
+        out
+    }
+
+    /// Every route that writes: the population the assertions about role
+    /// binding and transactions are actually about.
+    fn write_routes(hooks: &str) -> Vec<&str> {
+        route_blocks(hooks)
+            .into_iter()
+            .filter(|block| block.starts_with(r#"routerAdd("POST""#))
+            .collect()
+    }
+
+    /// One `routerAdd` block, from the call that names `path` up to the next
+    /// `routerAdd` or the end of the file.
+    ///
+    /// ⚠ **The anchor is asserted unique before it is used.** A guard that
+    /// searches for its subject takes the first match for the only match —
+    /// usually the file's own comment about the subject — and then survives
+    /// the subject being deleted. That shape has already been found in this
+    /// repo's own checks three times.
+    fn route_block<'a>(hooks: &'a str, path: &str) -> &'a str {
+        let anchor = format!("routerAdd(\"GET\", \"{path}\"");
+        assert_eq!(
+            hooks.matches(&anchor).count(),
+            1,
+            "route anchor {anchor:?} must appear exactly once to be sliced on"
+        );
+        // ⚠ One splitter, deliberately. This used to cut to the next
+        // `routerAdd(` while `route_blocks` cut at each route's own
+        // terminator, and the two disagreed about whether the middleware was
+        // part of the block — so one of them saw an authenticated route where
+        // the other saw an anonymous one.
+        route_blocks(hooks)
+            .into_iter()
+            .find(|block| block.starts_with(&anchor))
+            .expect("the block starting at a unique anchor")
+    }
+
+    /// ⚠⚠ **THE ONE ROUTE WHOSE ANSWER MUST NOT BE A CONSTANT.** Every other
+    /// generated route can honestly answer from what was known when it was
+    /// written; this one exists to report what the collection accepts *now*,
+    /// because the collection is the half that changes without anybody
+    /// regenerating a file. Baking the value in at generation time would
+    /// produce a check that always agrees with the map it was generated from —
+    /// an agreement test wearing a store's clothes.
+    #[test]
+    fn the_schema_route_reads_the_collection_instead_of_reciting_generation_time_values() {
+        let hooks = hooks_file_mapped(&tickets_map(), None, &ActorBinding::default());
+        let block = route_block(&hooks, "/api/ferrostep/tickets/schema");
+
+        assert!(
+            block.contains("findCollectionByNameOrId(\"tickets\")"),
+            "the route must ask the store: {block}"
+        );
+        // The map's own state values are not in the definition, so the strong
+        // statement available here is that the accepted values are read off a
+        // field rather than written into the file.
+        assert!(block.contains("fields[i].values"), "the values come from the field: {block}");
+        assert!(
+            block.contains("fields[i].type === \"select\""),
+            "and only from a column that actually constrains: {block}"
+        );
+    }
+
+    /// ⚠ **The ping is anonymous and this route is not, and that difference is
+    /// a decision rather than an accident.** Liveness and a file's own
+    /// abilities are not worth protecting; a collection's field names and the
+    /// accepted values of its select columns are a different disclosure, and
+    /// widening the anonymous route to carry them would have been the easy
+    /// way to build this.
+    #[test]
+    fn the_schema_route_is_authenticated_where_the_ping_deliberately_is_not() {
+        let hooks = hooks_file_mapped(&tickets_map(), None, &ActorBinding::default());
+
+        let schema = route_block(&hooks, "/api/ferrostep/tickets/schema");
+        assert!(schema.contains("$apis.requireAuth()"), "schema must require a caller: {schema}");
+
+        let ping = route_block(&hooks, "/api/ferrostep/tickets/ping");
+        assert!(
+            !ping.contains("requireAuth"),
+            "the ping stays anonymous — an adapter reads it before it has done anything: {ping}"
+        );
+        // ⚠ Floor: both assertions above are satisfied by a file with no
+        // routes at all, so prove the blocks are the routes they claim to be.
+        assert!(ping.contains("\"writes\""), "{ping}");
+        assert!(schema.contains("\"columns\""), "{schema}");
+    }
+
+    /// The generic file carries the route too, so a generic deployment gets
+    /// "checked, and this shape constrains nothing" rather than "could not
+    /// check" — different results, and only one of them lets a reader stop.
+    #[test]
+    fn the_generic_file_carries_the_route_as_well() {
+        let hooks = hooks_file(&ActorBinding::default());
+        let block = route_block(&hooks, "/api/ferrostep/ferrostep_records/schema");
+        assert!(block.contains("findCollectionByNameOrId(\"ferrostep_records\")"), "{block}");
+        assert!(block.contains("$apis.requireAuth()"), "{block}");
+    }
+
+    fn schema_route(body: &str) -> (&'static str, u16, String) {
+        ("/api/ferrostep/tickets/schema", 200, body.to_string())
+    }
+
+    fn tickets_ping() -> (&'static str, u16, String) {
+        (
+            "/api/ferrostep/tickets/ping",
+            200,
+            r#"{"ferrostep":"test","writes":["state","counters","scope","attributes"],
+                "columns":{"counters":["attempts"],"scope":["lane"],"attributes":["severity"]}}"#
+                .to_string(),
+        )
+    }
+
+    /// ⚠⚠ **AN INSTALLED FILE TOO OLD TO ANSWER MUST NOT READ AS AGREEMENT.**
+    /// The generated files outlive the binary that wrote them, so a deployment
+    /// installed before this route existed is the ordinary case rather than
+    /// the exotic one — and the natural spelling of a missing route is an
+    /// empty schema, which a checker renders as nothing to complain about.
+    #[test]
+    fn an_installed_file_that_predates_the_route_refuses_and_says_what_to_do() {
+        let base = serve(vec![tickets_ping()], 2);
+        let ledger = PocketBaseLedger::connect_mapped(&base, "tok", tickets_map()).unwrap();
+        let err = ledger.store_shape().unwrap_err();
+        assert!(matches!(err, LedgerError::Unsupported(_)), "{err:?}");
+        let said = err.to_string();
+        assert!(said.contains("predate"), "{said}");
+        assert!(said.contains("regenerate"), "the refusal must say what to do: {said}");
+        assert!(said.contains("nothing about the store was checked"), "{said}");
+    }
+
+    /// ⚠⚠ **THE THREE ANSWERS, OFF THE WIRE.** An array is a column stating
+    /// its values; `null` is the route reporting that the column constrains
+    /// nothing; a missing key is a file too old to have been asked. The middle
+    /// one is a verified all-clear and the last one is not, and they are one
+    /// character apart in the JSON.
+    #[test]
+    fn a_null_state_list_is_an_answer_and_a_missing_one_is_not() {
+        let constrains = r#"{"ferrostep":"t","collection":"tickets","columns":{"stage":"select"},
+                             "states":["open","closed"]}"#;
+        let base = serve(vec![tickets_ping(), schema_route(constrains)], 2);
+        let shape = PocketBaseLedger::connect_mapped(&base, "tok", tickets_map())
+            .unwrap()
+            .store_shape()
+            .unwrap();
+        assert_eq!(
+            shape.accepted_states,
+            Answer::Said(vec!["open".to_string(), "closed".to_string()])
+        );
+
+        let unconstrained =
+            r#"{"ferrostep":"t","collection":"tickets","columns":{"stage":"text"},"states":null}"#;
+        let base = serve(vec![tickets_ping(), schema_route(unconstrained)], 2);
+        let shape = PocketBaseLedger::connect_mapped(&base, "tok", tickets_map())
+            .unwrap()
+            .store_shape()
+            .unwrap();
+        assert_eq!(shape.accepted_states, Answer::NothingToConstrain);
+        assert!(!shape.accepted_states.is_unknown(), "null is an answer");
+
+        let silent = r#"{"ferrostep":"t","collection":"tickets","columns":{"stage":"text"}}"#;
+        let base = serve(vec![tickets_ping(), schema_route(silent)], 2);
+        let shape = PocketBaseLedger::connect_mapped(&base, "tok", tickets_map())
+            .unwrap()
+            .store_shape()
+            .unwrap();
+        assert!(shape.accepted_states.is_unknown(), "a missing key is not an answer");
+    }
+
+    /// A collection the map names and the store does not have comes back
+    /// inside a 200, because the alternatives are worse: a 404 cannot be told
+    /// from the route being absent, and a 500 cannot be told from the store
+    /// being down. It still has to reach the caller as a refusal.
+    #[test]
+    fn a_collection_the_store_does_not_have_is_a_refusal_not_an_empty_schema() {
+        let missing = r#"{"ferrostep":"t","collection":"tickets","error":"GoError: sql: no rows in result set"}"#;
+        let base = serve(vec![tickets_ping(), schema_route(missing)], 2);
+        let err = PocketBaseLedger::connect_mapped(&base, "tok", tickets_map())
+            .unwrap()
+            .store_shape()
+            .unwrap_err();
+        assert!(matches!(err, LedgerError::Unsupported(_)), "{err:?}");
+        assert!(err.to_string().contains("no rows"), "it carries the store's words: {err}");
+        assert!(err.to_string().contains("does not exist under that name"), "{err}");
+    }
+
+    /// ⚠ The generic shape stores counters and scope as JSON on the row, so
+    /// there is no per-name column list that could be older than the mapping.
+    /// That is *nothing to constrain*, not *unknown* — reporting it as unknown
+    /// would send an operator hunting for a file to regenerate that could not
+    /// help them.
+    #[test]
+    fn the_generic_shape_has_no_installed_column_list_that_could_go_stale() {
+        let schema = (
+            "/api/ferrostep/ferrostep_records/schema",
+            200,
+            r#"{"ferrostep":"t","collection":"ferrostep_records",
+                "columns":{"state":"text","counters":"json"},"states":null}"#
+                .to_string(),
+        );
+        let base = serve(vec![ping_with_scope(), schema], 2);
+        let shape = PocketBaseLedger::connect(&base, "tok").unwrap().store_shape().unwrap();
+        assert_eq!(shape.writable, Answer::NothingToConstrain);
+        assert!(!shape.writable.is_unknown());
+    }
+
+    /// A mapped deployment whose ping states its columns hands them through as
+    /// the installed write path's limit — the half of the answer that is fixed
+    /// at generation time, carried beside the half that is read live.
+    #[test]
+    fn a_mapped_shape_carries_what_the_installed_file_said_it_can_write() {
+        let body = r#"{"ferrostep":"t","collection":"tickets",
+                       "columns":{"stage":"select","attempts":"number"},"states":["open"]}"#;
+        let base = serve(vec![tickets_ping(), schema_route(body)], 2);
+        let shape = PocketBaseLedger::connect_mapped(&base, "tok", tickets_map())
+            .unwrap()
+            .store_shape()
+            .unwrap();
+        let writable = shape.writable.said().expect("the ping stated its columns");
+        assert_eq!(writable.get("counters"), Some(&vec!["attempts".to_string()]));
+        assert_eq!(writable.get("attributes"), Some(&vec!["severity".to_string()]));
+        // And the live half is the collection's, not the ping's.
+        let columns = shape.columns.said().expect("the route enumerated the columns");
+        assert_eq!(columns.get("stage"), Some(&"select".to_string()));
+    }
+
     fn an_event(decision: Decision) -> Event {
         Event {
             actor: "a".to_string(),
@@ -2229,8 +2679,13 @@ mod tests {
         let hooks = hooks_file(&ActorBinding::default());
         // Both write routes are transactional, authenticated, and the ping
         // answers what connect() probes for — all scoped to the collection.
-        assert_eq!(hooks.matches("runInTransaction").count(), 2);
-        assert_eq!(hooks.matches("$apis.requireAuth()").count(), 2);
+        // ⚠ Counted over WRITE routes rather than over authenticated ones: a
+        // read-only authenticated route is legitimate (`schema` is one), and a
+        // count that cannot tell the two apart goes red on correct output.
+        let writes = write_routes(&hooks).len();
+        assert_eq!(writes, 2, "the generic file's write routes");
+        assert_eq!(hooks.matches("runInTransaction").count(), writes);
+        assert!(hooks.matches("$apis.requireAuth()").count() >= writes);
         assert!(hooks.contains(r#"routerAdd("GET", "/api/ferrostep/ferrostep_records/ping""#));
         assert!(hooks.contains("cas_conflict"));
         let migration = migration_file(&ActorBinding::default());
@@ -2324,16 +2779,50 @@ mod tests {
                 hooks.contains("role_not_yours"),
                 "{shape}: a claim that contradicts the account must be refused by name"
             );
-            // ⚠ Derived, not stated: every authenticated route must carry the
+            // ⚠ Derived, not stated: a route that writes must carry the
             // binding. A write route added later without it is the failure
-            // this counts rather than trusts anyone to remember.
-            let routes = hooks.matches("$apis.requireAuth()").count();
-            assert!(routes > 0, "{shape}: no authenticated routes were enumerated");
-            assert_eq!(
-                hooks.matches("const boundRole").count(),
-                routes,
-                "{shape}: {routes} authenticated route(s), but a different number bind a role"
-            );
+            // this checks rather than trusts anyone to remember.
+            //
+            // ⚠⚠ **THIS USED TO COUNT AUTHENTICATED ROUTES**, which was exact
+            // only while every authenticated route was a write route. The
+            // first authenticated READ route — `schema`, which needs a caller
+            // but binds no role because it cannot write — made the count fail
+            // on correct output. The population was the proxy, not the
+            // property, so the property is checked directly now, in both
+            // directions.
+            let writes = write_routes(&hooks);
+            assert!(!writes.is_empty(), "{shape}: no write routes were enumerated");
+            for route in &writes {
+                assert!(
+                    route.contains("$apis.requireAuth()"),
+                    "{shape}: a write route is anonymous: {route}"
+                );
+                // ⚠ `const boundRole =`, with the assignment. Matching the
+                // bare name passes on `const boundRole2`, which declares a
+                // variable nothing reads and leaves the route trusting the
+                // request — measured by mutation, and true of the check this
+                // replaced as well.
+                assert!(
+                    route.contains("const boundRole ="),
+                    "{shape}: a write route does not bind a role: {route}"
+                );
+            }
+            // The converse, which is what the old count was really defending:
+            // a route that binds no role must not be able to write one.
+            let unbound: Vec<&str> = route_blocks(&hooks)
+                .into_iter()
+                .filter(|b| !b.contains("const boundRole ="))
+                .collect();
+            // ⚠ Floor: the loop below is vacuous unless such a route exists,
+            // and a vacuous loop is a passing test that checks nothing.
+            assert!(!unbound.is_empty(), "{shape}: no unbound routes to check");
+            for route in unbound {
+                assert!(!route.contains(".save("), "{shape}: an unbound route saves: {route}");
+                assert!(
+                    !route.contains("rec.set("),
+                    "{shape}: an unbound route sets a column: {route}"
+                );
+            }
         }
     }
 
@@ -2713,6 +3202,58 @@ mod tests {
         assert_eq!(attempts, WRITERS * ROUNDS, "the battery ran its whole population");
         let final_version: usize = ledger.load(&record.id).unwrap().version.0.parse().unwrap();
         assert_eq!(final_version, 1 + ROUNDS, "one version step per round, none lost");
+    }
+
+    /// ⚠⚠ **THE ROUTE THAT CANNOT BE VERIFIED BY READING IT.** Every other
+    /// assertion about a generated file in this module is about its *text* —
+    /// which is the right level for a file that is deployed, not run, here.
+    /// This one is different: the route's whole value is that a real JSVM can
+    /// enumerate a collection's fields and read a select column's accepted
+    /// values, and that is a property of the store, not of the string.
+    ///
+    /// **Measured against a live instance, 2026-08-27**, before the route
+    /// shipped: `JSON.parse(JSON.stringify(collection)).fields` yields
+    /// `{name, type}` per field with `values` present on a select, a
+    /// collection the file names and the store lacks throws
+    /// `GoError: sql: no rows in result set`, and the anonymous caller is
+    /// refused 401. The fixture is the one `live_mapped_collection_moves_under_the_referee`
+    /// expects, with the CURRENT generated hooks installed — an older file has
+    /// no such route and this test will correctly report that instead.
+    #[test]
+    #[ignore = "needs a live PocketBase with the mapped tickets fixture and CURRENT hooks installed; set FERROSTEP_POCKETBASE_URL and FERROSTEP_POCKETBASE_TOKEN and run with --ignored"]
+    fn live_the_schema_route_reads_the_collection_the_definition_will_meet() {
+        let url = std::env::var("FERROSTEP_POCKETBASE_URL").unwrap();
+        let token = std::env::var("FERROSTEP_POCKETBASE_TOKEN").unwrap();
+        let ledger = PocketBaseLedger::connect_mapped(&url, &token, tickets_map()).unwrap();
+
+        let shape = ledger.store_shape().expect("the installed hooks carry the schema route");
+        assert_eq!(shape.subject, "tickets");
+
+        let columns = shape.columns.said().expect("the route enumerated the columns");
+        for (kind, name) in [
+            ("state", &tickets_map().state_field),
+            ("version", &tickets_map().version_field),
+        ] {
+            assert!(columns.contains_key(name), "the {kind} column '{name}' is missing: {columns:?}");
+        }
+
+        // ⚠ The accepted-state list is the half that only a live store can
+        // answer, and the fixture's `stage` may legitimately be either a
+        // select or a text column — so this asserts the ANSWER IS AN ANSWER,
+        // never that it is a particular one. `Unknown` is the failure: it
+        // means the installed file could not be asked.
+        assert!(
+            !shape.accepted_states.is_unknown(),
+            "the route must say whether the state column constrains its values, got {:?}",
+            shape.accepted_states
+        );
+        if let Some(accepted) = shape.accepted_states.said() {
+            assert!(!accepted.is_empty(), "a select column with no values accepts nothing");
+        }
+
+        // The installed file's own limits arrive from the ping, beside the
+        // collection's — two different ages of truth in one value.
+        assert!(!shape.writable.is_unknown(), "a current mapped file states its columns");
     }
 
     #[test]

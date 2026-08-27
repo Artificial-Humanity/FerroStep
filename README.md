@@ -212,6 +212,16 @@ will refuse rather than assume a zero. Some deployments keep filing for
 themselves: a *mapped* PocketBase collection refuses it by name, so the
 procedure that already creates those records stays the one that does.
 
+**`doctor` asks whether a definition is satisfiable against a store** —
+before a transition proves it is not. Are the definition's states values the
+state column will accept? Do its counters and scope labels have columns? Can
+the *installed* write path reach them? Read-only, and explicit rather than
+automatic: run it when a definition changes. ⚠ **A question it could not
+answer exits non-zero, exactly like a fault.** A gate that passes because it
+could not look is the failure this exists to remove — and the report counts
+and shows what it *did* verify, because a run that checked nothing also has no
+complaints.
+
 `explain` takes no store at all. Besides who may file, what may move where,
 and who may change a scope label, it prints the numbers the definition
 asserts **and their off-by-one neighbours** — the list you want when a

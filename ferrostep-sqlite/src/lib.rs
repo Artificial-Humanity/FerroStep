@@ -32,7 +32,7 @@ use std::time::Duration;
 use ferrostep_core::{Decision, Snapshot};
 use ferrostep_ledger::{
     decided_scope_updates, decided_snapshot, Capabilities, Event, Ledger, LedgerError, Record,
-    RecordId, Scope, StoredEvent, Version,
+    Answer, RecordId, Scope, StoreShape, StoredEvent, Version,
 };
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 
@@ -376,6 +376,58 @@ impl Ledger for SqliteLedger {
         }
         Ok(out)
     }
+
+    /// What this file's `ferrostep_records` table actually holds — read from
+    /// the database with `PRAGMA table_info`, never recited from [`SCHEMA`].
+    ///
+    /// ⚠ **Read rather than recited on purpose.** This crate creates the table
+    /// and could answer from the constant a few lines up, which would be
+    /// faster and would be an agreement test: the code confirming the code.
+    /// The question a caller is asking is about *the file in front of them*,
+    /// which may have been created by an older build, or altered by whoever
+    /// holds it — and those are exactly the cases where an answer read from
+    /// the source is confidently wrong.
+    ///
+    /// The other two answers are [`Answer::NothingToConstrain`], and both are
+    /// verified all-clears rather than shrugs:
+    ///
+    /// * **states** — `state` is a plain `TEXT` column, so it accepts any
+    ///   string and no definition's state list can disagree with it. A store
+    ///   with a fixed value list is where that check earns its keep.
+    /// * **writable** — this adapter writes the columns itself, in-process.
+    ///   There is no separately-deployed half that could be older than the
+    ///   mapping it serves, which is the entire failure that field exists to
+    ///   expose.
+    fn store_shape(&self) -> Result<StoreShape, LedgerError> {
+        let conn = self.conn()?;
+        let mut stmt = conn
+            .prepare("SELECT name, type FROM pragma_table_info('ferrostep_records')")
+            .map_err(transport)?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(transport)?;
+        let mut columns = BTreeMap::new();
+        for row in rows {
+            let (name, kind) = row.map_err(transport)?;
+            columns.insert(name, kind.to_lowercase());
+        }
+        // ⚠ An empty enumeration is not a table with no columns — SQLite
+        // answers a `PRAGMA` about a table it does not have with zero rows and
+        // no error. Reporting that as a schema would let a caller conclude the
+        // ledger is fine when the ledger is absent.
+        if columns.is_empty() {
+            return Err(LedgerError::Unsupported(format!(
+                "describe '{}': it has no ferrostep_records table, so nothing was checked",
+                self.path.display()
+            )));
+        }
+        Ok(StoreShape {
+            subject: "ferrostep_records".to_string(),
+            accepted_states: Answer::NothingToConstrain,
+            columns: Answer::Said(columns),
+            writable: Answer::NothingToConstrain,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -403,6 +455,54 @@ mod tests {
 
     fn filed(to: &str) -> Decision {
         Decision::allow(to, BTreeMap::new())
+    }
+
+    /// The shape is read out of the file, and says the two things a checker
+    /// needs to hear as *results* rather than as silence: this store does not
+    /// constrain states, and it has no separately-installed write path that
+    /// could be stale.
+    #[test]
+    fn the_shape_is_read_from_the_file_and_states_what_it_does_not_constrain() {
+        let (_dir, ledger) = temp_ledger();
+        let shape = ledger.store_shape().unwrap();
+
+        assert_eq!(shape.subject, "ferrostep_records");
+        let columns = shape.columns.said().expect("the columns are enumerable");
+        // Known answer: the columns a record is stored in, by name. Asserted
+        // by value so adding one without deciding what a checker should make
+        // of it fails here rather than passing quietly.
+        let mut names: Vec<&str> = columns.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["counters", "id", "scope", "state", "version"], "{columns:?}");
+
+        // ⚠ Both of these are verified all-clears, NOT shrugs, and the
+        // distinction is the reason `Answer` has three variants.
+        assert_eq!(shape.accepted_states, Answer::NothingToConstrain);
+        assert_eq!(shape.writable, Answer::NothingToConstrain);
+        assert!(!shape.accepted_states.is_unknown());
+    }
+
+    /// ⚠⚠ **AN EMPTY ENUMERATION IS NOT AN EMPTY TABLE.** SQLite answers a
+    /// `PRAGMA` about a table it does not have with zero rows and no error, so
+    /// the natural spelling of this method reports a ledger with no columns —
+    /// which a checker renders as nothing to complain about, on a file that
+    /// has no ledger in it at all.
+    #[test]
+    fn a_file_whose_ledger_table_is_gone_refuses_rather_than_reporting_no_columns() {
+        let (dir, ledger) = temp_ledger();
+        // The positive control: it answers before the table is dropped.
+        assert!(ledger.store_shape().is_ok(), "the fixture must start answerable");
+
+        let conn = Connection::open(dir.path().join("ledger.db")).unwrap();
+        conn.execute_batch("DROP TABLE ferrostep_records").unwrap();
+        drop(conn);
+
+        let err = ledger.store_shape().unwrap_err();
+        assert!(
+            matches!(err, LedgerError::Unsupported(_)),
+            "a missing table must refuse, got {err:?}"
+        );
+        assert!(err.to_string().contains("nothing was checked"), "{err}");
     }
 
     /// Seed one record the way a harness does for a workflow with no

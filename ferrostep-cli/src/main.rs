@@ -49,14 +49,14 @@ use std::fmt::Write as _;
 use std::process::ExitCode;
 
 use ferrostep_core::{Attempt, Decision, Engine, Status, WorkflowDef};
-use ferrostep_ledger::{Event, Ledger, Record, RecordId, Scope};
+use ferrostep_ledger::{Answer, Event, Ledger, Record, RecordId, Scope, StoreShape};
 use ferrostep_notify::{Notification, Notifier, Ntfy, Urgency};
 use ferrostep_roster::Roster;
 
 const USAGE: &str = "ferrostep — the person-facing surface over a FerroStep-refereed ledger
 
 USAGE:
-  ferrostep <awaiting|audit|file|move|rescope|notify> --workflow <def.json> --store <target> [options]
+  ferrostep <awaiting|audit|file|move|rescope|notify|doctor> --workflow <def.json> --store <target> [options]
   ferrostep explain --workflow <def.json> [--map <map.json>]
   ferrostep agent-env [--agent <title>] [--roster <config.yaml>]
 
@@ -92,6 +92,17 @@ rescope:                       (move a record to a different unit of work)
 
 notify:
   --ntfy <server> --topic <topic> [--ntfy-token <token>]
+
+doctor:                        (read-only; exits non-zero on a fault OR on
+                               anything it could not check)
+  --store <target> [--map <path>] [--token <token>]
+                        whether this definition is satisfiable against this
+                        store: are its states values the state column accepts,
+                        do its counters and scope labels have columns, and can
+                        the INSTALLED write path reach them. ⚠ A question this
+                        cannot answer is reported as unchecked and fails — a
+                        gate that passes because it could not look is worse
+                        than no gate.
 
 explain:                       (takes no --store)
   what the definition permits, and the numbers it asserts — including the
@@ -248,6 +259,7 @@ fn accepted_flags(command: &str) -> &'static [&'static str] {
         "notify" => {
             &["workflow", "store", "token", "map", "scope", "role", "ntfy", "topic", "ntfy-token"]
         }
+        "doctor" => &["workflow", "store", "token", "map"],
         "explain" => &["workflow", "map"],
         "agent-env" => &["agent", "roster", "format"],
         _ => &[],
@@ -316,6 +328,17 @@ fn run(args: &[String]) -> Result<String, String> {
     let note = note_text(&flags)?;
 
     match command.as_str() {
+        // ⚠ Before anything is moved, and never as part of moving something.
+        // Read-only by construction: it asks the store what it accepts and
+        // compares that against the definition, and a run of it cannot spend a
+        // ceiling, append an event or change a record.
+        "doctor" => {
+            let map = match flags.get("map") {
+                Some(path) => Some(load_map(path)?),
+                None => None,
+            };
+            doctor(&engine, ledger.as_ref(), map.as_ref())
+        }
         "awaiting" => {
             let rows = records_with_status(&engine, ledger.as_ref(), &scope, false)?;
             Ok(render_awaiting(&engine, &rows, flags.get("role")))
@@ -386,6 +409,450 @@ fn run(args: &[String]) -> Result<String, String> {
         }
         other => Err(format!("unknown subcommand '{other}'\n\n{USAGE}")),
     }
+}
+
+// ----------------------------------------------------------------------
+// doctor — is this definition satisfiable against this store?
+// ----------------------------------------------------------------------
+
+/// What one of `doctor`'s checks concluded.
+///
+/// ⚠⚠ **[`Level::Unchecked`] IS NOT A PASS, AND IT IS A SEPARATE LEVEL SO
+/// THAT IT CANNOT BE RENDERED AS ONE.** Every other design collapses under its
+/// own convenience: a check that could not run has nothing to print, so it
+/// prints nothing, so the report reads clean. This repo has already shipped a
+/// green verdict from a check that never executed, and the lesson each time is
+/// the same — an instrument that cannot fail loudly must at least say when it
+/// did not look.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Level {
+    /// The definition and the store disagree. A live move would be refused, or
+    /// worse, accepted and dropped.
+    Fault,
+    /// The question could not be answered. The report says why, and the exit
+    /// status is the same as a fault: nothing was verified.
+    Unchecked,
+    /// True, worth knowing, and not a problem.
+    Note,
+    /// A check that ran and agreed. ⚠ Carried and printed deliberately: the
+    /// difference between "this agreed" and "this was never asked" is invisible
+    /// unless the agreement is stated, and that difference is the whole subject
+    /// of this command.
+    Agreed,
+}
+
+impl Level {
+    fn mark(self) -> char {
+        match self {
+            Level::Fault => '✗',
+            Level::Unchecked => '?',
+            Level::Note => '·',
+            Level::Agreed => '✓',
+        }
+    }
+}
+
+struct Finding {
+    level: Level,
+    section: &'static str,
+    text: String,
+}
+
+const DEF_MAP: &str = "definition ↔ mapping";
+const DEF_STORE: &str = "definition ↔ store";
+const MAP_STORE: &str = "mapping ↔ store";
+const MAP_INSTALLED: &str = "mapping ↔ installed write path";
+
+/// The sections in report order, so a section with no findings can still be
+/// printed as such rather than vanishing.
+const SECTIONS: [&str; 4] = [DEF_MAP, DEF_STORE, MAP_STORE, MAP_INSTALLED];
+
+/// Every check, against a definition, an optional mapping, and whatever the
+/// store was able to say about itself.
+///
+/// ⚠ **Pure, and takes the store's answer as a value rather than a
+/// connection**, so the whole matrix — including every way the store can fail
+/// to answer — is reachable from a test with no store in it. A checker whose
+/// failure paths can only be exercised against live infrastructure is a
+/// checker whose failure paths are not exercised.
+///
+/// ⚠⚠ **The checks that need no store run first and run always.** A store that
+/// cannot be read still leaves the definition-versus-mapping half completely
+/// answerable, and answering half a question beats refusing the whole one —
+/// the counter that is declared in a definition and has no column is the
+/// cheapest, most certain fault here and it needs nothing but two files.
+fn diagnose(
+    def: &WorkflowDef,
+    map: Option<&ferrostep_pocketbase::CollectionMap>,
+    shape: &Result<StoreShape, String>,
+) -> Vec<Finding> {
+    let mut out: Vec<Finding> = Vec::new();
+    let mut say = |level: Level, section: &'static str, text: String| {
+        out.push(Finding { level, section, text });
+    };
+
+    // ---- definition ↔ mapping: no store needed, so never skipped ----
+    if let Some(map) = map {
+        for counter in &def.counters {
+            if map.counter_fields.contains(&counter.name) {
+                say(
+                    Level::Agreed,
+                    DEF_MAP,
+                    format!("counter '{}' is mapped to a column of the same name", counter.name),
+                );
+            } else {
+                say(
+                    Level::Fault,
+                    DEF_MAP,
+                    format!(
+                        "counter '{}' has no column in the map — every spend of it would be \
+                         dropped, so its ceiling of {} can never fire",
+                        counter.name, counter.max
+                    ),
+                );
+            }
+        }
+        for rescope in &def.rescopes {
+            if !map.scope_fields.contains(&rescope.label) {
+                say(
+                    Level::Fault,
+                    DEF_MAP,
+                    format!(
+                        "scope label '{}' is rescopable by '{}' and has no column in the map — \
+                         a documented move with nowhere to land",
+                        rescope.label, rescope.role
+                    ),
+                );
+            }
+        }
+        for column in &map.counter_fields {
+            if !def.counters.iter().any(|c| &c.name == column) {
+                say(
+                    Level::Note,
+                    DEF_MAP,
+                    format!(
+                        "column '{column}' is refereed as a counter and this definition never \
+                         spends it — harmless if another workflow does"
+                    ),
+                );
+            }
+        }
+        // ⚠ Attributes get no definition-side check because there is nothing
+        // to check them against: the engine has no vocabulary for them yet, by
+        // design. Saying so beats silently covering three of four kinds.
+        if !map.attribute_fields.is_empty() {
+            say(
+                Level::Note,
+                DEF_MAP,
+                format!(
+                    "the map declares {} as attribute column(s); the engine has no vocabulary \
+                     for them, so nothing here can check what values they take",
+                    map.attribute_fields.join(", ")
+                ),
+            );
+        }
+    } else {
+        say(
+            Level::Note,
+            DEF_MAP,
+            "no --map given, so there are no per-name columns to check a definition against"
+                .to_string(),
+        );
+    }
+
+    // ---- everything below needs the store to have answered ----
+    let shape = match shape {
+        Ok(shape) => shape,
+        // ⚠ One finding per QUESTION rather than one repetition of the reason.
+        // The reason is printed once in the header; what a reader needs here
+        // is the list of things nobody established, because that list is what
+        // they are on the hook for checking by hand.
+        Err(_) => {
+            for (section, question) in [
+                (DEF_STORE, "which values the state column accepts"),
+                (MAP_STORE, "whether the mapped columns exist"),
+                (MAP_INSTALLED, "which columns the installed write path can reach"),
+            ] {
+                say(Level::Unchecked, section, format!("{question} — never established"));
+            }
+            return out;
+        }
+    };
+
+    // ---- definition ↔ store ----
+    match &shape.accepted_states {
+        Answer::Said(accepted) => {
+            let refused: Vec<&String> =
+                def.states.iter().filter(|s| !accepted.contains(s)).collect();
+            for state in &refused {
+                say(
+                    Level::Fault,
+                    DEF_STORE,
+                    format!(
+                        "state '{state}' is not an accepted value of the state column in '{}' — \
+                         every transition into it would be refused by the store",
+                        shape.subject
+                    ),
+                );
+            }
+            if refused.is_empty() {
+                say(
+                    Level::Agreed,
+                    DEF_STORE,
+                    format!(
+                        "all {} of this definition's states are accepted values of the state \
+                         column",
+                        def.states.len()
+                    ),
+                );
+            }
+            let unused: Vec<&String> =
+                accepted.iter().filter(|s| !def.states.contains(s)).collect();
+            if !unused.is_empty() {
+                say(
+                    Level::Note,
+                    DEF_STORE,
+                    format!(
+                        "the state column also accepts {}, which this definition never uses",
+                        unused.iter().map(|s| format!("'{s}'")).collect::<Vec<_>>().join(", ")
+                    ),
+                );
+            }
+        }
+        Answer::NothingToConstrain => say(
+            Level::Note,
+            DEF_STORE,
+            "the state column constrains nothing, so no state in this definition can be refused \
+             by it"
+                .to_string(),
+        ),
+        Answer::Unknown => say(
+            Level::Unchecked,
+            DEF_STORE,
+            "the store did not say which values its state column accepts, so a state it would \
+             refuse is still possible"
+                .to_string(),
+        ),
+    }
+
+    // ---- mapping ↔ store ----
+    match (&shape.columns, map) {
+        (Answer::Said(columns), Some(map)) => {
+            let mut missing = 0;
+            for (kind, name) in refereed_by_kind(map) {
+                match columns.get(&name) {
+                    Some(kind_in_store) => say(
+                        Level::Agreed,
+                        MAP_STORE,
+                        format!("{kind} '{name}' exists in '{}' as {kind_in_store}", shape.subject),
+                    ),
+                    None => {
+                        missing += 1;
+                        say(
+                            Level::Fault,
+                            MAP_STORE,
+                            format!(
+                                "{kind} '{name}' is refereed by the map and does not exist in \
+                                 '{}' — a write to it would be refused",
+                                shape.subject
+                            ),
+                        );
+                    }
+                }
+            }
+            let _ = missing;
+        }
+        (Answer::Said(columns), None) => say(
+            Level::Note,
+            MAP_STORE,
+            format!(
+                "'{}' has: {}",
+                shape.subject,
+                columns
+                    .iter()
+                    .map(|(n, t)| format!("{n} ({t})"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        ),
+        (Answer::NothingToConstrain, _) => say(
+            Level::Note,
+            MAP_STORE,
+            "the store has no fixed columns to disagree with a mapping".to_string(),
+        ),
+        (Answer::Unknown, _) => say(
+            Level::Unchecked,
+            MAP_STORE,
+            "the store did not enumerate its columns, so a mapped column that does not exist is \
+             still possible"
+                .to_string(),
+        ),
+    }
+
+    // ---- mapping ↔ installed write path ----
+    match (&shape.writable, map) {
+        (Answer::Said(groups), Some(map)) => {
+            for (kind, declared) in [
+                ("counters", &map.counter_fields),
+                ("scope", &map.scope_fields),
+                ("attributes", &map.attribute_fields),
+            ] {
+                let admitted = groups.get(kind).cloned().unwrap_or_default();
+                for name in declared {
+                    if admitted.contains(name) {
+                        say(
+                            Level::Agreed,
+                            MAP_INSTALLED,
+                            format!("the installed write path can write {kind} '{name}'"),
+                        );
+                    } else {
+                        say(
+                            Level::Fault,
+                            MAP_INSTALLED,
+                            format!(
+                                "'{name}' is declared in the map under {kind} and the installed \
+                                 write path cannot reach it — a write would be accepted, dropped, \
+                                 and answered 200. Regenerate the generated files and reinstall."
+                            ),
+                        );
+                    }
+                }
+                for name in &admitted {
+                    if !declared.contains(name) {
+                        say(
+                            Level::Note,
+                            MAP_INSTALLED,
+                            format!(
+                                "the installed write path still admits {kind} '{name}', which \
+                                 this map no longer declares — it is stale, not broken"
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+        (Answer::Said(_), None) => say(
+            Level::Note,
+            MAP_INSTALLED,
+            "no --map given, so there are no declared column names to compare".to_string(),
+        ),
+        (Answer::NothingToConstrain, _) => say(
+            Level::Note,
+            MAP_INSTALLED,
+            "this adapter writes columns itself, so there is no separately-installed half that \
+             could be older than the mapping"
+                .to_string(),
+        ),
+        (Answer::Unknown, _) => say(
+            Level::Unchecked,
+            MAP_INSTALLED,
+            "the installed write path did not state the column names it can write, so a column \
+             it would silently drop is still possible — regenerating the generated files and \
+             reinstalling enables this check"
+                .to_string(),
+        ),
+    }
+
+    out
+}
+
+/// Every column the map refereed, paired with the word for what it is.
+///
+/// ⚠ **Built from the map's own fields rather than from
+/// `CollectionMap::refereed_fields`**, which returns names with the kinds
+/// flattened away — and a report that cannot say whether 'severity' is a
+/// counter or an attribute sends the reader back to the map to find out. The
+/// two lists are checked against each other by a test below, so this one
+/// cannot quietly stop covering a kind that `refereed_fields` gained.
+fn refereed_by_kind(map: &ferrostep_pocketbase::CollectionMap) -> Vec<(&'static str, String)> {
+    let mut out = vec![
+        ("the state column", map.state_field.clone()),
+        ("the version column", map.version_field.clone()),
+    ];
+    out.extend(map.counter_fields.iter().map(|n| ("counter", n.clone())));
+    out.extend(map.scope_fields.iter().map(|n| ("scope label", n.clone())));
+    out.extend(map.attribute_fields.iter().map(|n| ("attribute", n.clone())));
+    out
+}
+
+/// Run every check and render the report. `Err` when anything is a fault **or
+/// went unchecked** — a gate that passes because it could not look is the
+/// defect this command exists to remove, so both outcomes exit non-zero and
+/// the summary says which happened.
+fn doctor(
+    engine: &Engine,
+    ledger: &dyn Ledger,
+    map: Option<&ferrostep_pocketbase::CollectionMap>,
+) -> Result<String, String> {
+    // The one line that touches a store. Everything that decides an outcome
+    // is below it and takes the answer as a value.
+    let shape = ledger.store_shape().map_err(|e| e.to_string());
+    doctor_report(engine.def(), map, &shape)
+}
+
+/// The report and the verdict, from a definition, a mapping and whatever the
+/// store said — with no store in the signature.
+///
+/// ⚠ Split from [`doctor`] so the *verdict* is testable, not just the
+/// findings. The rule that an unchecked question fails is the one thing here
+/// most likely to be softened later by someone tidying up noisy output, and a
+/// test can only defend it if it can reach it.
+fn doctor_report(
+    def: &WorkflowDef,
+    map: Option<&ferrostep_pocketbase::CollectionMap>,
+    shape: &Result<StoreShape, String>,
+) -> Result<String, String> {
+    let findings = diagnose(def, map, shape);
+    let report = render_doctor(def, shape, &findings);
+    let faults = findings.iter().filter(|f| f.level == Level::Fault).count();
+    let unchecked = findings.iter().filter(|f| f.level == Level::Unchecked).count();
+    if faults + unchecked > 0 {
+        return Err(report);
+    }
+    Ok(report)
+}
+
+fn render_doctor(
+    def: &WorkflowDef,
+    shape: &Result<StoreShape, String>,
+    findings: &[Finding],
+) -> String {
+    let mut out = String::new();
+    match shape {
+        Ok(shape) => {
+            let _ = writeln!(out, "workflow '{}' against '{}'", def.name, shape.subject);
+        }
+        Err(why) => {
+            let _ = writeln!(out, "workflow '{}' against a store that did not answer", def.name);
+            let _ = writeln!(out, "  ⚠ {why}");
+        }
+    }
+
+    for section in SECTIONS {
+        let mine: Vec<&Finding> = findings.iter().filter(|f| f.section == section).collect();
+        if mine.is_empty() {
+            continue;
+        }
+        let _ = writeln!(out, "\n{section}:");
+        for finding in mine {
+            // Wrapped by hand rather than by a formatter: these lines are read
+            // in a terminal beside the file they are about.
+            let _ = writeln!(out, "  {} {}", finding.level.mark(), finding.text);
+        }
+    }
+
+    let count = |level: Level| findings.iter().filter(|f| f.level == level).count();
+    let (faults, unchecked, agreed) =
+        (count(Level::Fault), count(Level::Unchecked), count(Level::Agreed));
+    let _ = writeln!(out, "\n{faults} fault(s), {unchecked} unchecked, {agreed} agreed");
+    if unchecked > 0 {
+        let _ = writeln!(
+            out,
+            "⚠ An unchecked question is not a passing one. This exits non-zero for the same \
+             reason a fault does: nothing about it was verified."
+        );
+    }
+    out.trim_end().to_string()
 }
 
 /// What a definition asserts, in a form a person can read and search for.
@@ -1716,6 +2183,185 @@ mod tests {
             note_text(&flags_of(&[("note-file", ok.to_str().unwrap())])).unwrap().as_deref(),
             Some("a real reason")
         );
+    }
+
+    // ------------------------------------------------------------------
+    // doctor
+    // ------------------------------------------------------------------
+
+    /// A map with **one column of every kind**, deliberately. A kind the
+    /// fixture leaves empty is a kind these tests cannot see.
+    fn doctor_map() -> ferrostep_pocketbase::CollectionMap {
+        ferrostep_pocketbase::CollectionMap {
+            records: "tickets".to_string(),
+            events: "ticket_events".to_string(),
+            state_field: "stage".to_string(),
+            version_field: "fs_version".to_string(),
+            counter_fields: vec!["agent_passes".to_string()],
+            scope_fields: vec!["branch".to_string()],
+            attribute_fields: vec!["severity".to_string()],
+            guard_refereed_fields: false,
+        }
+    }
+
+    /// A store that agrees with [`doctor_map`] and with `review-loop.json`.
+    fn agreeing_shape() -> StoreShape {
+        let def = engine();
+        StoreShape {
+            subject: "tickets".to_string(),
+            accepted_states: Answer::Said(def.def().states.clone()),
+            columns: Answer::Said(BTreeMap::from([
+                ("stage".to_string(), "select".to_string()),
+                ("fs_version".to_string(), "number".to_string()),
+                ("agent_passes".to_string(), "number".to_string()),
+                ("branch".to_string(), "text".to_string()),
+                ("severity".to_string(), "text".to_string()),
+            ])),
+            writable: Answer::Said(BTreeMap::from([
+                ("counters".to_string(), vec!["agent_passes".to_string()]),
+                ("scope".to_string(), vec!["branch".to_string()]),
+                ("attributes".to_string(), vec!["severity".to_string()]),
+            ])),
+        }
+    }
+
+    /// The floor under every other test here: when everything agrees, this
+    /// passes and says so. Without it, a `doctor` that reported a fault on all
+    /// input would satisfy the negative tests below.
+    #[test]
+    fn a_definition_its_store_agrees_with_passes_and_states_what_it_checked() {
+        let engine = engine();
+        let report =
+            doctor_report(engine.def(), Some(&doctor_map()), &Ok(agreeing_shape())).expect("clean");
+        assert!(report.contains("0 fault(s), 0 unchecked"), "{report}");
+        // ⚠ Not merely "no complaints": the agreements are counted and shown,
+        // because a run that checked nothing also has no complaints.
+        let agreed: usize = report
+            .rsplit_once("unchecked, ")
+            .and_then(|(_, tail)| tail.split_whitespace().next())
+            .and_then(|n| n.parse().ok())
+            .expect("the summary states an agreed count");
+        assert!(agreed >= 8, "expected the checks to actually run, got {agreed}: {report}");
+    }
+
+    /// ⚠⚠ **THE FAILURE THIS COMMAND WAS BUILT FOR**, reported by the first
+    /// adopter at the moment of impact, 2026-08-27: a state added to a
+    /// definition whose store keeps its state column as a fixed value list.
+    /// Every transition into it would have been refused on the wire, and the
+    /// only thing that prevented it was the adopter happening to patch the
+    /// store by hand first, in the right order.
+    #[test]
+    fn a_state_the_store_would_refuse_is_a_fault_that_names_the_state() {
+        let mut def = engine().def().clone();
+        def.states.push("disputed".to_string());
+        let mut shape = agreeing_shape();
+        // The store is unchanged — which is the whole scenario.
+        shape.accepted_states = Answer::Said(engine().def().states.clone());
+
+        let report = doctor_report(&def, Some(&doctor_map()), &Ok(shape))
+            .expect_err("a state the store refuses is a fault");
+        assert!(report.contains("'disputed'"), "the fault must name the state: {report}");
+        assert!(report.contains("would be refused"), "{report}");
+        assert!(report.contains("1 fault(s)"), "{report}");
+    }
+
+    /// A ceiling that cannot be spent is not a ceiling. This one needs no
+    /// store at all, which is why it still runs when the store cannot answer.
+    #[test]
+    fn a_counter_with_no_column_is_a_fault_before_any_store_is_consulted() {
+        let mut map = doctor_map();
+        map.counter_fields.clear();
+
+        let unreachable: Result<StoreShape, String> = Err("no store here".to_string());
+        let report = doctor_report(engine().def(), Some(&map), &unreachable)
+            .expect_err("an unspendable ceiling is a fault");
+        assert!(report.contains("agent_passes"), "{report}");
+        assert!(report.contains("can never fire"), "{report}");
+        // And the store half is reported as unasked rather than omitted.
+        assert!(report.contains("never established"), "{report}");
+    }
+
+    /// ⚠⚠ **THE SILENT ONE.** A column declared in the map that the installed
+    /// file was generated before is accepted, dropped and answered 200 — the
+    /// defect that cost the first adopter a ceiling reading zero forever.
+    #[test]
+    fn a_column_the_installed_write_path_cannot_reach_is_a_fault_that_says_it_would_answer_200() {
+        let mut shape = agreeing_shape();
+        shape.writable = Answer::Said(BTreeMap::from([
+            ("counters".to_string(), Vec::new()),
+            ("scope".to_string(), vec!["branch".to_string()]),
+            ("attributes".to_string(), vec!["severity".to_string()]),
+        ]));
+
+        let report = doctor_report(engine().def(), Some(&doctor_map()), &Ok(shape))
+            .expect_err("an unreachable column is a fault");
+        assert!(report.contains("agent_passes"), "{report}");
+        assert!(report.contains("answered 200"), "{report}");
+        assert!(report.contains("Regenerate"), "the fault must say what to do: {report}");
+    }
+
+    /// ⚠⚠ **AN UNANSWERED QUESTION MUST NOT PASS.** This is the rule most
+    /// likely to be softened by somebody tidying up a noisy report, so it is
+    /// asserted on the *verdict* and not only on the text: a shape that knows
+    /// nothing produces **zero faults**, and must still fail.
+    #[test]
+    fn a_store_that_answered_nothing_fails_even_though_it_reported_no_faults() {
+        let knows_nothing = StoreShape {
+            subject: "tickets".to_string(),
+            ..Default::default()
+        };
+        let report = doctor_report(engine().def(), Some(&doctor_map()), &Ok(knows_nothing))
+            .expect_err("nothing verified is not a pass");
+        assert!(report.contains("0 fault(s)"), "the premise: no faults were found: {report}");
+        assert!(report.contains("3 unchecked"), "{report}");
+        assert!(report.contains("not a passing one"), "{report}");
+    }
+
+    /// The other side of that line, and the reason [`Answer`] has three
+    /// variants: a store that says it constrains nothing has **answered**, and
+    /// a definition cannot disagree with it. Reporting that as unchecked would
+    /// make `doctor` fail permanently on the zero-install path.
+    #[test]
+    fn a_store_that_constrains_nothing_passes_because_that_is_an_answer() {
+        let unconstrained = StoreShape {
+            subject: "ferrostep_records".to_string(),
+            accepted_states: Answer::NothingToConstrain,
+            columns: Answer::Said(BTreeMap::from([
+                ("state".to_string(), "text".to_string()),
+                ("counters".to_string(), "text".to_string()),
+            ])),
+            writable: Answer::NothingToConstrain,
+        };
+        let report = doctor_report(engine().def(), None, &Ok(unconstrained))
+            .expect("an unconstrained store is a pass, not an unknown");
+        assert!(report.contains("0 fault(s), 0 unchecked"), "{report}");
+        assert!(report.contains("constrains nothing"), "{report}");
+    }
+
+    /// ⚠⚠ **A REPORT THAT SKIPS A KIND OF COLUMN IS A CLEAN REPORT.** The
+    /// checker walks the map's fields by kind so it can say whether 'severity'
+    /// is a counter or an attribute; `refereed_fields` walks the same fields
+    /// with the kinds flattened away. Two walks over one structure is exactly
+    /// the shape that goes stale in the silent direction — a kind added to the
+    /// map reaches the guard, and the report keeps passing because it never
+    /// looked at it.
+    ///
+    /// The fixture holds one column of every kind on purpose: this assertion
+    /// is only as wide as the fixture is.
+    #[test]
+    fn the_report_covers_every_column_kind_the_referee_owns() {
+        let map = doctor_map();
+        let by_kind: std::collections::BTreeSet<String> =
+            refereed_by_kind(&map).into_iter().map(|(_, name)| name).collect();
+        let flattened: std::collections::BTreeSet<String> =
+            map.refereed_fields().into_iter().collect();
+        assert_eq!(
+            by_kind, flattened,
+            "every refereed column must be checked, and named with its kind"
+        );
+        // Floor: the sets agreeing is only meaningful if they are not empty,
+        // and the count is the number of kinds the fixture exercises.
+        assert_eq!(flattened.len(), 5, "the fixture must hold one column of every kind");
     }
 
     fn engine_with_rescopes() -> Engine {
