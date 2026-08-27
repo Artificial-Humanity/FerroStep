@@ -1,0 +1,125 @@
+# Review-lane findings routed here — the register
+
+**What this is.** The adopting loop's reviewer files findings against that
+loop. Those that are about **the loop's machinery rather than that project's
+own work** are FerroStep's R&D, and they land here.
+
+**Owner, 2026-08-27, verbatim:** *"If the review-lane is clearly related to
+FerroStep, it should come here. If it's a misconfiguration in Sonora, it
+should stay there but that would be the smaller share, by far."*
+
+⚠ **Why this did not exist until now, because the reason is load-bearing.** A
+standing instruction from **2026-08-24** told that loop's reviewer *not to
+spend findings on its workflow lane at all*. Both residents carried it as a
+standing prohibition on reviewing the lane. It was not one. The owner's own
+account, 2026-08-27: *"The earlier finding predated FerroStep... I didn't want
+the previous workflow that was created directly in Sonora to keep generating
+issues before we could get FerroStep, the successor, into place. Now that
+FerroStep is indeed the management tool, issues rightfully belong to us to
+help improve this product."*
+
+**It was a purpose-limited hold, and its purpose expired when this engine
+became the management tool.** Nobody wrote the condition down beside the rule,
+so the rule outlived it — and a hold with no stated expiry is indistinguishable
+from a prohibition from the moment its author stops watching. ⚠ **Write the
+condition next to the rule.** That is the transferable half and it cost two
+agents several days of correctly-followed, wrongly-scoped restraint.
+
+---
+
+## The routing test
+
+**Would the fix land in FerroStep, or in the adopting project?** Not *what is
+the finding about* and not *which directory does the file live in* — those
+were the two criteria the residents each proposed, and on the first real batch
+they disagreed about nearly half of it. The fix-location test answers the
+question the owner actually asked, which is **who takes it over**.
+
+Credit where it belongs: the adopting loop's resident proposed it, after
+measuring both earlier criteria against real findings rather than arguing them.
+
+⚠ **A finding can route here while its fix stays there.** Where the defect is
+in the adopter's own instrument but the *class* is the engine's business, the
+entry records the class and says plainly that the repair is not ours. Resist
+the drift the other way — "the class is general" is true of almost anything,
+and a test that admits everything is not a test.
+
+## ⚠⚠ Disclosure gate — read before adding an entry
+
+**This repository is public. The tracker those findings live on is not.**
+Moving an issue between internal systems publishes nothing; adding it here
+publishes it permanently, and deletion does not unpublish.
+
+So an entry states **the defect and the fix, described** — never a verbatim
+allowlist, deny rule, credential path, persona file path, hostname, service
+name or internal identifier. Several of the findings in the first batch are
+exactly those things: one is a literal tool-grant list, another is a path
+inside a persona.
+
+⚠ **The gate is here, in the file, rather than in anyone's habits** — the
+entries arrive from a loop whose residents are not the ones publishing them,
+and a disclosure rule held in context decays. If an entry cannot be written
+without quoting an internal, that entry does not belong here yet.
+
+⚠ **One deliberate exception, so nobody later reads it as an oversight or
+"corrects" it:** the owner's quotes above name the adopting project. That name
+is already in this repo's `CLAUDE.md`, so the quotes publish nothing new, and
+**editing a verbatim quote to scrub it would cost more than it saves** — an
+attributed ruling whose words have been adjusted is the thing this workspace
+has been burned by. Everything outside a direct quote says *the adopting loop*,
+which is the convention `adoption-friction.md` already holds.
+
+---
+
+## Entries
+
+### 1. Should the referee model harness grants, not only identity?
+
+**Status: an open scope question, deliberately not an inbox item.**
+
+**The finding, described.** In the adopting loop, a worker process is denied
+push access by a pattern-matched tool-grant rule. The documented way for that
+worker to commit — the form that carries its assigned author identity — is a
+spelling the deny pattern does not match. So the loop's own documentation
+instructs an invocation that walks through its own guard. The defect is real
+and the repair is the adopter's.
+
+**Why it is here anyway.** FerroStep resolves *who an actor is* — a roster
+entry, an identity, an environment. It has no concept of *what an actor may
+run*. There is no allowlist, no deny rule, and nothing in a definition's
+vocabulary that could express one; a definition speaks in counters, roles,
+states, transitions, terminal and halted sets, and rescope grants. So this
+finding has no home in the engine today, and taking it means **deciding the
+engine should have one** — which is a design question, not a routing outcome.
+
+**The argument for.** A referee for agent loops already decides which role may
+make which move. What a role may *execute* is the same question one layer
+down, and the adopter is currently answering it in a harness-specific pattern
+language whose matching behaviour surprised its own author. If the engine
+modelled grants, that surprise would be a definition error rather than a
+silent pass.
+
+**The argument against.** Tool grants are the harness's business and vary per
+harness far more than identity does. Modelling them risks the failure the
+standing interface rule names directly: *shape an interface around what the
+thing is, not around how one target delivers it.* An interface modelled on one
+agent harness's pattern syntax cannot reach the next one, and the corner is
+only visible from inside it.
+
+**Where it stands.** Owner, 2026-08-27, asked whether this was routing or new
+scope: *"Generally-speaking, these should go to Ozzy, in this case. However, in
+these early phases, we may miss very clear opportunities for improvement if we
+punt on these."* So the repair is the adopter's and the question is **open, not
+closed** — recorded here so it is not lost, and not treated as decided in
+either direction.
+
+⚠ Both residents independently reached *the finding is theirs, the lesson is
+ours* before the owner said it. That agreement is evidence the split is real;
+it is not a ruling, and neither of us should cite it as one.
+
+---
+
+*Further entries land as the adopting loop routes them. The sort for the first
+batch is agreed between the two residents but the findings themselves have
+only been read by one of us, so the reader who reviewed them holds the
+tiebreak.*
