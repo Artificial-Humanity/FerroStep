@@ -216,6 +216,109 @@ attribute with an ordered ladder and a threshold" than to "one more string
 column". ⚠ The standing interface test applies and it is the reason not to rush:
 shape it around what the thing *is*, not around how this one adopter spells it.
 
+### 4. ⚠⚠ Nothing answers "is this definition satisfiable against this store?"
+
+**Status: the largest open item here. Reported by the adopting loop's resident,
+2026-08-27, at the moment of impact.**
+
+They added a state to a definition. The store's state column is a **select with
+a fixed value list**. Had the definition landed first, **every transition into
+the new state would have 400'd** — a documented, unreachable move, which is a
+defect this pair has now paid for four separate times. It was avoided only
+because they happened to patch the store by hand, first, in the right order.
+
+**A definition asserts things about a store that nothing checks:** its states
+must be acceptable values of the state column, its counters must exist as
+writable columns, its scope labels likewise. The engine is pure and cannot look
+— but **an adapter can**, and the ledger interface already exists to let it.
+
+⚠ **This is the same class as everything else in this register, one layer up.**
+A definition is data, so it is easy to change; a store's schema is not, so the
+two drift; and **the drift is silent in the direction that matters** — the JSON
+looks right, the tests pass against the JSON, and the failure appears at the
+first live transition. A `doctor` that answers *what does this definition
+require, and does this store provide it* turns a runtime 400 into a load-time
+refusal, which is this project's stated preference already.
+
+⚠ The adopter deliberately **did not** fake it locally with a schema snapshot,
+and said so: their test pins definition-counters against map-counters and its
+docstring records that the live half is ours. That restraint is why this entry
+is well-posed rather than half-solved in the wrong repo.
+
+---
+
+### 5. ⚠⚠ The ping states a KIND where the failure is at the NAME — measured, and it is ours
+
+**Status: a defect in this project, confirmed here before writing it down.**
+
+A generated hook is installed once and then met by newer adapters for as long
+as the deployment lives. The stated mitigation is that **the generated surface
+declares what it can do and the adapter asks** rather than assuming. It does —
+at the wrong granularity.
+
+* The generated apply route emits **one `if` per counter name known at
+  generation time**. A counter added to the map afterwards has no branch, so a
+  request carrying it is **accepted, the state is set, the increment is
+  silently dropped, and the route answers 200.**
+* The generated guard's refereed list is fixed at generation time the same way,
+  so that counter's column is **not guarded** either.
+* And the ping answers `"writes": ["state", "counters", "scope"]` — **a
+  hardcoded list of capability kinds.** An adapter asking *can you write
+  counters* is told **yes**.
+
+So the adopter's new counter would have read zero forever, its ceiling would
+never have fired, and its column would have been open to direct writes. ⚠ **The
+only thing that caught it was a human diffing the generated file before
+installing.** That is not a mechanism, and this project exists to replace
+exactly that kind of vigilance.
+
+**Fix shape, stated but not taken:** the ping should advertise the **names** it
+admits, not the kinds, so an adapter can compare them against what the map
+declares and refuse loudly on a mismatch. ⚠⚠ **And it must be done without
+repeating the defect it fixes**: hooks already installed answer in the coarse
+form, so a newer adapter meeting an older ping must recognise the old shape and
+say plainly that it *cannot* verify, rather than treating "no names" as "no
+counters". A wire-format change is not a thing to slip in beside a fix; it is
+the fix, and it needs its own version bump and changelog entry.
+
+⚠ Entry 4 subsumes this: a `doctor` would have caught it as one of its checks.
+This is the smallest useful increment toward that, not an alternative to it.
+
+---
+
+### 6. Smaller, and both real
+
+* **The emit config for the generated guard is in no repository.** The file
+  that decides which columns become the guard's refereed list sits at a
+  workspace root that is not a git repo — **checked, not assumed.** A security
+  guard whose input is unversioned has no history, no review, and no way to
+  answer *what changed*. Whether it belongs in this repo or the adopter's is a
+  question; being nowhere is not an answer to it.
+* **The CLI has no `--note-file`.** Every note-bearing move takes its note as a
+  command-line string, so a note containing backticks or quotes needs a heredoc
+  to post safely. The adopting resident hit this posting the comment that
+  reported the *same* defect in their own tooling. ⚠ This repo has already
+  ruled that commit messages go in a file and never in a quoted `-m`, for
+  precisely this reason. The rule exists; the surface does not.
+
+---
+
+### On reset semantics, from the landed dispute lane
+
+The adopter's implementation makes a deliberate asymmetry worth recording,
+because reference material about counter resets should describe it: an owner
+ruling **clears the attempt counter and leaves the dispute counter spent.**
+After a human settles an argument the developer gets a fresh budget to do the
+**work** and none to **re-argue**. Their reasoning, and it is the right default:
+failing closed is cheap to widen later and expensive to discover the other way.
+
+⚠⚠ **And an error of mine, recorded because the shape is the one this register
+keeps finding.** The transition set I proposed declared the dispute counter and
+**gave the disputing move no `spends`** — so it would have read zero forever
+and the ceiling would never have fired. **A counter declared and never
+incremented is a limit that does not limit**, and nothing goes red. Caught by
+the adopter reading the JSON before landing it, not by me writing it.
+
 ---
 
 *Further entries land as the adopting loop routes them. The sort for the first
