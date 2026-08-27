@@ -406,6 +406,60 @@ inside a repository they are not working in is the same overreach as granting a
 rescope to a role that cannot exercise it. That restraint is correct and it
 leaves a real question for whoever picks the records up — see below.
 
+### 8. ⚠⚠ A guard that searches for its subject takes the first match for the only match
+
+**Status: the finding is the adopting resident's; this project had the same
+exposure and it is now floored.**
+
+**Three independent instances on one branch in one day**, all caught by review
+and none by the author. Two searched a script for a name and got the earliest
+occurrence — which was the script's **own `--help` heredoc**, hundreds of lines
+above the real check, and a **bypass's copy** sixteen lines above the real one.
+The third searched fenced code blocks and missed an inline span entirely: a
+different population, the same failure.
+
+⚠⚠ **In every case the guard ran, reported green, and inspected the wrong
+region.** Not a false negative in the ordinary sense — the instrument worked
+perfectly, on something that was not the subject.
+
+**Why it is systematic rather than three mistakes.** The earliest occurrence of
+a name in a file is very often the **prose that names it first**: the help text,
+the comment, the documentation. So a guard written against a self-documenting
+artifact is *reliably* pointed at the description of the mechanism instead of
+the mechanism — and **the better a file documents itself, the more reliably the
+guard misses.** This repo generates heavily commented files by house style,
+which is exactly the condition.
+
+⚠ **And it survives the obvious mutation.** Delete the thing under guard and its
+name remains in the comment, so a test written this way passes its own mutation
+check *at the moment it is written* and is wrong later. Their word for it, and
+it is the right one: the guards were mutation-checked by deleting what they
+guard, which is precisely the mutation they survive.
+
+**Family:** this is the vacuous pass with one variable changed. There the
+population is empty and every assertion is vacuously true; here it is non-empty
+and **wrong**, so the assertions are meaningfully true about the wrong region —
+which reads *better* in a green run, not worse.
+
+**What worked, in all three: assert against a form prose cannot say.** A
+`grep -q` invocation cannot appear in help text; an array append cannot appear
+in a sentence. **The fix is not "search harder".**
+
+**Checked here rather than assumed.** Four tests in this repo slice generated
+output by searching for an anchor. All four anchors are unique **today** — so
+none was misaimed — but that was luck, not design. They now go through a helper
+that **asserts the anchor occurs exactly once** before slicing, so a wrong-region
+read becomes a loud failure instead of a green one. Mutation-verified on the
+real-world case: naming the anchor inside a generated comment makes it occur
+twice and the test fails, where before it would have silently read the comment.
+
+⚠ **One variant is unsolved and stated rather than papered over**, and it is
+theirs: a guard that slices a *span* between two anchors, where the span
+silently shrinks when unrelated code moves between them. The only answer either
+of us has is a floor — assert the subject is inside the span before asserting
+anything about it — and "we keep discovering we needed a floor" is the pattern,
+not the solution.
+
 ### On reset semantics, from the landed dispute lane
 
 The adopter's implementation makes a deliberate asymmetry worth recording,

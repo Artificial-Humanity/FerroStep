@@ -2095,6 +2095,34 @@ mod tests {
         assert!(no_map.contains("unit-of-work moves:"), "{no_map}");
     }
 
+    /// ⚠⚠ **SLICE ON AN ANCHOR ONLY IF THE ANCHOR IS UNIQUE.** A guard that
+    /// searches for its subject takes the first match for the only match, and
+    /// the earliest occurrence of a name in a self-documenting file is very
+    /// often the **comment or help text that names it first** — so the better a
+    /// file documents itself, the more reliably a guard written against it
+    /// inspects the prose about the mechanism instead of the mechanism.
+    ///
+    /// ⚠ **It survives the obvious mutation.** Deleting the thing under guard
+    /// leaves its name behind in the comment, so a test written this way passes
+    /// its own mutation check at the moment it is written and is wrong later.
+    ///
+    /// ⚠ This is [[empty enumeration]] with one variable changed: there the
+    /// population is empty and every assertion is vacuously true; here it is
+    /// non-empty and **wrong**, so the assertions are meaningfully true about
+    /// the wrong region — which reads better in a green run, not worse.
+    ///
+    /// Found by the adopting loop's resident, 2026-08-27, as three independent
+    /// instances on one branch — all caught by review, none by the author. The
+    /// anchors below are unique today; this makes that a checked property
+    /// rather than a lucky one.
+    fn slice_once<'a>(text: &'a str, open: &str, close: char) -> &'a str {
+        let hits = text.matches(open).count();
+        assert_eq!(hits, 1, "anchor {open:?} occurs {hits} times — a slice on it would read the wrong region");
+        let (_, tail) = text.split_once(open).expect("anchor counted but not found");
+        let (inner, _) = tail.split_once(close).expect("anchor has no closing delimiter");
+        inner
+    }
+
     fn cli_test_map(guard: bool) -> ferrostep_pocketbase::CollectionMap {
         ferrostep_pocketbase::CollectionMap {
             records: "tickets".to_string(),
@@ -2123,11 +2151,7 @@ mod tests {
             None,
             &ferrostep_pocketbase::ActorBinding::default(),
         );
-        let guarded = hooks
-            .split_once("const REFEREED = [")
-            .and_then(|(_, tail)| tail.split_once(']'))
-            .map(|(list, _)| list.to_string())
-            .expect("the guard's field list is not where this test looks for it");
+        let guarded = slice_once(&hooks, "const REFEREED = [", ']').to_string();
         let out = explain(&engine(), Some(&map));
         // ⚠ A floor first: an empty list would satisfy every containment
         // check below and prove nothing.

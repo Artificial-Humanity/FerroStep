@@ -1725,6 +1725,34 @@ mod tests {
         )
     }
 
+    /// ⚠⚠ **SLICE ON AN ANCHOR ONLY IF THE ANCHOR IS UNIQUE.** A guard that
+    /// searches for its subject takes the first match for the only match, and
+    /// the earliest occurrence of a name in a self-documenting file is very
+    /// often the **comment or help text that names it first** — so the better a
+    /// file documents itself, the more reliably a guard written against it
+    /// inspects the prose about the mechanism instead of the mechanism.
+    ///
+    /// ⚠ **It survives the obvious mutation.** Deleting the thing under guard
+    /// leaves its name behind in the comment, so a test written this way passes
+    /// its own mutation check at the moment it is written and is wrong later.
+    ///
+    /// ⚠ This is [[empty enumeration]] with one variable changed: there the
+    /// population is empty and every assertion is vacuously true; here it is
+    /// non-empty and **wrong**, so the assertions are meaningfully true about
+    /// the wrong region — which reads better in a green run, not worse.
+    ///
+    /// Found by the adopting loop's resident, 2026-08-27, as three independent
+    /// instances on one branch — all caught by review, none by the author. The
+    /// anchors below are unique today; this makes that a checked property
+    /// rather than a lucky one.
+    fn slice_once<'a>(text: &'a str, open: &str, close: char) -> &'a str {
+        let hits = text.matches(open).count();
+        assert_eq!(hits, 1, "anchor {open:?} occurs {hits} times — a slice on it would read the wrong region");
+        let (_, tail) = text.split_once(open).expect("anchor counted but not found");
+        let (inner, _) = tail.split_once(close).expect("anchor has no closing delimiter");
+        inner
+    }
+
     fn tickets_map() -> CollectionMap {
         CollectionMap {
             records: "tickets".to_string(),
@@ -1759,11 +1787,7 @@ mod tests {
     fn a_guarded_attribute_column_is_also_writable_through_the_route() {
         let hooks =
             hooks_file_mapped(&guarded_map(), None, &ActorBinding::default());
-        let refereed = hooks
-            .split_once("const REFEREED = [")
-            .and_then(|(_, tail)| tail.split_once(']'))
-            .map(|(list, _)| list.to_string())
-            .expect("the guard's field list moved");
+        let refereed = slice_once(&hooks, "const REFEREED = [", ']').to_string();
         assert!(refereed.contains("\"severity\""), "guard does not close it: {refereed}");
         assert!(
             hooks.contains(r#"body.attributes["severity"]"#),
@@ -1823,11 +1847,7 @@ mod tests {
     /// the kind list name it", not "does the token occur somewhere"** — the
     /// same axis a guard in this workspace already died on.
     fn ping_writes(hooks: &str) -> String {
-        hooks
-            .split_once(r#""writes": ["#)
-            .and_then(|(_, tail)| tail.split_once(']'))
-            .map(|(list, _)| list.to_string())
-            .expect("no ping `writes` list in the generated file")
+        slice_once(hooks, r#""writes": ["#, ']').to_string()
     }
 
     #[test]
@@ -1854,11 +1874,7 @@ mod tests {
     #[test]
     fn the_ping_states_the_column_names_it_can_actually_write() {
         let hooks = hooks_file_mapped(&guarded_map(), None, &ActorBinding::default());
-        let columns = hooks
-            .split_once(r#""columns": "#)
-            .and_then(|(_, tail)| tail.split_once('}'))
-            .map(|(obj, _)| obj.to_string())
-            .expect("the ping states no column names");
+        let columns = slice_once(&hooks, r#""columns": "#, '}').to_string();
         assert!(columns.contains(r#""attempts""#), "counter not named: {columns}");
         assert!(columns.contains(r#""lane""#), "scope label not named: {columns}");
         assert!(columns.contains(r#""severity""#), "attribute not named: {columns}");
