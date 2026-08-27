@@ -1749,8 +1749,38 @@ mod tests {
         let hits = text.matches(open).count();
         assert_eq!(hits, 1, "anchor {open:?} occurs {hits} times — a slice on it would read the wrong region");
         let (_, tail) = text.split_once(open).expect("anchor counted but not found");
-        let (inner, _) = tail.split_once(close).expect("anchor has no closing delimiter");
-        inner
+        // ⚠⚠ THE MATCHING CLOSE, NOT THE FIRST ONE. Slicing to the first `]`
+        // or `}` is the span variant of the same defect: nest one structure
+        // inside the region and the span **silently shrinks**, so the guard
+        // goes on asserting about a region that no longer holds its subject —
+        // and it shrinks in the direction that keeps the test green.
+        //
+        // ⚠ `open` must end with the opening delimiter (so `tail` begins INSIDE
+        // the region at depth zero); the assertion below is what enforces that
+        // rather than trusting each call site to remember.
+        let opener = match close {
+            ']' => '[',
+            '}' => '{',
+            ')' => '(',
+            other => panic!("slice_once has no opener for {other:?}"),
+        };
+        assert!(
+            open.ends_with(opener),
+            "anchor {open:?} must end with {opener:?} so the scan starts inside the region"
+        );
+        let mut depth = 0usize;
+        for (i, ch) in tail.char_indices() {
+            if ch == opener {
+                depth += 1;
+            } else if ch == close {
+                if depth == 0 {
+                    assert!(!tail[..i].is_empty(), "anchor {open:?} spans nothing");
+                    return &tail[..i];
+                }
+                depth -= 1;
+            }
+        }
+        panic!("anchor {open:?} has no matching {close:?}")
     }
 
     fn tickets_map() -> CollectionMap {
@@ -1874,7 +1904,7 @@ mod tests {
     #[test]
     fn the_ping_states_the_column_names_it_can_actually_write() {
         let hooks = hooks_file_mapped(&guarded_map(), None, &ActorBinding::default());
-        let columns = slice_once(&hooks, r#""columns": "#, '}').to_string();
+        let columns = slice_once(&hooks, r#""columns": {"#, '}').to_string();
         assert!(columns.contains(r#""attempts""#), "counter not named: {columns}");
         assert!(columns.contains(r#""lane""#), "scope label not named: {columns}");
         assert!(columns.contains(r#""severity""#), "attribute not named: {columns}");

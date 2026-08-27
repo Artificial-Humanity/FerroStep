@@ -453,12 +453,29 @@ read becomes a loud failure instead of a green one. Mutation-verified on the
 real-world case: naming the anchor inside a generated comment makes it occur
 twice and the test fails, where before it would have silently read the comment.
 
-⚠ **One variant is unsolved and stated rather than papered over**, and it is
-theirs: a guard that slices a *span* between two anchors, where the span
-silently shrinks when unrelated code moves between them. The only answer either
-of us has is a floor — assert the subject is inside the span before asserting
-anything about it — and "we keep discovering we needed a floor" is the pattern,
-not the solution.
+⚠ **The span variant is theirs, and one sub-case of it is now solved rather
+than floored.** Their form: a guard slices the region *between two anchors* and
+the span silently shrinks when unrelated code moves between them.
+
+**Where the closing anchor is a structural delimiter, a floor is the wrong
+answer and a balanced scan is the right one.** Slicing to the *first* `]` or
+`}` shrinks the moment anything nests inside the region — and shrinks in the
+direction that keeps the guard green. The slice helper here now walks to the
+**matching** delimiter, tracking depth, and asserts the anchor ends with its
+opener so the scan provably starts inside the region.
+
+⚠ Demonstrated as a contrast rather than asserted, and the first battery was
+wrong: the two mutations were run separately and both passed, because nesting
+alone is handled and a first-match close has nothing to trip on without
+nesting. **The defect needs both.** Run together — nesting present *and* the
+close reverted to first-match — the test fails by name.
+
+⚠⚠ **The general case is still open and this does not close it.** Their
+instances anchored on arbitrary strings, not delimiters, and nothing balances
+`MUST-NOT-LAND` against a later line. For those the only answer either of us
+has is a floor — assert the subject is inside the span before asserting
+anything about it — and *"we keep discovering we needed a floor"* is the
+pattern, not the solution.
 
 ### On reset semantics, from the landed dispute lane
 
