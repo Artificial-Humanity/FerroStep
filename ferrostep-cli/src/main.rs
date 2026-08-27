@@ -76,7 +76,7 @@ COMMON:
                         role to ask what is waiting on that actor instead.
 
 file:                          (also spelled `create`; files a new record)
-  --role <role> [--note <text>] [--actor <name>] [--scope …]
+  --role <role> [--note <text> | --note-file <path>] [--actor <name>] [--scope …]
   [--counter <name=value> …]   what a filing ceiling is measured against.
                                Required for every counter the definition's
                                `creation.spends` names: the count bounds a
@@ -84,10 +84,10 @@ file:                          (also spelled `create`; files a new record)
                                tool cannot take it for you — see `explain`.
 
 move:
-  --record <id> --role <role> --to <state> [--note <text>] [--actor <name>]
+  --record <id> --role <role> --to <state> [--note <text> | --note-file <path>] [--actor <name>]
 
 rescope:                       (move a record to a different unit of work)
-  --record <id> --role <role> --set <label=value> [--set …] [--note <text>]
+  --record <id> --role <role> --set <label=value> [--set …] [--note <text> | --note-file <path>]
   [--actor <name>]
 
 notify:
@@ -197,19 +197,53 @@ impl Flags {
 /// Every flag each subcommand reads. ⚠ Derived into the refusal message, so a
 /// flag added to a command without being listed here is refused rather than
 /// silently working — which is the safe direction for the mistake to fall.
+/// Resolve the move's reason from `--note` or `--note-file`.
+///
+/// ⚠ **Both set is a refusal, not a preference.** Silently choosing one is how
+/// a caller ends up recording a reason it did not write, and which one a reader
+/// would guess is not something to leave to a reader.
+///
+/// ⚠⚠ **An unreadable or empty file is a refusal too, and that is the load-
+/// bearing part.** Some moves REQUIRE a note. If a missing path or an empty
+/// file quietly resolved to "no note", the engine would refuse with *needs a
+/// reason* — a true statement pointing at the wrong cause, and the caller would
+/// go looking at their definition instead of their path. Worse where a note is
+/// optional: the move would land with its reason silently dropped.
+fn note_text(flags: &Flags) -> Result<Option<String>, String> {
+    match (flags.get("note"), flags.get("note-file")) {
+        (Some(_), Some(_)) => Err(
+            "--note and --note-file are both set; use one. The reason for a move is \
+             recorded verbatim, so which of the two was meant is not a guess worth making."
+                .to_string(),
+        ),
+        (_, Some(path)) => {
+            let body = std::fs::read_to_string(path)
+                .map_err(|e| format!("--note-file '{path}' could not be read: {e}"))?;
+            if body.trim().is_empty() {
+                return Err(format!(
+                    "--note-file '{path}' is empty. A move that requires a reason would be \
+                     refused for the wrong cause, and one that does not would record nothing."
+                ));
+            }
+            Ok(Some(body.trim_end().to_string()))
+        }
+        (note, None) => Ok(note.map(str::to_string)),
+    }
+}
+
 fn accepted_flags(command: &str) -> &'static [&'static str] {
     const LEDGER: [&str; 5] = ["workflow", "store", "token", "map", "scope"];
     match command {
         "awaiting" => &["workflow", "store", "token", "map", "scope", "role"],
         "audit" => &LEDGER,
         "file" | "create" => {
-            &["workflow", "store", "token", "map", "scope", "role", "counter", "note", "actor"]
+            &["workflow", "store", "token", "map", "scope", "role", "counter", "note", "actor", "note-file"]
         }
         "move" => {
-            &["workflow", "store", "token", "map", "scope", "record", "role", "to", "note", "actor"]
+            &["workflow", "store", "token", "map", "scope", "record", "role", "to", "note", "actor", "note-file"]
         }
         "rescope" => {
-            &["workflow", "store", "token", "map", "scope", "record", "role", "set", "note", "actor"]
+            &["workflow", "store", "token", "map", "scope", "record", "role", "set", "note", "actor", "note-file"]
         }
         "notify" => {
             &["workflow", "store", "token", "map", "scope", "role", "ntfy", "topic", "ntfy-token"]
@@ -272,6 +306,15 @@ fn run(args: &[String]) -> Result<String, String> {
             .ok_or(format!("--scope takes key=value, got '{pair}'"))?;
         scope = scope.with(key, value);
     }
+    // ⚠⚠ A NOTE THAT CANNOT SURVIVE A SHELL IS A NOTE PEOPLE DO NOT WRITE.
+    // Every note-bearing move takes its reason as a command-line string, so a
+    // reason containing backticks or quotes needs a heredoc to post safely —
+    // and the first adopter hit exactly that posting the comment that reported
+    // the same defect in their own tooling. This repo already ruled that a
+    // commit message goes in a file and never in a quoted `-m`, for precisely
+    // this reason; the rule existed and the surface did not.
+    let note = note_text(&flags)?;
+
     match command.as_str() {
         "awaiting" => {
             let rows = records_with_status(&engine, ledger.as_ref(), &scope, false)?;
@@ -293,7 +336,7 @@ fn run(args: &[String]) -> Result<String, String> {
                 &scope,
                 role,
                 flags.all("counter"),
-                flags.get("note"),
+                note.as_deref(),
                 flags.get("actor").unwrap_or(role),
             )
         }
@@ -305,7 +348,7 @@ fn run(args: &[String]) -> Result<String, String> {
                 flags.require("record")?,
                 role,
                 flags.require("to")?,
-                flags.get("note"),
+                note.as_deref(),
                 flags.get("actor").unwrap_or(role),
             )
         }
@@ -317,7 +360,7 @@ fn run(args: &[String]) -> Result<String, String> {
                 flags.require("record")?,
                 role,
                 flags.all("set"),
-                flags.get("note"),
+                note.as_deref(),
                 flags.get("actor").unwrap_or(role),
             )
         }
@@ -1479,6 +1522,105 @@ mod tests {
 
     /// The reference loop plus permission to move a record between units of
     /// work, which the shipped example deliberately does not grant.
+    /// ⚠⚠ **A FLAG THE HELP TEXT NEVER MENTIONS IS A FLAG NOBODY RUNS.** This
+    /// workspace spent a day on the same shape one layer up: a 469-line driver
+    /// that was named in three files, in the third person, and driven by hand
+    /// for six reviews because **no line ever showed a reader a command they
+    /// could copy.** The string being present is not the affordance.
+    ///
+    /// ⚠ The population is derived from `accepted_flags`, so adding a
+    /// subcommand or a flag arms this check by existing — nobody has to
+    /// remember a list. `ntfy-token` is the one exemption and it is named
+    /// rather than filtered by a pattern, so an exemption cannot grow silently.
+    #[test]
+    fn every_accepted_flag_is_named_in_the_usage_text() {
+        const COMMANDS: [&str; 8] =
+            ["awaiting", "audit", "file", "create", "move", "rescope", "notify", "explain"];
+        let mut missing: Vec<String> = Vec::new();
+        let mut checked = 0usize;
+        for command in COMMANDS {
+            for flag in accepted_flags(command) {
+                if *flag == "ntfy-token" {
+                    continue; // documented as part of `--ntfy`'s paragraph.
+                }
+                checked += 1;
+                if !USAGE.contains(&format!("--{flag}")) {
+                    missing.push(format!("{command}: --{flag}"));
+                }
+            }
+        }
+        // ⚠ Floor FIRST. `accepted_flags` returning empty slices would leave
+        // `missing` empty and this test green while checking nothing — the
+        // vacuous pass this repo keeps re-finding.
+        assert!(checked >= 20, "only {checked} flags enumerated; the listing is broken");
+        assert!(missing.is_empty(), "accepted but undocumented: {missing:?}");
+    }
+
+    fn flags_of(pairs: &[(&str, &str)]) -> Flags {
+        let mut argv: Vec<String> = Vec::new();
+        for (k, v) in pairs {
+            argv.push(format!("--{k}"));
+            argv.push(v.to_string());
+        }
+        Flags::parse(&argv).expect("fixture flags must parse")
+    }
+
+    /// ⚠ A reason containing backticks or quotes cannot go on a command line
+    /// without a heredoc, and the first adopter hit that posting the comment
+    /// that reported the same defect in their own tooling.
+    #[test]
+    fn a_note_can_come_from_a_file_and_keeps_what_a_shell_would_have_eaten() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("note.md");
+        let awkward = "the `if` at 209 — \"quoted\", $HOME, and a trailing newline\n";
+        std::fs::write(&path, awkward).unwrap();
+        let note = note_text(&flags_of(&[("note-file", path.to_str().unwrap())])).unwrap();
+        assert_eq!(note.as_deref(), Some(awkward.trim_end()));
+    }
+
+    /// ⚠⚠ Both set is a refusal. Silently preferring one records a reason the
+    /// caller did not write, and which one a reader would guess is not
+    /// something to leave to a reader.
+    #[test]
+    fn a_note_given_twice_is_refused_rather_than_resolved() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("note.md");
+        std::fs::write(&path, "from the file").unwrap();
+        let err = note_text(&flags_of(&[
+            ("note", "from the flag"),
+            ("note-file", path.to_str().unwrap()),
+        ]))
+        .expect_err("both set must refuse");
+        assert!(err.contains("both set"), "{err}");
+    }
+
+    /// ⚠⚠ The load-bearing refusals. A missing path or an empty file resolving
+    /// to "no note" makes the engine refuse a required-note move for the wrong
+    /// cause — a true message pointing at the definition when the fault is the
+    /// path — or lets an optional-note move land with its reason dropped.
+    #[test]
+    fn an_unreadable_or_empty_note_file_is_refused_and_names_the_path() {
+        let missing = note_text(&flags_of(&[("note-file", "/nonexistent/note.md")]))
+            .expect_err("a missing file must refuse");
+        assert!(missing.contains("/nonexistent/note.md"), "does not name the path: {missing}");
+
+        let dir = tempfile::tempdir().unwrap();
+        let blank = dir.path().join("blank.md");
+        std::fs::write(&blank, "   \n\t\n").unwrap();
+        let err = note_text(&flags_of(&[("note-file", blank.to_str().unwrap())]))
+            .expect_err("whitespace is not a reason");
+        assert!(err.contains("is empty"), "{err}");
+
+        // ⚠ Floor: the happy path must still work, or every assertion above is
+        // satisfied by a resolver that refuses everything.
+        let ok = dir.path().join("ok.md");
+        std::fs::write(&ok, "a real reason").unwrap();
+        assert_eq!(
+            note_text(&flags_of(&[("note-file", ok.to_str().unwrap())])).unwrap().as_deref(),
+            Some("a real reason")
+        );
+    }
+
     fn engine_with_rescopes() -> Engine {
         let mut def =
             WorkflowDef::from_json(include_str!("../../examples/review-loop.json")).unwrap();

@@ -325,6 +325,14 @@ say plainly that it *cannot* verify, rather than treating "no names" as "no
 counters". A wire-format change is not a thing to slip in beside a fix; it is
 the fix, and it needs its own version bump and changelog entry.
 
+✅ **And the design paid out the same day, from the adopting resident.** Their
+board answers in the old kinds-only shape, so **the installed file's silence
+about names is itself the diagnosis** — they did not have to ask a binary what
+it supported. An adapter that reads that silence as *cannot verify* gets that
+for free; one that read it as *nothing to write* would have been confidently
+wrong about a deployment that was fine. **Absence must never be read as
+refusal**, and this is the case that shows why.
+
 ⚠ Entry 4 subsumes this: a `doctor` would have caught it as one of its checks.
 This is the smallest useful increment toward that, not an alternative to it.
 

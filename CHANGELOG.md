@@ -7,6 +7,24 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-cli`: **`--note-file` on every move that takes a reason**, and a
+  guard that no accepted flag is missing from the help text. A reason
+  containing backticks or quotes could not survive a command line without a
+  heredoc — the first adopter hit that posting the comment that reported the
+  same defect in their own tooling. ⚠ This repo had already ruled that a commit
+  message goes in a file and never in a quoted `-m`, for exactly this reason:
+  **the rule existed and the surface did not.**
+  ⚠⚠ **Both flags set is a refusal, and so is an unreadable or empty file.**
+  Silently preferring one records a reason the caller did not write. And a
+  missing path quietly resolving to "no note" would make the engine refuse a
+  required-note move for the *wrong cause* — a true message pointing at the
+  definition when the fault is the path.
+  ⚠ The documentation guard derives its population from `accepted_flags`, so a
+  new flag arms it by existing. **A flag the help text never mentions is a flag
+  nobody runs** — the same shape as a driver named in three files, in the third
+  person, and driven by hand because no line ever showed a reader a command
+  they could copy.
+
 - `ferrostep-pocketbase`: **the wire's refusal prefixes are a contract, with one
   derivation.** `CAS_CONFLICT`, `NO_RECORD` and `ROLE_NOT_YOURS` are public
   constants; the generated JavaScript interpolates them and the adapter matches
