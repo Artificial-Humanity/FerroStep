@@ -1373,6 +1373,18 @@ pub fn hooks_file_mapped(
         json_list(&map.scope_fields),
         json_list(&map.attribute_fields),
     );
+    // ⚠ Joined, and empties dropped, so a map that declares no columns of some
+    // kind does not leave a blank line behind in the generated file. Cosmetic,
+    // and worth it for one reason: this file is READ AS A DIFF before it is
+    // installed, and every line of noise in that diff is a line an operator has
+    // to account for before they can approve the real change. The first adopter
+    // read a three-change diff and had to rule out a stray blank line to get
+    // there.
+    let column_sets = [counter_sets, scope_sets, attribute_sets]
+        .into_iter()
+        .filter(|block| !block.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
     let schema_route = schema_route_js(records, records, state, version);
     let writes_list = if map.attribute_fields.is_empty() {
         r#"["state", "counters", "scope"]"#
@@ -1415,9 +1427,7 @@ routerAdd("POST", "/api/ferrostep/{records}/apply", (e) => {{
             throw new BadRequestError("{cas_conflict}: expected " + expected + ", found " + held);
         }}
         rec.set("{state}", String(body.state));
-{counter_sets}
-{scope_sets}
-{attribute_sets}
+{column_sets}
         rec.set("{version_field}", held + 1);
         txApp.save(rec);
         let seq = 1;
@@ -2242,7 +2252,11 @@ mod tests {
     /// the subject being deleted. That shape has already been found in this
     /// repo's own checks three times.
     fn route_block<'a>(hooks: &'a str, path: &str) -> &'a str {
-        let anchor = format!("routerAdd(\"GET\", \"{path}\"");
+        // ⚠ The METHOD is not part of the anchor. It used to be, hardcoded to
+        // GET, so asking for a POST route sliced nothing and the uniqueness
+        // assertion below reported "0 occurrences" — which is the assertion
+        // doing its job, and the reason it is worth having.
+        let anchor = format!("\"{path}\"");
         assert_eq!(
             hooks.matches(&anchor).count(),
             1,
@@ -2255,8 +2269,41 @@ mod tests {
         // the other saw an anonymous one.
         route_blocks(hooks)
             .into_iter()
-            .find(|block| block.starts_with(&anchor))
-            .expect("the block starting at a unique anchor")
+            .find(|block| block.contains(&anchor))
+            .expect("the block naming a unique path")
+    }
+
+    /// ⚠ **The generated file is READ AS A DIFF before it is installed**, so
+    /// every line of noise in it is a line an operator has to rule out before
+    /// they can approve the real change. A map that declares no columns of some
+    /// kind used to leave a blank line where that kind's branches would have
+    /// been — cosmetic, and it cost the first adopter a line of a three-change
+    /// diff on a shared service.
+    #[test]
+    fn a_kind_the_map_declares_nothing_for_leaves_no_gap_in_the_generated_file() {
+        let mut map = tickets_map();
+        map.attribute_fields.clear();
+        let hooks = hooks_file_mapped(&map, None, &ActorBinding::default());
+
+        let apply = route_block(&hooks, "/api/ferrostep/tickets/apply");
+        let body = apply
+            .split_once(r#"rec.set("stage", String(body.state));"#)
+            .expect("the apply route sets the state column")
+            .1;
+        let sets = body
+            .split_once(r#"rec.set("fs_version""#)
+            .expect("and then the version column")
+            .0;
+        assert!(
+            !sets.contains("\n\n"),
+            "an undeclared kind left a blank line in the column writes: {sets:?}"
+        );
+
+        // ⚠ Floor: the assertion above passes on an empty region, so prove the
+        // region is the one that carries the writes.
+        assert!(sets.contains(r#"body.counters["attempts"]"#), "{sets}");
+        assert!(sets.contains(r#"body.scope["lane"]"#), "{sets}");
+        assert!(!sets.contains("severity"), "the fixture cleared attributes: {sets}");
     }
 
     /// ⚠⚠ **THE ONE ROUTE WHOSE ANSWER MUST NOT BE A CONSTANT.** Every other
