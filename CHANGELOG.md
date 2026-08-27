@@ -7,6 +7,30 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-pocketbase`: **the ping states which COLUMNS an installed file can
+  write, and the adapter refuses by name.** `writes` answers in kinds — *state,
+  counters, scope* — and that granularity was measured wrong. A mapped file
+  carries one branch per column name known when it was generated, so a counter
+  added to a map afterwards is **accepted, silently dropped, and answered
+  200**: the ceiling never fires and the column is never guarded, while `writes`
+  still says "counters" and the adapter is told yes. Found by the first adopter
+  adding a counter to a live lane; the only thing that caught it was a person
+  diffing the generated file before installing.
+  ⚠ **A new `columns` key rather than a changed `writes`.** An older adapter
+  reading `writes` sees exactly what it saw before, and a newer one finding no
+  `columns` knows it **cannot verify** rather than concluding there is nothing
+  to write. Fixing a compatibility defect incompatibly would be the same
+  mistake twice. Absence is never read as refusal.
+
+- `ferrostep-ledger`: **`LedgerError::Unsupported` now carries `String`**
+  (was `&'static str`). ⚠ **Source-breaking for anything constructing it** —
+  a literal needs `.to_string()`. The reason is the entry above: every refusal
+  was forced to be a fixed sentence, so the one that matters most could not say
+  *which* column an installed file was unable to write, only that some column
+  was. An adapter's job here is to state capabilities honestly, and a refusal
+  that cannot name its subject sends the reader looking for what it already
+  knew. Matches `Transport` and `Malformed`, which are owned already.
+
 - `ferrostep-pocketbase`: **`CollectionMap.attribute_fields` — a refereed column
   the engine has no opinion about. A deliberate, labelled stopgap** (owner,
   2026-08-27). A lane can gate on a column that is none of state, version,

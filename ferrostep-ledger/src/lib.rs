@@ -245,7 +245,15 @@ pub enum LedgerError {
     /// not an event; there is nothing to persist and nothing to append.
     NothingToApply,
     /// The store cannot do what was asked. Saying so beats approximating it.
-    Unsupported(&'static str),
+    ///
+    /// ⚠ **Owned, so a refusal can name the thing it refused.** It was
+    /// `&'static str`, which forced every refusal to be a fixed sentence — and
+    /// the one that mattered most could not say WHICH column an installed file
+    /// was unable to write, only that some column was. An adapter's whole job
+    /// here is to state capabilities honestly; a refusal that cannot name its
+    /// subject sends the reader looking, which is the cost the refusal exists
+    /// to save.
+    Unsupported(String),
     /// The record exists but is not in a shape this adapter understands.
     Malformed { id: RecordId, detail: String },
     /// The store could not be reached, or answered in a way that was not

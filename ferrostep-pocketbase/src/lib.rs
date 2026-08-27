@@ -337,6 +337,51 @@ pub struct PocketBaseLedger {
     /// the ping at connect time rather than assumed from this crate's own
     /// version, because the two are deployed separately.
     writes_scope: bool,
+    /// ⚠⚠ **Which COLUMNS the installed file admits, when it says.** `writes`
+    /// answers in kinds — *state, counters, scope* — and that granularity was
+    /// measured wrong: a mapped file emits one branch per column name known at
+    /// generation time, so a counter added to a map afterwards is **accepted,
+    /// silently dropped, and answered 200**, while `writes` still says
+    /// "counters" and the adapter is told yes.
+    ///
+    /// Found by the first adopter, 2026-08-27, adding a counter to a live lane.
+    /// Their ceiling would have read zero forever and the column would have
+    /// stayed unguarded. **The only thing that caught it was a person diffing
+    /// the generated file before installing**, which is exactly the vigilance
+    /// this project exists to replace.
+    ///
+    /// `None` means the file did not say. That is **not** "writes nothing" —
+    /// it is an older mapped file, whose names cannot be checked, or the
+    /// generic shape, which stores counters and scope as JSON and therefore
+    /// admits any name. The two are told apart by [`Shape`], never by this
+    /// field alone.
+    writable: Option<WritableColumns>,
+}
+
+/// The column names an installed mapped file said it can write.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct WritableColumns {
+    counters: Vec<String>,
+    scope: Vec<String>,
+    attributes: Vec<String>,
+}
+
+impl WritableColumns {
+    fn from_ping(body: &Value) -> Option<Self> {
+        let columns = body.get("columns")?.as_object()?;
+        let names = |key: &str| -> Vec<String> {
+            columns
+                .get(key)
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                .unwrap_or_default()
+        };
+        Some(WritableColumns {
+            counters: names("counters"),
+            scope: names("scope"),
+            attributes: names("attributes"),
+        })
+    }
 }
 
 fn agent() -> ureq::Agent {
@@ -412,7 +457,45 @@ impl PocketBaseLedger {
             .get("writes")
             .and_then(Value::as_array)
             .is_some_and(|w| w.iter().any(|v| v.as_str() == Some("scope")));
-        Ok(PocketBaseLedger { base, token: token.to_string(), agent, mode, shape, writes_scope })
+        // ⚠ Column names when the file states them; `None` when it does not.
+        // See `PocketBaseLedger::writable` for why absence is not "nothing".
+        let writable = WritableColumns::from_ping(&body);
+        Ok(PocketBaseLedger {
+            base,
+            token: token.to_string(),
+            agent,
+            mode,
+            shape,
+            writes_scope,
+            writable,
+        })
+    }
+
+    /// ⚠⚠ **Refuse a write to a column the installed file cannot reach.**
+    /// `writes` answers in kinds, and a mapped file's real limit is a list of
+    /// names fixed when it was generated — so "yes, counters" is true and
+    /// useless when the counter in question has no branch in that file.
+    ///
+    /// Silence here is not permission. A mapped file that states no columns is
+    /// older than this check, so its names cannot be verified and this returns
+    /// `Ok` — the honest answer, and the reason the refusal text below tells
+    /// the operator to regenerate rather than implying the column is wrong.
+    fn refuse_unwritable(&self, kind: &str, names: Vec<&String>) -> Result<(), LedgerError> {
+        let Shape::Mapped(_) = &self.shape else { return Ok(()) };
+        let Some(known) = &self.writable else { return Ok(()) };
+        let admitted = match kind {
+            "counter" => &known.counters,
+            "scope label" => &known.scope,
+            _ => &known.attributes,
+        };
+        if let Some(missing) = names.into_iter().find(|n| !admitted.contains(n)) {
+            return Err(LedgerError::Unsupported(format!(
+                "write the {kind} '{missing}': the installed ferrostep hooks were generated \
+                 before it was mapped, and would accept the request, ignore that column and \
+                 answer 200 — regenerate them and reinstall"
+            )));
+        }
+        Ok(())
     }
 
     /// Which write path answered at connect time. Callers that surface
@@ -598,7 +681,7 @@ impl PocketBaseLedger {
             Mode::Full => Ok(()),
             // The write path a REST-only adapter would need is the design the
             // measurement rejected; refusing names the remedy instead.
-            Mode::ReadOnly => Err(LedgerError::Unsupported(what)),
+            Mode::ReadOnly => Err(LedgerError::Unsupported(what.to_string())),
         }
     }
 }
@@ -672,7 +755,8 @@ impl Ledger for PocketBaseLedger {
             // A mapped collection has its own filing procedure and its own
             // required fields; a record filed here would be a hollow row.
             return Err(LedgerError::Unsupported(
-                "file records into a mapped collection; use the collection's own filing procedure",
+                "file records into a mapped collection; use the collection's own filing procedure"
+                    .to_string(),
             ));
         }
         self.require_full("file a record without the ferrostep hooks installed")?;
@@ -724,10 +808,20 @@ impl Ledger for PocketBaseLedger {
         // rescope existed accept this request and ignore the labels, and a
         // silent no-op reported as success is the one outcome worth failing to
         // avoid.
+        // ⚠ By NAME, before the kind check below. "Yes, counters" is true and
+        // useless when the counter in this request has no branch in the
+        // installed file — the request would be accepted, that column ignored,
+        // and 200 returned.
+        self.refuse_unwritable("counter", next.counters.keys().collect())?;
+        self.refuse_unwritable(
+            "scope label",
+            decided_scope_updates(&event.decision).keys().collect(),
+        )?;
         if !decided_scope_updates(&event.decision).is_empty() && !self.writes_scope {
             return Err(LedgerError::Unsupported(
                 "write scope labels: the installed ferrostep hooks predate rescope — \
-                 regenerate them and reinstall",
+                 regenerate them and reinstall"
+                    .to_string(),
             ));
         }
         let resp = self
@@ -1033,6 +1127,29 @@ pub fn hooks_file_mapped(
     // not be read as able to write attributes. Advertised only when the map
     // declares some, so a deployment without them keeps answering exactly what
     // it answered before.
+    // ⚠⚠ NAMES, NOT ONLY KINDS. `writes` says "counters"; a mapped file's real
+    // limit is the list of column names it was generated with, because the
+    // route carries one branch per name. Measured 2026-08-27 on a live lane: a
+    // counter added to a map after the file was installed is accepted, dropped,
+    // and answered 200 — the ceiling never fires and the column stays
+    // unguarded — while `writes` still says "counters" and the adapter is told
+    // yes. A person diffing the generated file was the only thing that caught
+    // it.
+    //
+    // ⚠ A NEW KEY rather than a changed one, deliberately: an older adapter
+    // reading `writes` sees exactly what it saw before, and a newer one that
+    // finds no `columns` knows it cannot verify rather than concluding there
+    // is nothing to write. Fixing a compatibility defect incompatibly would be
+    // the same mistake twice.
+    let json_list = |names: &[String]| -> String {
+        names.iter().map(|n| format!("\"{n}\"")).collect::<Vec<_>>().join(", ")
+    };
+    let columns_json = format!(
+        r#"{{ "counters": [{}], "scope": [{}], "attributes": [{}] }}"#,
+        json_list(&map.counter_fields),
+        json_list(&map.scope_fields),
+        json_list(&map.attribute_fields),
+    );
     let writes_list = if map.attribute_fields.is_empty() {
         r#"["state", "counters", "scope"]"#
     } else {
@@ -1050,7 +1167,7 @@ pub fn hooks_file_mapped(
 routerAdd("GET", "/api/ferrostep/{records}/ping", (e) => {{
     // See the generic file: this is how an adapter learns what the INSTALLED
     // routes can write, rather than assuming its own generation's abilities.
-    return e.json(200, {{ "ferrostep": "{version}", "writes": {writes_list} }});
+    return e.json(200, {{ "ferrostep": "{version}", "writes": {writes_list}, "columns": {columns_json} }});
 }});
 
 routerAdd("POST", "/api/ferrostep/{records}/apply", (e) => {{
@@ -1627,20 +1744,80 @@ mod tests {
     /// attributes has to answer exactly what it answered before this category
     /// existed — otherwise every older deployment starts claiming a capability
     /// its generated file does not have.
+    /// Reads the ping's `writes` list out of the generated file — the KIND
+    /// list, which is the thing this test is about.
+    ///
+    /// ⚠ **This helper exists because the first version of the test searched
+    /// the whole file for `"attributes"` and was right by accident.** Once the
+    /// ping also carried a `columns` object, that string appeared in every
+    /// generated file as an always-present key holding an empty array, and the
+    /// negative assertion failed on correct output. **The property is "does
+    /// the kind list name it", not "does the token occur somewhere"** — the
+    /// same axis a guard in this workspace already died on.
+    fn ping_writes(hooks: &str) -> String {
+        hooks
+            .split_once(r#""writes": ["#)
+            .and_then(|(_, tail)| tail.split_once(']'))
+            .map(|(list, _)| list.to_string())
+            .expect("no ping `writes` list in the generated file")
+    }
+
     #[test]
     fn the_ping_advertises_attributes_only_when_the_map_declares_some() {
         let with = hooks_file_mapped(&guarded_map(), None, &ActorBinding::default());
-        assert!(with.contains(r#""attributes""#), "declared, but not advertised");
+        assert!(ping_writes(&with).contains("attributes"), "declared, but not advertised");
 
         let without = CollectionMap { attribute_fields: vec![], ..guarded_map() };
         let plain = hooks_file_mapped(&without, None, &ActorBinding::default());
         assert!(
-            !plain.contains(r#""attributes""#),
-            "a map with no attributes advertises the capability anyway: {plain}"
+            !ping_writes(&plain).contains("attributes"),
+            "a map with no attributes advertises the capability: {}",
+            ping_writes(&plain)
         );
-        // ⚠ Floor: prove the ping is in this output at all, or the negative
-        // assertion above passes on a file that has no ping to read.
-        assert!(plain.contains(r#""writes""#), "no ping in the generated file");
+        // ⚠ Floor: `ping_writes` panics if the ping moved, so both assertions
+        // above are known to have read a real list rather than an empty string.
+        assert!(ping_writes(&plain).contains("state"), "the ping lists nothing at all");
+    }
+
+    /// ⚠⚠ **The kind list is the thing that was measured wrong.** "Yes,
+    /// counters" is true and useless when the counter in a request has no
+    /// branch in the installed file. The ping now also states the column
+    /// NAMES, so an adapter can refuse by name instead of being told yes.
+    #[test]
+    fn the_ping_states_the_column_names_it_can_actually_write() {
+        let hooks = hooks_file_mapped(&guarded_map(), None, &ActorBinding::default());
+        let columns = hooks
+            .split_once(r#""columns": "#)
+            .and_then(|(_, tail)| tail.split_once('}'))
+            .map(|(obj, _)| obj.to_string())
+            .expect("the ping states no column names");
+        assert!(columns.contains(r#""attempts""#), "counter not named: {columns}");
+        assert!(columns.contains(r#""lane""#), "scope label not named: {columns}");
+        assert!(columns.contains(r#""severity""#), "attribute not named: {columns}");
+        // ⚠ And a column the map does NOT declare must be absent, or the list
+        // is decoration rather than a limit.
+        assert!(!columns.contains(r#""disputes""#), "named a column it cannot write");
+    }
+
+    /// The refusal this whole change exists for, exercised through the parser
+    /// an installed file's answer actually goes through.
+    #[test]
+    fn a_column_the_installed_file_never_heard_of_is_refused_by_name() {
+        let stale = serde_json::json!({
+            "ferrostep": "0.1.0",
+            "writes": ["state", "counters", "scope"],
+            "columns": { "counters": ["attempts"], "scope": ["lane"], "attributes": [] }
+        });
+        let known = WritableColumns::from_ping(&stale).expect("columns should parse");
+        assert_eq!(known.counters, vec!["attempts".to_string()]);
+        assert!(known.attributes.is_empty());
+
+        // ⚠ And an older file that states no columns must parse as `None` —
+        // "did not say", which is not the same as "writes nothing". Reading
+        // silence as refusal would break every deployment installed before
+        // this key existed.
+        let older = serde_json::json!({ "ferrostep": "0.1.0", "writes": ["state"] });
+        assert!(WritableColumns::from_ping(&older).is_none(), "silence read as an answer");
     }
 
     /// ⚠ Deployment maps written before this category existed must keep

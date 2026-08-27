@@ -284,7 +284,16 @@ is well-posed rather than half-solved in the wrong repo.
 
 ### 5. ⚠⚠ The ping states a KIND where the failure is at the NAME — measured, and it is ours
 
-**Status: a defect in this project, confirmed here before writing it down.**
+**Status: TAKEN 2026-08-27.** The ping now states column **names** beside the
+kinds, and the adapter refuses a write to a column an installed file never
+heard of — by name, with the regenerate instruction. ⚠ Done as a **new
+`columns` key** rather than a changed `writes`, so an older adapter sees what
+it always saw and a newer one finding nothing knows it *cannot verify* rather
+than concluding there is nothing to write; **absence is never read as refusal.**
+That required widening `LedgerError::Unsupported` to an owned `String`, because
+a refusal that cannot name its subject is half a refusal. Mutation-verified
+three ways: stop stating names, state names the map does not declare, and read
+silence as an answer — each goes red by name. The original statement follows.
 
 A generated hook is installed once and then met by newer adapters for as long
 as the deployment lives. The stated mitigation is that **the generated surface
