@@ -352,6 +352,24 @@ pub const NO_RECORD: &str = "no_record";
 /// The authenticated account does not act as the role the request claimed.
 /// **Not retryable** — the opposite of [`CAS_CONFLICT`].
 pub const ROLE_NOT_YOURS: &str = "role_not_yours";
+/// The request named a column this installed file has no branch for.
+/// **Not retryable**, and the remedy is a deployment change rather than a
+/// different request: declare the column in the map, regenerate, reinstall.
+///
+/// ⚠⚠ **Added because the alternative was measured and it was silence.** A
+/// mapped file emits one write branch per column name the map declares, so a
+/// name it does not declare has no branch — not a rejecting one, *none*. The
+/// route wrote the columns it knew, bumped the version, appended the event and
+/// answered **200**. Measured 2026-08-27 against a live instance: an attribute
+/// and a counter both vanished from a successful call, and the appended event
+/// recorded `counter_updates` for a column the row does not have. **That is
+/// the history disagreeing with the record**, which this crate's own contract
+/// says cannot happen because the two are written from one value — true of the
+/// value, and not true of what reached the row.
+///
+/// ⚠ The generic shape needs no such refusal: it stores counters and scope as
+/// JSON, so every name is writable and there is nothing to refuse.
+pub const UNWRITABLE_COLUMN: &str = "unwritable_column";
 
 pub struct PocketBaseLedger {
     base: String,
@@ -889,6 +907,17 @@ impl Ledger for PocketBaseLedger {
         if status == 404 || message.contains(NO_RECORD) {
             return Err(LedgerError::NotFound(record.id.clone()));
         }
+        // ⚠ Not a transport failure and not retryable: the deployment cannot
+        // write that column, and the remedy is a map change plus a reinstall.
+        // Reported as `Unsupported` so it reads the same as the client-side
+        // refusal `refuse_unwritable` raises for the same cause — one fact,
+        // two places it can be caught, and a caller that sees the same error
+        // whichever caught it first.
+        if message.contains(UNWRITABLE_COLUMN) {
+            return Err(LedgerError::Unsupported(format!(
+                "write a column this deployment does not declare: {message}"
+            )));
+        }
         Err(LedgerError::Transport(format!("apply answered {status}: {message}")))
     }
 
@@ -1288,6 +1317,7 @@ pub fn hooks_file_mapped(
     // Bound locally so the generated text and the adapter's matcher are
     // ONE derivation — see `CAS_CONFLICT`.
     let (cas_conflict, no_record) = (CAS_CONFLICT, NO_RECORD);
+    let unwritable = UNWRITABLE_COLUMN;
     let version = env!("CARGO_PKG_VERSION");
     let binding = role_binding_js(actors);
     let records = &map.records;
@@ -1409,6 +1439,32 @@ routerAdd("GET", "/api/ferrostep/{records}/ping", (e) => {{
 routerAdd("POST", "/api/ferrostep/{records}/apply", (e) => {{
     const body = e.requestInfo().body;
 {binding}
+    // ⚠⚠ A COLUMN THIS FILE HAS NO BRANCH FOR IS REFUSED, NOT IGNORED.
+    // One `if` is emitted per DECLARED name below, so a name the map does not
+    // declare has no branch at all — not a rejecting one. Without this check
+    // the route wrote the columns it knew, bumped the version, appended the
+    // event and answered 200, and the caller was told a value landed that
+    // never did. Measured against a live instance, 2026-08-27: the appended
+    // event recorded `counter_updates` for a column the row does not have,
+    // which is the history disagreeing with the record.
+    //
+    // ⚠ Before the transaction, so a refused request changes nothing and
+    // spends no version. And built from the SAME list the ping advertises, so
+    // what this file says it can write and what it will accept cannot drift.
+    const WRITABLE = {columns_json};
+    const kinds = ["counters", "scope", "attributes"];
+    for (let k = 0; k < kinds.length; k++) {{
+        const sent = body[kinds[k]] || {{}};
+        for (const column in sent) {{
+            if ((WRITABLE[kinds[k]] || []).indexOf(column) < 0) {{
+                throw new BadRequestError(
+                    "{unwritable}: " + kinds[k] + "." + column + " — this installed file has no " +
+                    "branch for that column, so writing it would silently do nothing. Declare it " +
+                    "in the collection map, regenerate the generated files, and reinstall."
+                );
+            }}
+        }}
+    }}
     const recordId = String(body.record_id || "");
     const expected = Number(body.expected_version);
     let next = 0;
@@ -2063,9 +2119,25 @@ mod tests {
             hooks_file_mapped(&guarded_map(), None, &bound).contains(ROLE_NOT_YOURS),
             "{ROLE_NOT_YOURS} not emitted where roles are bound"
         );
-        // ⚠ And the two must not be the same string, or a caller keying on the
-        // prefix cannot tell a retry from a denial — the whole point of them.
-        assert_ne!(CAS_CONFLICT, ROLE_NOT_YOURS);
+        // ⚠ The unwritable-column refusal is MAPPED-ONLY, deliberately: the
+        // generic shape stores counters and scope as JSON, so every name is
+        // writable and there is nothing to refuse. Asserted in both directions
+        // so "mapped-only" cannot quietly become "nowhere".
+        assert!(
+            hooks_file_mapped(&guarded_map(), None, &ActorBinding::default())
+                .contains(&format!("\"{UNWRITABLE_COLUMN}: ")),
+            "{UNWRITABLE_COLUMN} not emitted by the mapped file"
+        );
+        assert!(
+            !hooks_file(&ActorBinding::default()).contains(UNWRITABLE_COLUMN),
+            "the generic file has no undeclared columns to refuse"
+        );
+        // ⚠ And no two of these may be the same string, or a caller keying on
+        // the prefix cannot tell a retry from a denial from a deployment fault
+        // — the whole point of them.
+        let prefixes = [CAS_CONFLICT, NO_RECORD, ROLE_NOT_YOURS, UNWRITABLE_COLUMN];
+        let unique: std::collections::BTreeSet<&str> = prefixes.iter().copied().collect();
+        assert_eq!(unique.len(), prefixes.len(), "two wire prefixes collide: {prefixes:?}");
     }
 
     /// Reads the ping's `writes` list out of the generated file — the KIND
@@ -2304,6 +2376,74 @@ mod tests {
         assert!(sets.contains(r#"body.counters["attempts"]"#), "{sets}");
         assert!(sets.contains(r#"body.scope["lane"]"#), "{sets}");
         assert!(!sets.contains("severity"), "the fixture cleared attributes: {sets}");
+    }
+
+    /// ⚠⚠ **A COLUMN WITH NO BRANCH IS REFUSED, NOT IGNORED — AND THE CHECK
+    /// READS THE SAME LIST THE PING ADVERTISES.** Two copies of "which columns
+    /// can this file write" is the drift that produces a file saying one thing
+    /// and doing another, which is the failure both halves exist to prevent.
+    #[test]
+    fn the_apply_route_refuses_a_column_it_has_no_branch_for() {
+        let hooks = hooks_file_mapped(&tickets_map(), None, &ActorBinding::default());
+        let apply = route_block(&hooks, "/api/ferrostep/tickets/apply");
+
+        assert!(apply.contains("const WRITABLE ="), "the route carries an allowlist: {apply}");
+        assert!(apply.contains(UNWRITABLE_COLUMN), "and refuses by name: {apply}");
+
+        // ⚠ ONE DERIVATION: the allowlist the route enforces is byte-identical
+        // to the one the ping advertises. Sliced from both and compared, so a
+        // second copy cannot be introduced without this failing.
+        // ⚠ `"columns": {` and not `"columns": ` — the schema route emits
+        // `"columns": columns,` (a variable, no brace), so the looser anchor
+        // matches twice and `slice_once` refuses. That refusal is the guard
+        // working: the looser anchor would have sliced the wrong region.
+        let advertised = slice_once(&hooks, r#""columns": {"#, '}').to_string();
+        let enforced = slice_once(&hooks, "const WRITABLE = {", '}').to_string();
+        assert_eq!(
+            advertised.trim(),
+            enforced.trim(),
+            "the ping advertises one column list and the route enforces another"
+        );
+        // Floor: an empty comparison passes, so prove both name the real columns.
+        assert!(advertised.contains("attempts"), "{advertised}");
+        assert!(advertised.contains("severity"), "{advertised}");
+    }
+
+    /// ⚠ The refusal must reach the caller as *this deployment cannot do that*,
+    /// never as a transport failure — the remedy is a map change and a
+    /// reinstall, and a caller told "could not reach the ledger" retries
+    /// forever against a store that will never accept it.
+    #[test]
+    fn a_route_refusal_about_an_undeclared_column_is_unsupported_not_transport() {
+        // ⚠ Capitalised, because the store normalises messages before
+        // returning them — measured live, and the reason the adapter lowercases
+        // before matching. A test using the lowercase spelling would pass while
+        // the wire form went unrecognised.
+        let refused = format!(
+            r#"{{"message":"Unwritable_column: counters.ghost — this installed file has no branch."}}"#
+        );
+        let base = serve(vec![tickets_ping(), ("/api/ferrostep/tickets/apply", 400, refused)], 2);
+        let ledger = PocketBaseLedger::connect_mapped(&base, "tok", tickets_map()).unwrap();
+        let err = ledger
+            .apply(&a_record("4"), &an_event(allow("review")))
+            .expect_err("an undeclared column is refused");
+        assert!(
+            matches!(err, LedgerError::Unsupported(_)),
+            "must not read as a transport failure, got {err:?}"
+        );
+        assert!(err.to_string().contains("does not declare"), "{err}");
+    }
+
+    /// The generic shape has nothing to refuse: counters and scope are JSON on
+    /// the row, so every name is writable. Asserted so "mapped-only" cannot
+    /// silently become "everywhere" and start refusing valid generic writes.
+    #[test]
+    fn the_generic_route_has_no_column_allowlist_because_every_name_is_writable() {
+        let hooks = hooks_file(&ActorBinding::default());
+        assert!(!hooks.contains("const WRITABLE ="), "the generic file needs no allowlist");
+        assert!(!hooks.contains(UNWRITABLE_COLUMN), "and has nothing to refuse");
+        // Floor: it is still the file that writes counters and scope.
+        assert!(hooks.contains(r#"rec.set("counters", body.counters || {})"#), "{hooks}");
     }
 
     /// ⚠⚠ **THE ONE ROUTE WHOSE ANSWER MUST NOT BE A CONSTANT.** Every other
@@ -3301,6 +3441,92 @@ mod tests {
         // The installed file's own limits arrive from the ping, beside the
         // collection's — two different ages of truth in one value.
         assert!(!shape.writable.is_unknown(), "a current mapped file states its columns");
+    }
+
+    /// ⚠⚠ **THE PROPERTY NO TEXT ASSERTION CAN REACH.** Everything else this
+    /// module says about the generated route is a claim about a *string* — that
+    /// it contains an allowlist, that it names the refusal. **Measured by
+    /// mutation: replacing the check's condition with `if (false)` leaves both
+    /// of those true and disables the refusal entirely**, and every text test
+    /// keeps passing. Whether the check RUNS is a property of a JavaScript
+    /// runtime, and only a runtime can answer it.
+    ///
+    /// The failure it defends against was measured on a live instance,
+    /// 2026-08-27, before the check existed: an undeclared attribute and an
+    /// undeclared counter both vanished from a call that answered **200**,
+    /// the version advanced, and the appended event recorded a
+    /// `counter_updates` for a column the row does not have.
+    #[test]
+    #[ignore = "needs a live PocketBase with the mapped tickets fixture and CURRENT hooks installed; set FERROSTEP_POCKETBASE_URL and FERROSTEP_POCKETBASE_TOKEN and run with --ignored"]
+    fn live_an_undeclared_column_is_refused_rather_than_dropped() {
+        let url = std::env::var("FERROSTEP_POCKETBASE_URL").unwrap();
+        let token = std::env::var("FERROSTEP_POCKETBASE_TOKEN").unwrap();
+        let ledger = PocketBaseLedger::connect_mapped(&url, &token, tickets_map()).unwrap();
+        assert_eq!(ledger.mode(), Mode::Full, "the mapped hooks must be installed");
+
+        let client = agent();
+        let resp = client
+            .post(format!("{url}/api/collections/tickets/records"))
+            .header("Authorization", &token)
+            .send_json(json!({ "stage": "open", "attempts": 0, "lane": "live", "fs_version": 0 }))
+            .unwrap();
+        let (status, filed) = read(resp);
+        assert_eq!(status, 200, "filing through the collection's own procedure: {filed}");
+        let id = RecordId(filed["id"].as_str().unwrap().to_string());
+
+        // ⚠ Posted RAW, not through this adapter. The adapter refuses this
+        // client-side already, so going through it would test the wrong half —
+        // and the population that actually hits this route includes clients
+        // that are not this crate.
+        let refused = client
+            .post(format!("{url}/api/ferrostep/tickets/apply"))
+            .header("Authorization", &token)
+            .send_json(json!({
+                "record_id": id.0,
+                "expected_version": 0,
+                "state": "open",
+                "counters": { "attempts": 1, "ghost_counter": 7 },
+                "event": { "actor": "t", "role": "reviewer", "from_state": "open",
+                           "decision": { "kind": "allow", "to": "open",
+                                         "counter_updates": { "ghost_counter": 7 } } }
+            }))
+            .unwrap();
+        let (status, body) = read(refused);
+        assert_eq!(status, 400, "an undeclared column must be refused: {body}");
+        assert!(
+            refusal(&body).contains(UNWRITABLE_COLUMN),
+            "and refused by name, so a caller knows the remedy: {body}"
+        );
+
+        // ⚠⚠ AND NOTHING MOVED. A refusal that still spent a version or
+        // appended an event would be a worse failure than the drop it replaced:
+        // the caller is told no while the ledger says something happened.
+        let after = ledger.load(&id).unwrap();
+        assert_eq!(after.version.0, "0", "a refused request must not spend a version");
+        assert_eq!(
+            after.snapshot.counters.get("attempts").copied().unwrap_or(0),
+            0,
+            "the DECLARED counter in the same request must not land either"
+        );
+        assert!(ledger.history(&id).unwrap().is_empty(), "a refused request appends no event");
+
+        // ⚠ Positive control: the same request without the undeclared column
+        // succeeds. Without this, a route that refused everything would pass.
+        let ok = client
+            .post(format!("{url}/api/ferrostep/tickets/apply"))
+            .header("Authorization", &token)
+            .send_json(json!({
+                "record_id": id.0,
+                "expected_version": 0,
+                "state": "open",
+                "counters": { "attempts": 1 },
+                "event": { "actor": "t", "role": "reviewer", "from_state": "open",
+                           "decision": { "kind": "allow", "to": "open" } }
+            }))
+            .unwrap();
+        let (status, body) = read(ok);
+        assert_eq!(status, 200, "a request naming only declared columns must land: {body}");
+        assert_eq!(ledger.load(&id).unwrap().snapshot.counters["attempts"], 1);
     }
 
     #[test]

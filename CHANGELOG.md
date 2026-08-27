@@ -7,6 +7,39 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-pocketbase`: ⚠⚠ **the mapped apply route refuses a column it has
+  no branch for, instead of ignoring it** — new wire prefix
+  `unwritable_column:`. A mapped file emits one write branch per column name
+  the map **declares**, so a name it does not declare has no branch at all —
+  not a rejecting one, *none*. **Measured against a live instance,
+  2026-08-27:** an undeclared attribute and an undeclared counter both vanished
+  from a call that answered **200**, the version advanced, and the appended
+  event recorded a `counter_updates` for a column the row does not have. That
+  is the history disagreeing with the record, which this crate's contract says
+  cannot happen *because the two are written from one value* — true of the
+  value, not of what reached the row.
+  The refusal runs **before the transaction**, so a refused request spends no
+  version and appends no event, and the allowlist it enforces is the **same
+  string the ping advertises** (asserted by slicing both and comparing).
+  ⚠ Generic deployments are unaffected and that is asserted: counters and scope
+  are JSON there, so every name is writable and there is nothing to refuse.
+  ⚠⚠ **A behaviour change requiring a deliberate install**: a client sending a
+  column the map does not declare moves from 200 to 400. That is the point, and
+  it is not free.
+
+  ⚠⚠ **This was never a version-skew problem, and thinking it was is why it
+  survived.** The known shape was *stale install meets newer binary*; this needs
+  no skew at all — a current file from a current binary, generated from a map
+  that simply does not declare the column. Named by the first adopter reading
+  their own earlier finding back at themselves.
+
+  ⚠⚠ **And it is where testing generated JavaScript by its text ran out.**
+  Measured by mutation: replacing the check's condition with `if (false)` leaves
+  the allowlist and the refusal name in the file, **all forty-five text tests
+  pass**, and the route refuses nothing. Whether a check *runs* is a property of
+  a runtime. The live test added with it fails under exactly that mutation, with
+  the original symptom, and passes when restored.
+
 - `ferrostep-cli`, `ferrostep-ledger`, `ferrostep-pocketbase`,
   `ferrostep-sqlite`: **`ferrostep doctor` — is this definition satisfiable
   against this store?** (owner, 2026-08-27). A definition asserts things about
