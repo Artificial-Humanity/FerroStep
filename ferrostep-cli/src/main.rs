@@ -1809,8 +1809,21 @@ mod tests {
         let out = explain(&engine(), Some(&map));
         // ⚠ A floor first: an empty list would satisfy every containment
         // check below and prove nothing.
+        //
+        // ⚠⚠ AND THE FLOOR IS NOT THE GUARD AGAINST A DROPPED CATEGORY, though
+        // it looks like one while the fixture happens to carry exactly four
+        // fields. Both lists below are read out of `refereed_fields()`, so a
+        // derivation that stops emitting scope columns shortens both and they
+        // keep agreeing; add a second counter to the fixture and this floor
+        // passes while the guard closes nothing on scope. Measured 2026-08-27.
+        // The known-answer assertion lives beside the derivation, in
+        // `ferrostep-pocketbase`: `refereed_fields_is_one_field_of_every_kind_in_hook_order`.
         let fields = map.refereed_fields();
-        assert!(fields.len() >= 4, "the fixture stopped exercising this: {fields:?}");
+        assert!(
+            fields.len() >= 4,
+            "the fixture stopped exercising this — or a category was dropped from the \
+             derivation, which the pocketbase known-answer test names precisely: {fields:?}"
+        );
         for field in &fields {
             assert!(
                 guarded.contains(&format!("\"{field}\"")),

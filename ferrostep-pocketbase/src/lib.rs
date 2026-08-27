@@ -1527,6 +1527,43 @@ mod tests {
         CollectionMap { guard_refereed_fields: true, ..tickets_map() }
     }
 
+    /// ⚠⚠ **A KNOWN-ANSWER TEST, AND THE SECOND COPY OF THESE NAMES IS THE
+    /// POINT.** `refereed_fields`'s doc comment says one derivation and no
+    /// second copy — that rule is about *shipping* code, and this is a
+    /// fixture. Every other test of this function asks whether the derivation
+    /// AGREES WITH ITSELF: the hunting list and the guard's list are both read
+    /// out of `refereed_fields()`, so a change that drops a whole category
+    /// changes both together and every containment check still passes.
+    /// Measured 2026-08-27 on this repo, not reasoned: delete
+    /// `.chain(self.scope_fields.iter())` and the cross-crate agreement test
+    /// in `ferrostep-cli` goes **green** as soon as the fixture carries a
+    /// second counter — the guard silently stops closing scope columns,
+    /// `explain` silently stops listing them, and the two agree perfectly
+    /// about the wrong answer.
+    ///
+    /// So this asserts the ANSWER, not the agreement, against an input whose
+    /// answer cannot drift: one field of each kind, named. **Order is part of
+    /// the contract** — it is the order the generated hook lists and the order
+    /// `explain` prints, and a reader diffing the two reads them in sequence.
+    ///
+    /// ⚠ If you add a category to `CollectionMap`, this test fails, and the
+    /// fix is to add the field here **after** checking the guard closes it.
+    /// Do not delete the assertion to make it pass.
+    #[test]
+    fn refereed_fields_is_one_field_of_every_kind_in_hook_order() {
+        assert_eq!(
+            tickets_map().refereed_fields(),
+            vec![
+                "stage".to_string(),      // state_field
+                "fs_version".to_string(), // version_field
+                "attempts".to_string(),   // counter_fields
+                "lane".to_string(),       // scope_fields
+            ],
+            "the refereed set changed; a dropped category disarms the guard and the sweep \
+             together, and they will keep agreeing while they do it"
+        );
+    }
+
     fn an_event(decision: Decision) -> Event {
         Event {
             actor: "a".to_string(),
