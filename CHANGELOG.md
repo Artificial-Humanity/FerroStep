@@ -7,6 +7,35 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-pocketbase`: **`CollectionMap.attribute_fields` — a refereed column
+  the engine has no opinion about. A deliberate, labelled stopgap** (owner,
+  2026-08-27). A lane can gate on a column that is none of state, version,
+  counter or scope: the first adopter's merge gate reads a severity grade, and
+  that column sat outside the referee entirely, with only a self-declared author
+  flag between a developer and clearing their own gate — *a convention, not a
+  mechanism*, as their own docstring said. Listing a column here puts it in the
+  guard's refereed set and gives the apply route a branch for it.
+  ⚠⚠ **It buys authentication and audit, not authorisation.** The writer becomes
+  a token holder rather than whoever typed a name, and the write lands as an
+  event — but nothing says who may set which value, or in which direction, and
+  for a graded column that is the half that matters, since raising a grade
+  cannot clear a gate and lowering it can. The successor is a definition-level
+  ordered ladder with directional grants, and it **subsumes this rather than
+  replacing it**: rules live in the definition, column names live in the map,
+  exactly as a counter's `max` and its column already divide.
+  ⚠ **The guard and the write path ship together, and the tests assert them
+  together.** Because the refereed list is one derivation, adding the category
+  closed the column instantly while the route still could not write it —
+  measured in that broken state — which would have made the adopter's grade
+  command a documented, unreachable operation.
+  ⚠ **No Rust write API yet, and that is the deliberate boundary.** An older
+  installed hook meeting a newer map would answer an attribute write with a
+  cheerful 200 and write nothing. The adapter's capability check and the write
+  method therefore land together in a later change, so that gap never exists.
+  The ping advertises `attributes` **only when the map declares some**, so
+  deployments without them answer exactly what they answered before.
+  `#[serde(default)]`, so maps written before this field keep loading.
+
 - `ferrostep-cli` / `ferrostep-pocketbase`: **`explain --map` hands over the
   sweep to run before closing a column to direct writes.** `guard_refereed_
   fields` closes the refereed columns to every writer at once, and only the

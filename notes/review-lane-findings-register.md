@@ -179,8 +179,21 @@ makes it **countable**, which it is not today.
 
 ### 3. ⚠⚠ The referee can only guard its own vocabulary, and a lane's gate may key on a field outside it
 
-**Status: an engine limitation, found while designing entry 2. Not yet a
-proposal.**
+**Status: RULED 2026-08-27. A labelled stopgap shipped; the successor deferred
+behind entry 4.**
+
+⚠ **The owner took both halves rather than choosing between them:** close the
+hole now with a category the engine has no opinion about, and design the real
+thing behind `doctor`. What follows is the original statement of the gap, then
+what shipped and what it deliberately does not do.
+
+**⚠⚠ The two are not competing declarations, and that is why the stopgap is not
+a trapdoor.** The argument against shipping it was that it would create a second
+way to declare the same column. It does not, because they live in different
+files for the same reason `counter_fields` and a counter's `max` already do:
+**the map says which columns exist, the definition says what the rules are.** A
+graded attribute will still need its column named in the map. Nothing built on
+the stopgap has to be unbuilt.
 
 `refereed_fields()` derives from **state, version, counters and scope**. There
 is no category for anything else, so a column outside those four cannot be
@@ -206,7 +219,29 @@ move.** A rule in a file is not an enforcement mechanism; the whole argument
 for a referee is that the mechanism lives somewhere the constrained party does
 not control.
 
-**The open question is the shape, and it is the hard part.** The obvious answer
+**What shipped (`attribute_fields` on the map).** A column listed there joins
+the guard's refereed set and gains a branch on the apply route. ⚠⚠ **It buys
+authentication and audit, not authorisation** — the writer becomes a token
+holder rather than whoever typed a name, and the write lands as an event, but
+nothing says who may set which value or in which direction. For a graded column
+that is the half that matters.
+
+⚠ **Two things it deliberately does not do**, both because the alternative would
+manufacture a defect this register already names. There is **no Rust write API
+yet**: an older installed hook meeting a newer map would answer an attribute
+write with a cheerful 200 and write nothing, so the capability check and the
+write method land together in a later change and that gap never exists. And the
+ping advertises `attributes` **only when the map declares some**, so a
+deployment without them answers exactly what it answered before.
+
+⚠ **Measured while building it, and worth keeping:** because the refereed list
+is one derivation, adding the category **closed the column instantly while the
+route still could not write it.** The adopter's grade command would have become
+a documented, unreachable operation — the exact shape entry 4 exists for, seen
+from the inside this time. Guard and write path now ship together and the tests
+assert them together.
+
+**The successor's shape is the hard part, and it is still open.** The obvious answer
 — a fifth category of "other refereed fields" — risks becoming a bag that
 anything can be dropped into, and the engine would be guarding fields whose
 *meaning* it has no opinion about. A narrower reading is that a gate value is

@@ -1864,6 +1864,7 @@ mod tests {
             version_field: "fs_version".to_string(),
             counter_fields: vec!["attempts".to_string()],
             scope_fields: vec!["lane".to_string()],
+            attribute_fields: vec!["severity".to_string()],
             guard_refereed_fields: guard,
         }
     }
