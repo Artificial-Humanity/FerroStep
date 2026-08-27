@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS ferrostep_records (
     id       INTEGER PRIMARY KEY,
     state    TEXT NOT NULL,
     counters TEXT NOT NULL DEFAULT '{}',
+    grades   TEXT NOT NULL DEFAULT '{}',
     scope    TEXT NOT NULL DEFAULT '{}',
     version  INTEGER NOT NULL
 );
@@ -78,6 +79,30 @@ impl SqliteLedger {
         let ledger = SqliteLedger { path: path.as_ref().to_path_buf() };
         let conn = ledger.conn()?;
         conn.execute_batch(SCHEMA).map_err(transport)?;
+        // ⚠⚠ `CREATE TABLE IF NOT EXISTS` does NOTHING to a table that already
+        // exists, so a column added to SCHEMA never reaches a ledger somebody
+        // already has. Without this, an older file opens cleanly, reports every
+        // record as ungraded, and every grade change reads as *opening* one —
+        // which is the permissive classification. A silent widening, from a
+        // successful open.
+        //
+        // Added rather than recreated, and guarded by asking the table what it
+        // has rather than by catching the duplicate-column error, because an
+        // error that is sometimes expected is an error nobody reads.
+        let has_grades: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('ferrostep_records') WHERE name = 'grades'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map_err(transport)?
+            > 0;
+        if !has_grades {
+            conn.execute_batch(
+                "ALTER TABLE ferrostep_records ADD COLUMN grades TEXT NOT NULL DEFAULT '{}'",
+            )
+            .map_err(transport)?;
+        }
         Ok(ledger)
     }
 
@@ -107,10 +132,26 @@ fn counters_json(counters: &BTreeMap<String, u32>) -> String {
     serde_json::to_string(counters).expect("a map of strings to integers serializes")
 }
 
+/// ⚠ The WHOLE map, because [`decided_snapshot`] already merged the change
+/// onto the record's existing grades. Writing only the changed attribute would
+/// need a JSON update expression; writing the merged map is correct here
+/// because the compare-and-swap in the same statement refuses any writer whose
+/// copy was stale.
+fn grades_json(grades: &BTreeMap<String, String>) -> String {
+    serde_json::to_string(grades).unwrap_or_else(|_| "{}".to_string())
+}
+
 fn parse_counters(id: &RecordId, json: &str) -> Result<BTreeMap<String, u32>, LedgerError> {
     serde_json::from_str(json).map_err(|e| LedgerError::Malformed {
         id: id.clone(),
         detail: format!("counters column: {e}"),
+    })
+}
+
+fn parse_grades(id: &RecordId, json: &str) -> Result<BTreeMap<String, String>, LedgerError> {
+    serde_json::from_str(json).map_err(|e| LedgerError::Malformed {
+        id: id.clone(),
+        detail: format!("grades column: {e}"),
     })
 }
 
@@ -148,18 +189,29 @@ impl Ledger for SqliteLedger {
         let conn = self.conn()?;
         let row = conn
             .query_row(
-                "SELECT state, counters, version FROM ferrostep_records WHERE id = ?1",
+                "SELECT state, counters, version, grades FROM ferrostep_records WHERE id = ?1",
                 [key],
-                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)),
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, String>(3)?,
+                    ))
+                },
             )
             .optional()
             .map_err(transport)?;
-        let Some((state, counters, version)) = row else {
+        let Some((state, counters, version, grades)) = row else {
             return Err(LedgerError::NotFound(id.clone()));
         };
         Ok(Record {
             id: id.clone(),
-            snapshot: Snapshot { state, counters: parse_counters(id, &counters)? },
+            snapshot: Snapshot {
+                state,
+                counters: parse_counters(id, &counters)?,
+                grades: parse_grades(id, &grades)?,
+            },
             version: Version(version.to_string()),
         })
     }
@@ -196,7 +248,11 @@ impl Ledger for SqliteLedger {
         tx.commit().map_err(transport)?;
         Ok(Record {
             id: RecordId(key.to_string()),
-            snapshot: Snapshot { state: to.clone(), counters: BTreeMap::new() },
+            snapshot: Snapshot {
+                state: to.clone(),
+                counters: BTreeMap::new(),
+                grades: BTreeMap::new(),
+            },
             version: Version("1".to_string()),
         })
     }
@@ -248,15 +304,29 @@ impl Ledger for SqliteLedger {
         // invisible to every query that looks for it.
         let moved = match &next_scope {
             None => tx.execute(
-                "UPDATE ferrostep_records SET state = ?1, counters = ?2, version = version + 1
-                 WHERE id = ?3 AND version = ?4",
-                params![next.state, counters_json(&next.counters), key, expected],
+                "UPDATE ferrostep_records
+                 SET state = ?1, counters = ?2, grades = ?3, version = version + 1
+                 WHERE id = ?4 AND version = ?5",
+                params![
+                    next.state,
+                    counters_json(&next.counters),
+                    grades_json(&next.grades),
+                    key,
+                    expected
+                ],
             ),
             Some(scope) => tx.execute(
                 "UPDATE ferrostep_records
-                 SET state = ?1, counters = ?2, scope = ?3, version = version + 1
-                 WHERE id = ?4 AND version = ?5",
-                params![next.state, counters_json(&next.counters), scope, key, expected],
+                 SET state = ?1, counters = ?2, scope = ?3, grades = ?4, version = version + 1
+                 WHERE id = ?5 AND version = ?6",
+                params![
+                    next.state,
+                    counters_json(&next.counters),
+                    scope,
+                    grades_json(&next.grades),
+                    key,
+                    expected
+                ],
             ),
         }
         .map_err(transport)?;
@@ -294,7 +364,7 @@ impl Ledger for SqliteLedger {
         let conn = self.conn()?;
         let placeholders = vec!["?"; states.len()].join(", ");
         let sql = format!(
-            "SELECT id, state, counters, scope, version FROM ferrostep_records
+            "SELECT id, state, counters, scope, version, grades FROM ferrostep_records
              WHERE state IN ({placeholders}) ORDER BY id"
         );
         let mut stmt = conn.prepare(&sql).map_err(transport)?;
@@ -306,12 +376,13 @@ impl Ledger for SqliteLedger {
                     r.get::<_, String>(2)?,
                     r.get::<_, String>(3)?,
                     r.get::<_, i64>(4)?,
+                    r.get::<_, String>(5)?,
                 ))
             })
             .map_err(transport)?;
         let mut out = Vec::new();
         for row in rows {
-            let (key, state, counters, scope_json, version) = row.map_err(transport)?;
+            let (key, state, counters, scope_json, version, grades_json) = row.map_err(transport)?;
             let id = RecordId(key.to_string());
             // Scope filtering happens here, in the adapter's own language,
             // rather than through a JSON path expression — a label key that
@@ -325,7 +396,11 @@ impl Ledger for SqliteLedger {
             if !scope.matches(&labels) {
                 continue;
             }
-            let snapshot = Snapshot { state, counters: parse_counters(&id, &counters)? };
+            let snapshot = Snapshot {
+                state,
+                counters: parse_counters(&id, &counters)?,
+                grades: parse_grades(&id, &grades_json)?,
+            };
             out.push(Record { id, snapshot, version: Version(version.to_string()) });
         }
         Ok(out)
@@ -473,13 +548,112 @@ mod tests {
         // of it fails here rather than passing quietly.
         let mut names: Vec<&str> = columns.keys().map(String::as_str).collect();
         names.sort_unstable();
-        assert_eq!(names, ["counters", "id", "scope", "state", "version"], "{columns:?}");
+        assert_eq!(
+            names,
+            ["counters", "grades", "id", "scope", "state", "version"],
+            "{columns:?}"
+        );
 
         // ⚠ Both of these are verified all-clears, NOT shrugs, and the
         // distinction is the reason `Answer` has three variants.
         assert_eq!(shape.accepted_states, Answer::NothingToConstrain);
         assert_eq!(shape.writable, Answer::NothingToConstrain);
         assert!(!shape.accepted_states.is_unknown());
+    }
+
+    /// ⚠⚠ **`CREATE TABLE IF NOT EXISTS` DOES NOTHING TO A TABLE THAT ALREADY
+    /// EXISTS**, so a column added to [`SCHEMA`] never reaches a ledger
+    /// somebody already has. The failure is not an error — the file opens
+    /// cleanly, every record reads as ungraded, and every grade change is
+    /// classified as *opening* one, which is the permissive branch. A silent
+    /// widening, out of a successful open.
+    ///
+    /// Written against a file built WITHOUT the column, because opening a
+    /// fresh one exercises the `CREATE TABLE` path and would pass no matter
+    /// what the upgrade path did.
+    #[test]
+    fn a_ledger_file_older_than_grades_gains_the_column_on_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.db");
+
+        // A ledger as it was before grades existed.
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE ferrostep_records (
+                 id       INTEGER PRIMARY KEY,
+                 state    TEXT NOT NULL,
+                 counters TEXT NOT NULL DEFAULT '{}',
+                 scope    TEXT NOT NULL DEFAULT '{}',
+                 version  INTEGER NOT NULL
+             );
+             INSERT INTO ferrostep_records (id, state, counters, scope, version)
+             VALUES (1, 'working', '{\"agent_passes\":2}', '{}', 0);",
+        )
+        .unwrap();
+        // ⚠ Positive control: the column really is absent to begin with, or
+        // this test proves nothing about the upgrade.
+        let before: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('ferrostep_records') WHERE name='grades'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(before, 0, "the fixture must start without the column");
+        drop(conn);
+
+        let ledger = SqliteLedger::open(&path).unwrap();
+        let record = ledger.load(&RecordId("1".to_string())).unwrap();
+        assert_eq!(record.snapshot.counters["agent_passes"], 2, "the old row still reads");
+        assert!(record.snapshot.grades.is_empty(), "and has no grades yet");
+
+        // And the column is now really there, so a grade can be written.
+        let columns = ledger.store_shape().unwrap();
+        assert!(columns.columns.said().unwrap().contains_key("grades"));
+    }
+
+    /// A grade lands, survives a reload, and does not disturb the grades the
+    /// decision never mentioned. ⚠ The second half is the one that breaks if
+    /// an adapter writes the record's whole grade map from a stale read.
+    #[test]
+    fn a_grade_is_persisted_and_leaves_the_others_alone() {
+        let (_dir, ledger) = temp_ledger();
+        let record = ledger
+            .create(&Scope::all(), &filed("working"), &event("t", "worker", None, filed("working")))
+            .unwrap();
+
+        let open_two = Decision::Allow {
+            to: "working".to_string(),
+            counter_updates: BTreeMap::new(),
+            scope_updates: BTreeMap::new(),
+            grade_updates: BTreeMap::from([
+                ("severity".to_string(), "high".to_string()),
+                ("impact".to_string(), "wide".to_string()),
+            ]),
+        };
+        ledger
+            .apply(&record, &event("t", "reviewer", Some("working"), open_two))
+            .unwrap();
+
+        let both = ledger.load(&record.id).unwrap();
+        assert_eq!(both.snapshot.grades["severity"], "high");
+        assert_eq!(both.snapshot.grades["impact"], "wide");
+
+        // Now move ONE of them.
+        let lower_one = Decision::Allow {
+            to: "working".to_string(),
+            counter_updates: BTreeMap::new(),
+            scope_updates: BTreeMap::new(),
+            grade_updates: BTreeMap::from([("severity".to_string(), "low".to_string())]),
+        };
+        ledger.apply(&both, &event("t", "reviewer", Some("working"), lower_one)).unwrap();
+
+        let after = ledger.load(&record.id).unwrap();
+        assert_eq!(after.snapshot.grades["severity"], "low", "the named grade moved");
+        assert_eq!(
+            after.snapshot.grades["impact"], "wide",
+            "and the one the decision never mentioned survived"
+        );
     }
 
     /// ⚠⚠ **AN EMPTY ENUMERATION IS NOT AN EMPTY TABLE.** SQLite answers a
@@ -798,6 +972,7 @@ mod tests {
             to: "open".to_string(),
             counter_updates: BTreeMap::new(),
             scope_updates: BTreeMap::from([("branch".to_string(), "follow-up".to_string())]),
+            grade_updates: BTreeMap::new(),
         };
         let version = ledger
             .apply(&record, &event("lauren", "operator", Some("open"), moved))
@@ -843,6 +1018,7 @@ mod tests {
             to: "open".to_string(),
             counter_updates: BTreeMap::new(),
             scope_updates: BTreeMap::from([("branch".to_string(), "follow-up".to_string())]),
+            grade_updates: BTreeMap::new(),
         };
         ledger.apply(&record, &event("lauren", "operator", Some("open"), moved)).unwrap();
 

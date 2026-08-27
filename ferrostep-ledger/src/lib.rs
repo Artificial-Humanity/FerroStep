@@ -139,16 +139,26 @@ impl Scope {
 /// changes nothing and has nothing to persist.
 pub fn decided_snapshot(current: &Snapshot, decision: &Decision) -> Option<Snapshot> {
     match decision {
-        Decision::Allow { to, counter_updates, .. } => {
+        Decision::Allow { to, counter_updates, grade_updates, .. } => {
             let mut counters = current.counters.clone();
             for (name, value) in counter_updates {
                 counters.insert(name.clone(), *value);
             }
-            Some(Snapshot { state: to.clone(), counters })
+            // ⚠ Grades merge onto the record like counters, not like scope.
+            // A grade decision names ONE attribute and says nothing about the
+            // others, so replacing the map wholesale would erase every grade
+            // the decision did not mention — the same loss `decided_scope_updates`
+            // avoids by returning an instruction instead of an outcome.
+            let mut grades = current.grades.clone();
+            for (name, value) in grade_updates {
+                grades.insert(name.clone(), value.clone());
+            }
+            Some(Snapshot { state: to.clone(), counters, grades })
         }
         Decision::Exhausted { to, .. } => Some(Snapshot {
             state: to.clone(),
             counters: current.counters.clone(),
+            grades: current.grades.clone(),
         }),
         Decision::Deny { .. } => None,
     }
@@ -167,6 +177,30 @@ pub fn decided_snapshot(current: &Snapshot, decision: &Decision) -> Option<Snaps
 /// Empty is the common answer, which lets an adapter skip touching scope at
 /// all on an ordinary move: a write that always fires is a write that can
 /// always go wrong.
+/// The graded attributes a decision moves, empty for every ordinary move.
+///
+/// Companion to [`decided_scope_updates`] and the same shape for the same
+/// reason: an **absolute write to named attributes**, never a resulting map. A
+/// grade decision names the one attribute it moves and says nothing about the
+/// rest, so an adapter writes exactly these and leaves the others alone.
+///
+/// ⚠ An adapter that mapped grades onto real columns must write only these
+/// names. Writing the record's whole grade map back would turn every grade
+/// change into a rewrite of all of them, which is how a stale read loses a
+/// value nobody touched.
+pub fn decided_grade_updates(decision: &Decision) -> &BTreeMap<String, String> {
+    match decision {
+        Decision::Allow { grade_updates, .. } => grade_updates,
+        _ => {
+            // Same reasoning as the scope companion: a denial persists
+            // nothing, and an exhausted decision routes without grading.
+            static NONE: std::sync::OnceLock<BTreeMap<String, String>> =
+                std::sync::OnceLock::new();
+            NONE.get_or_init(BTreeMap::new)
+        }
+    }
+}
+
 pub fn decided_scope_updates(decision: &Decision) -> &BTreeMap<String, String> {
     match decision {
         Decision::Allow { scope_updates, .. } => scope_updates,
@@ -535,6 +569,7 @@ mod tests {
         let current = Snapshot {
             state: "awaiting_worker".to_string(),
             counters: BTreeMap::from([("passes".to_string(), 2), ("filings".to_string(), 1)]),
+            ..Snapshot::default()
         };
         // Allow: state moves, named counters take their new values, unnamed
         // counters survive untouched.
@@ -588,6 +623,7 @@ mod tests {
             to: "awaiting_review".to_string(),
             counter_updates: BTreeMap::new(),
             scope_updates: BTreeMap::from([("branch".to_string(), "release-2".to_string())]),
+            grade_updates: BTreeMap::new(),
         };
         let moved = decided_scope_updates(&rescope);
         assert_eq!(moved.len(), 1, "only the named label travels: {moved:?}");

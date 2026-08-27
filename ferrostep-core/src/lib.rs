@@ -78,6 +78,61 @@ pub struct WorkflowDef {
     /// definition says otherwise.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rescopes: Vec<RescopeDef>,
+    /// Attributes whose values form an ordered ladder, and who may move each
+    /// one in each direction. **Empty means nobody grades anything** — the
+    /// same default as [`Self::rescopes`], for the same reason.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grades: Vec<GradeDef>,
+}
+
+/// Permission to move one graded attribute along its ladder.
+///
+/// A grade is a value from an **ordered** set — `low medium high critical`,
+/// `p3 p2 p1` — that a lane keys a decision on. The engine's whole job here is
+/// to say **who may move it, and in which direction**, because that is the
+/// half nothing was guarding: a lane's merge gate read a severity grade, and
+/// the only thing between a developer and clearing their own gate was a
+/// self-declared author flag in a script whose own comment called it *a
+/// convention, not a mechanism*.
+///
+/// ⚠⚠ **THE ENGINE HAS NO OPINION ABOUT WHICH DIRECTION IS DANGEROUS, AND
+/// THAT IS THE LOAD-BEARING DECISION.** The shape this arrived as was *raising
+/// is anyone's, lowering is the reviewer's* — correct for a gate that blocks
+/// **at or above** a floor, where raising cannot clear it. A gate that requires
+/// a **minimum** inverts it completely: "confidence must be `high` to merge"
+/// makes *raising* the direction that clears the gate. An engine that assumed
+/// the first shape would be silently wrong for the second, **in the direction
+/// that grants permission**. So a definition names roles for each direction and
+/// nothing is inferred.
+///
+/// ⚠ **Order is the ladder's position and never the value's name.** No lexical
+/// comparison and no implied numbers: `low` precedes `medium` only because the
+/// ladder says so, which is what lets an adopter spell their grades `p3 p2 p1`
+/// and get the same engine.
+///
+/// ⚠ **Empty means nobody**, exactly as [`WorkflowDef::rescopes`] already does.
+/// A definition that does not name a direction has not left it open.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GradeDef {
+    /// The attribute this ladder grades. Opaque to the engine, like a scope
+    /// label: it knows a rule is *about* this name and never what it means.
+    pub attribute: String,
+    /// Every value the attribute may hold, in order. Position is the only
+    /// source of order.
+    pub ladder: Vec<String>,
+    /// Roles that may move the value **later** along the ladder.
+    pub raise: Vec<String>,
+    /// Roles that may move the value **earlier** along the ladder.
+    pub lower: Vec<String>,
+    /// Whether the change must carry a reason.
+    ///
+    /// ⚠ Applies to **both** directions. A grade change with no stated reason
+    /// is indistinguishable from a record quietly becoming someone else's
+    /// problem — the same argument [`RescopeDef::requires_note`] already makes,
+    /// and it does not get weaker in the direction an adopter happens to think
+    /// is safe.
+    #[serde(default)]
+    pub requires_note: bool,
 }
 
 /// Permission to change one scope label on a record.
@@ -274,6 +329,16 @@ pub struct Snapshot {
     pub state: String,
     #[serde(default)]
     pub counters: BTreeMap<String, u32>,
+    /// The record's current value for each graded attribute.
+    ///
+    /// ⚠ Absent is not the same as the ladder's first value, and the engine
+    /// does not treat it as one: a record that has never been graded has no
+    /// position on the ladder, so **the first grade is neither a raise nor a
+    /// lower** and is authorized separately. Defaulting it to the floor would
+    /// silently make the opening grade a "raise" and hand it to whichever roles
+    /// happen to hold that direction.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub grades: BTreeMap<String, String>,
 }
 
 /// The engine's answer to "may `role` move this record to `to`?".
@@ -296,6 +361,13 @@ pub enum Decision {
         counter_updates: BTreeMap<String, u32>,
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         scope_updates: BTreeMap<String, String>,
+        /// Graded attributes this decision moves (see
+        /// [`Engine::authorize_grade`]). Empty for every ordinary move, and
+        /// omitted from the JSON when empty, so a consumer written before it
+        /// existed sees exactly what it saw before — the same compatibility
+        /// shape `scope_updates` already uses, and for the same reason.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        grade_updates: BTreeMap<String, String>,
     },
     /// The move was legal but a ceiling is spent: route the record to `to`
     /// (the counter's `on_exhausted` state) instead. No counter changes.
@@ -309,7 +381,12 @@ impl Decision {
     /// is every move except a rescope. Exists so the ordinary case does not
     /// have to name the field it is not using.
     pub fn allow(to: impl Into<String>, counter_updates: BTreeMap<String, u32>) -> Decision {
-        Decision::Allow { to: to.into(), counter_updates, scope_updates: BTreeMap::new() }
+        Decision::Allow {
+            to: to.into(),
+            counter_updates,
+            scope_updates: BTreeMap::new(),
+            grade_updates: BTreeMap::new(),
+        }
     }
 }
 
@@ -370,6 +447,21 @@ pub enum ValidationError {
     /// A counter metered both by state entry and by a transition: the same
     /// move would spend it twice.
     CounterSpentTwoWays(String),
+    /// A grade rule handing a direction to a role the workflow has no actor
+    /// for. It reads as a permission and grants nothing — the same shape as
+    /// [`Self::UnknownRescopeRole`].
+    UnknownGradeRole { attribute: String, role: String },
+    /// Two ladders for the same attribute: one is dead text, and which one is
+    /// dead depends on a lookup order nobody should have to know.
+    DuplicateGrade(String),
+    /// A ladder with fewer than two values. ⚠ A one-value ladder has no
+    /// direction, so every rule about who may raise or lower it is
+    /// unreachable — a granted permission that can never be exercised, which
+    /// is the shape this validation exists to refuse.
+    LadderTooShort(String),
+    /// The same value twice in one ladder: its position is ambiguous, and
+    /// position is the ONLY source of order here.
+    DuplicateLadderValue { attribute: String, value: String },
 }
 
 impl fmt::Display for ValidationError {
@@ -443,6 +535,20 @@ impl fmt::Display for ValidationError {
             DuplicateRescope { label, role } => {
                 write!(f, "scope label '{label}' is granted to role '{role}' twice")
             }
+            UnknownGradeRole { attribute, role } => write!(
+                f,
+                "grade '{attribute}' names role '{role}', which is not in `roles`"
+            ),
+            DuplicateGrade(a) => write!(f, "attribute '{a}' is graded twice"),
+            LadderTooShort(a) => write!(
+                f,
+                "grade '{a}' has fewer than two values: a ladder with no direction makes \
+                 every raise and lower rule unreachable"
+            ),
+            DuplicateLadderValue { attribute, value } => write!(
+                f,
+                "grade '{attribute}' lists '{value}' twice, so its position is ambiguous"
+            ),
         }
     }
 }
@@ -641,6 +747,37 @@ impl WorkflowDef {
             }
         }
 
+        // ⚠ Same three failures as the rescope block above, plus the two the
+        // ladder adds: a ladder that cannot express a direction, and a value
+        // whose position is ambiguous. Position is the only source of order
+        // here, so an ambiguous one is not a cosmetic duplicate.
+        let mut graded: BTreeSet<&str> = BTreeSet::new();
+        for grade in &self.grades {
+            if !graded.insert(grade.attribute.as_str()) {
+                return Err(DuplicateGrade(grade.attribute.clone()));
+            }
+            if grade.ladder.len() < 2 {
+                return Err(LadderTooShort(grade.attribute.clone()));
+            }
+            let mut seen: BTreeSet<&str> = BTreeSet::new();
+            for value in &grade.ladder {
+                if !seen.insert(value.as_str()) {
+                    return Err(DuplicateLadderValue {
+                        attribute: grade.attribute.clone(),
+                        value: value.clone(),
+                    });
+                }
+            }
+            for role in grade.raise.iter().chain(grade.lower.iter()) {
+                if !roles.contains(role.as_str()) {
+                    return Err(UnknownGradeRole {
+                        attribute: grade.attribute.clone(),
+                        role: role.clone(),
+                    });
+                }
+            }
+        }
+
         let mut reached: BTreeSet<&str> = BTreeSet::from([self.initial.as_str()]);
         if let Some(creation) = &self.creation {
             for name in &creation.roles {
@@ -790,6 +927,7 @@ impl Engine {
             to: to.to_string(),
             counter_updates,
             scope_updates: BTreeMap::new(),
+            grade_updates: BTreeMap::new(),
         }
     }
 
@@ -863,6 +1001,150 @@ impl Engine {
             to: snap.state.clone(),
             counter_updates: BTreeMap::new(),
             scope_updates: updates.clone(),
+            grade_updates: BTreeMap::new(),
+        }
+    }
+
+    /// May `role` set this record's `attribute` to `value`?
+    ///
+    /// A grade change moves no state and spends no counter, so the returned
+    /// `to` is the state the record is already in — the same shape
+    /// [`Self::authorize_rescope`] uses, and for the same reason: it is the one
+    /// form a caller already knows how to persist atomically, versioned and
+    /// evented.
+    ///
+    /// ⚠⚠ **THE DIRECTION IS COMPUTED, THE JUDGEMENT IS NOT.** The engine works
+    /// out whether this is a raise or a lower by comparing positions on the
+    /// ladder, and then asks the definition who holds that direction. It never
+    /// decides which direction is the dangerous one — see [`GradeDef`] for the
+    /// gate shape that inverts it.
+    ///
+    /// ⚠ **The first grade is neither.** A record with no value for the
+    /// attribute has no position to move from, so opening a grade requires a
+    /// role holding **either** direction. Treating an ungraded record as
+    /// sitting on the ladder's floor would silently make every opening grade a
+    /// raise — and hand it to whoever holds that direction, which on this
+    /// adopter's shape is the permissive one.
+    ///
+    /// ⚠ **Refused on a terminal record**, exactly as a rescope is, and not
+    /// configurable: a finished record's grade is what it was resolved at.
+    pub fn authorize_grade(
+        &self,
+        snap: &Snapshot,
+        role: &str,
+        attribute: &str,
+        value: &str,
+        note: Option<&str>,
+    ) -> Decision {
+        if !self.def.states.contains(&snap.state) {
+            return Decision::Deny {
+                reason: format!(
+                    "record state '{}' is not a state of workflow '{}'",
+                    snap.state, self.def.name
+                ),
+            };
+        }
+        if self.def.terminal.contains(&snap.state) {
+            return Decision::Deny {
+                reason: format!(
+                    "record is in terminal state '{}': a finished record's grade is what it \
+                     was resolved at, and is not rewritten",
+                    snap.state
+                ),
+            };
+        }
+        // Same split as `authorize` and `authorize_rescope`: "you may not" and
+        // "nobody may" send a reader to different places.
+        let Some(rule) = self.def.grades.iter().find(|g| g.attribute == attribute) else {
+            return Decision::Deny {
+                reason: format!(
+                    "workflow '{}' does not grade attribute '{attribute}'",
+                    self.def.name
+                ),
+            };
+        };
+        let Some(target) = rule.ladder.iter().position(|v| v == value) else {
+            return Decision::Deny {
+                reason: format!(
+                    "'{value}' is not a value of the '{attribute}' ladder ({})",
+                    rule.ladder.join(" < ")
+                ),
+            };
+        };
+
+        let held = snap.grades.get(attribute);
+        let permitted = match held {
+            None => {
+                // Opening a grade: neither direction, so either grant suffices.
+                rule.raise.iter().chain(rule.lower.iter()).any(|r| r == role)
+            }
+            Some(current) => {
+                let Some(from) = rule.ladder.iter().position(|v| v == current) else {
+                    // ⚠ The record holds a value this ladder does not contain.
+                    // Not a refusal about the ROLE — the definition and the
+                    // record disagree, and saying "you may not" would send the
+                    // reader to the wrong problem entirely.
+                    return Decision::Deny {
+                        reason: format!(
+                            "record's '{attribute}' is '{current}', which is not on the ladder \
+                             ({}) — the definition and the record disagree, and no role can \
+                             resolve that by grading",
+                            rule.ladder.join(" < ")
+                        ),
+                    };
+                };
+                match target.cmp(&from) {
+                    std::cmp::Ordering::Equal => {
+                        return Decision::Deny {
+                            reason: format!(
+                                "record's '{attribute}' is already '{value}'"
+                            ),
+                        };
+                    }
+                    std::cmp::Ordering::Greater => rule.raise.iter().any(|r| r == role),
+                    std::cmp::Ordering::Less => rule.lower.iter().any(|r| r == role),
+                }
+            }
+        };
+        if !permitted {
+            // ⚠ The refusal names the DIRECTION, because "role X may not grade"
+            // is true and useless when X may raise and this was a lower.
+            let direction = match held {
+                None => "open".to_string(),
+                Some(current) => {
+                    let from = rule.ladder.iter().position(|v| v == current).unwrap_or(0);
+                    if target > from { "raise".to_string() } else { "lower".to_string() }
+                }
+            };
+            let holders = match direction.as_str() {
+                "raise" => &rule.raise,
+                "lower" => &rule.lower,
+                _ => &rule.raise,
+            };
+            let who = if holders.is_empty() {
+                format!("workflow '{}' grants that to nobody", self.def.name)
+            } else {
+                format!("that is: {}", holders.join(", "))
+            };
+            return Decision::Deny {
+                reason: format!(
+                    "role '{role}' may not {direction} '{attribute}' — {who}"
+                ),
+            };
+        }
+        if rule.requires_note && note.is_none_or(str::is_empty) {
+            return Decision::Deny {
+                reason: format!(
+                    "changing '{attribute}' requires a reason, and none was given"
+                ),
+            };
+        }
+
+        Decision::Allow {
+            to: snap.state.clone(),
+            counter_updates: BTreeMap::new(),
+            scope_updates: BTreeMap::new(),
+            grade_updates: BTreeMap::from([(attribute.to_string(), value.to_string())]),
         }
     }
 
@@ -928,6 +1210,7 @@ impl Engine {
             // A new record's scope is the scope it is filed into; there is no
             // previous unit of work for it to move between.
             scope_updates: BTreeMap::new(),
+            grade_updates: BTreeMap::new(),
         }
     }
 
@@ -1075,6 +1358,7 @@ mod tests {
         Snapshot {
             state: state.to_string(),
             counters: BTreeMap::from([("agent_passes".to_string(), passes)]),
+            ..Snapshot::default()
         }
     }
 
@@ -1424,6 +1708,7 @@ mod tests {
             let s = Snapshot {
                 state: door.to_string(),
                 counters: BTreeMap::from([("passes".to_string(), 1)]),
+                ..Snapshot::default()
             };
             match engine.authorize(&s, &Attempt::new("worker", "working")) {
                 Decision::Allow { counter_updates, .. } => {
@@ -1436,6 +1721,7 @@ mod tests {
         let spent = Snapshot {
             state: "reopened".to_string(),
             counters: BTreeMap::from([("passes".to_string(), 2)]),
+            ..Snapshot::default()
         };
         assert!(matches!(
             engine.authorize(&spent, &Attempt::new("worker", "working")),
@@ -1486,6 +1772,7 @@ mod tests {
         let at_review = Snapshot {
             state: "review".to_string(),
             counters: BTreeMap::from([("passes".to_string(), 1)]),
+            ..Snapshot::default()
         };
 
         // Sending work back with no explanation spends an attempt on a guess.
@@ -1518,6 +1805,7 @@ mod tests {
         let working = Snapshot {
             state: "working".to_string(),
             counters: BTreeMap::from([("passes".to_string(), 1)]),
+            ..Snapshot::default()
         };
         match engine.authorize(&working, &Attempt::new("worker", "escalated")) {
             Decision::Deny { .. } => {}
@@ -1584,6 +1872,7 @@ mod tests {
         let at_review = Snapshot {
             state: "review".to_string(),
             counters: BTreeMap::from([("passes".to_string(), 1)]),
+            ..Snapshot::default()
         };
         let offered: Vec<&str> = engine
             .next_moves(&at_review, "reviewer")
@@ -1752,6 +2041,348 @@ mod tests {
         );
     }
 
+    // ------------------------------------------------------------------
+    // graded attributes
+    // ------------------------------------------------------------------
+
+    /// ⚠ **The two directions are granted to DIFFERENT roles**, because a
+    /// fixture that gave both to everyone could not tell a working direction
+    /// check from no direction check at all.
+    fn with_grades() -> Engine {
+        let mut def = review_loop();
+        def.grades = vec![GradeDef {
+            attribute: "severity".to_string(),
+            ladder: vec![
+                "low".to_string(),
+                "medium".to_string(),
+                "high".to_string(),
+                "critical".to_string(),
+            ],
+            raise: vec!["worker".to_string(), "reviewer".to_string()],
+            lower: vec!["reviewer".to_string()],
+            requires_note: false,
+        }];
+        Engine::new(def).unwrap()
+    }
+
+    fn graded(state: &str, severity: Option<&str>) -> Snapshot {
+        Snapshot {
+            state: state.to_string(),
+            grades: severity
+                .map(|v| BTreeMap::from([("severity".to_string(), v.to_string())]))
+                .unwrap_or_default(),
+            ..Snapshot::default()
+        }
+    }
+
+    /// ⚠⚠ **THE LOAD-BEARING TEST: THE ENGINE HAS NO OPINION ABOUT WHICH
+    /// DIRECTION IS DANGEROUS.** The shape this arrived as was "raising is
+    /// anyone's, lowering is the reviewer's" — right for a gate that blocks at
+    /// or above a floor, and exactly inverted for one that requires a minimum
+    /// ("confidence must be `high` to merge"). An engine that assumed the
+    /// first would be silently wrong for the second **in the direction that
+    /// grants permission**, so it asks the definition and infers nothing.
+    ///
+    /// Asserted as a matrix rather than a happy path: each role, each
+    /// direction, expected outcome. A one-sided test passes against an engine
+    /// that permits everything.
+    #[test]
+    fn each_direction_is_granted_separately_and_neither_is_assumed_safe() {
+        let engine = with_grades();
+        let cases: [(&str, &str, &str, bool); 6] = [
+            // role,      from,     to,        permitted
+            ("worker", "medium", "high", true),      // worker may raise
+            ("worker", "medium", "low", false),      // and may not lower
+            ("reviewer", "medium", "high", true),    // reviewer may raise
+            ("reviewer", "medium", "low", true),     // and may lower
+            ("operator", "medium", "high", false),   // operator holds neither
+            ("operator", "medium", "low", false),
+        ];
+        for (role, from, to, permitted) in cases {
+            let decision =
+                engine.authorize_grade(&graded("working", Some(from)), role, "severity", to, None);
+            let allowed = matches!(decision, Decision::Allow { .. });
+            assert_eq!(
+                allowed, permitted,
+                "role '{role}' moving severity {from} -> {to}: got {decision:?}"
+            );
+        }
+    }
+
+    /// The decision carries the change in the one shape a caller already
+    /// persists atomically, and moves nothing else. ⚠ A grade change that also
+    /// moved state or spent a counter would be a fabricated transition.
+    #[test]
+    fn a_grade_change_moves_the_grade_and_nothing_else() {
+        let engine = with_grades();
+        let decision = engine.authorize_grade(
+            &graded("working", Some("low")),
+            "worker",
+            "severity",
+            "high",
+            None,
+        );
+        let Decision::Allow { to, counter_updates, scope_updates, grade_updates } = decision else {
+            panic!("expected an allow, got {decision:?}");
+        };
+        assert_eq!(to, "working", "the record stays where it is");
+        assert!(counter_updates.is_empty(), "no ceiling is spent by grading");
+        assert!(scope_updates.is_empty(), "and no unit of work changes");
+        assert_eq!(grade_updates, BTreeMap::from([("severity".to_string(), "high".to_string())]));
+    }
+
+    /// ⚠⚠ **THE FIRST GRADE IS NEITHER A RAISE NOR A LOWER.** A record with no
+    /// value has no position to move from. Defaulting an ungraded record to
+    /// the ladder's floor would silently classify every opening grade as a
+    /// raise and hand it to whoever holds that direction — which on the shape
+    /// this arrived as is the permissive one, so the failure would be a quiet
+    /// widening rather than a refusal.
+    #[test]
+    fn opening_a_grade_needs_either_direction_not_the_raise_grant() {
+        let engine = with_grades();
+        // `operator` holds neither direction and is refused.
+        let refused =
+            engine.authorize_grade(&graded("working", None), "operator", "severity", "high", None);
+        assert!(matches!(refused, Decision::Deny { .. }), "{refused:?}");
+
+        // Both holders may open, INCLUDING the one that may only lower —
+        // which is the assertion that fails if this is treated as a raise.
+        for role in ["worker", "reviewer"] {
+            let opened =
+                engine.authorize_grade(&graded("working", None), role, "severity", "high", None);
+            assert!(matches!(opened, Decision::Allow { .. }), "{role}: {opened:?}");
+        }
+
+        // ⚠ The discriminating case: a role holding ONLY `lower`. It cannot
+        // raise, and it must still be able to open.
+        let mut def = review_loop();
+        def.grades = vec![GradeDef {
+            attribute: "severity".to_string(),
+            ladder: vec!["low".to_string(), "high".to_string()],
+            raise: vec!["worker".to_string()],
+            lower: vec!["reviewer".to_string()],
+            requires_note: false,
+        }];
+        let engine = Engine::new(def).unwrap();
+        let opened =
+            engine.authorize_grade(&graded("working", None), "reviewer", "severity", "high", None);
+        assert!(
+            matches!(opened, Decision::Allow { .. }),
+            "a lower-only role must be able to open a grade: {opened:?}"
+        );
+        let raised = engine.authorize_grade(
+            &graded("working", Some("low")),
+            "reviewer",
+            "severity",
+            "high",
+            None,
+        );
+        assert!(matches!(raised, Decision::Deny { .. }), "but not raise one: {raised:?}");
+    }
+
+    /// ⚠ Order is the ladder's position and never the value's name. A ladder
+    /// spelled so that alphabetical order DISAGREES with intent is the only
+    /// honest way to assert that — `p1` is the highest and sorts first.
+    #[test]
+    fn order_comes_from_the_ladder_not_from_the_spelling() {
+        let mut def = review_loop();
+        def.grades = vec![GradeDef {
+            attribute: "priority".to_string(),
+            ladder: vec!["p3".to_string(), "p2".to_string(), "p1".to_string()],
+            raise: vec!["worker".to_string()],
+            lower: vec!["reviewer".to_string()],
+            requires_note: false,
+        }];
+        let engine = Engine::new(def).unwrap();
+        let snap = Snapshot {
+            state: "working".to_string(),
+            grades: BTreeMap::from([("priority".to_string(), "p3".to_string())]),
+            ..Snapshot::default()
+        };
+        // p3 -> p1 is a RAISE by position, though "p1" < "p3" alphabetically.
+        let raised = engine.authorize_grade(&snap, "worker", "priority", "p1", None);
+        assert!(matches!(raised, Decision::Allow { .. }), "{raised:?}");
+        let lowered = engine.authorize_grade(&snap, "reviewer", "priority", "p1", None);
+        assert!(matches!(lowered, Decision::Deny { .. }), "not a lower: {lowered:?}");
+    }
+
+    /// The refusals a person has to act on, each pointing somewhere different.
+    #[test]
+    fn every_refusal_names_what_the_reader_has_to_fix() {
+        let engine = with_grades();
+        let reason = |d: Decision| match d {
+            Decision::Deny { reason } => reason,
+            other => panic!("expected a denial, got {other:?}"),
+        };
+
+        // A direction the role does not hold names the DIRECTION — "may not
+        // grade" is true and useless when the role may raise and this was a
+        // lower.
+        let r = reason(engine.authorize_grade(
+            &graded("working", Some("high")),
+            "worker",
+            "severity",
+            "low",
+            None,
+        ));
+        assert!(r.contains("lower"), "{r}");
+        assert!(r.contains("reviewer"), "it names who does hold it: {r}");
+
+        // An attribute nothing grades.
+        let r = reason(engine.authorize_grade(
+            &graded("working", None),
+            "worker",
+            "confidence",
+            "high",
+            None,
+        ));
+        assert!(r.contains("does not grade"), "{r}");
+
+        // A value that is not on the ladder — with the ladder printed, because
+        // the reader's next question is "then what is".
+        let r = reason(engine.authorize_grade(
+            &graded("working", None),
+            "worker",
+            "severity",
+            "catastrophic",
+            None,
+        ));
+        assert!(r.contains("catastrophic"), "{r}");
+        assert!(r.contains("low < medium"), "the ladder is shown: {r}");
+
+        // ⚠ A record holding a value the ladder does not contain is NOT a
+        // refusal about the role: the definition and the record disagree, and
+        // "you may not" would send the reader to the wrong problem.
+        let r = reason(engine.authorize_grade(
+            &graded("working", Some("blocker")),
+            "reviewer",
+            "severity",
+            "low",
+            None,
+        ));
+        assert!(r.contains("disagree"), "{r}");
+        assert!(!r.contains("may not"), "not a permission refusal: {r}");
+
+        // A terminal record's grade is what it was resolved at.
+        let r = reason(engine.authorize_grade(
+            &graded("approved", Some("low")),
+            "reviewer",
+            "severity",
+            "high",
+            None,
+        ));
+        assert!(r.contains("terminal"), "{r}");
+
+        // And a no-op says so rather than writing an event that changes
+        // nothing.
+        let r = reason(engine.authorize_grade(
+            &graded("working", Some("high")),
+            "worker",
+            "severity",
+            "high",
+            None,
+        ));
+        assert!(r.contains("already"), "{r}");
+    }
+
+    /// A reason is required in BOTH directions when the definition asks for
+    /// one. ⚠ The argument does not get weaker in whichever direction an
+    /// adopter happens to think is safe.
+    #[test]
+    fn a_required_reason_is_required_in_both_directions() {
+        let mut def = review_loop();
+        def.grades = vec![GradeDef { requires_note: true, ..with_grades().def().grades[0].clone() }];
+        let engine = Engine::new(def).unwrap();
+        for (role, to) in [("worker", "critical"), ("reviewer", "low")] {
+            let without =
+                engine.authorize_grade(&graded("working", Some("medium")), role, "severity", to, None);
+            assert!(matches!(without, Decision::Deny { .. }), "{role} -> {to}: {without:?}");
+            let with = engine.authorize_grade(
+                &graded("working", Some("medium")),
+                role,
+                "severity",
+                to,
+                Some("because"),
+            );
+            assert!(matches!(with, Decision::Allow { .. }), "{role} -> {to}: {with:?}");
+        }
+    }
+
+    /// Each way a grade definition can be written wrong, refused at load.
+    /// ⚠ A one-value ladder has no direction, so every rule about raising or
+    /// lowering it is unreachable — a granted permission that can never be
+    /// exercised, which is the shape this validation exists to refuse.
+    #[test]
+    fn a_grade_that_grants_nothing_reachable_is_refused_at_load() {
+        let base = |grades: Vec<GradeDef>| {
+            let mut def = review_loop();
+            def.grades = grades;
+            Engine::new(def)
+        };
+        let ok = GradeDef {
+            attribute: "severity".to_string(),
+            ladder: vec!["low".to_string(), "high".to_string()],
+            raise: vec!["worker".to_string()],
+            lower: vec!["reviewer".to_string()],
+            requires_note: false,
+        };
+        // ⚠ Floor: the valid fixture loads, or every assertion below is
+        // satisfied by a validator that refuses everything.
+        assert!(base(vec![ok.clone()]).is_ok());
+
+        assert_eq!(
+            base(vec![GradeDef { ladder: vec!["only".to_string()], ..ok.clone() }]).unwrap_err(),
+            ValidationError::LadderTooShort("severity".to_string())
+        );
+        assert_eq!(
+            base(vec![GradeDef {
+                ladder: vec!["low".to_string(), "low".to_string()],
+                ..ok.clone()
+            }])
+            .unwrap_err(),
+            ValidationError::DuplicateLadderValue {
+                attribute: "severity".to_string(),
+                value: "low".to_string()
+            }
+        );
+        assert_eq!(
+            base(vec![GradeDef { raise: vec!["archivist".to_string()], ..ok.clone() }]).unwrap_err(),
+            ValidationError::UnknownGradeRole {
+                attribute: "severity".to_string(),
+                role: "archivist".to_string()
+            }
+        );
+        // ⚠ The LOWER side too: checking only `raise` would pass a definition
+        // whose lower grant is a typo, which is the direction that silently
+        // grants nothing.
+        assert_eq!(
+            base(vec![GradeDef { lower: vec!["archivist".to_string()], ..ok.clone() }]).unwrap_err(),
+            ValidationError::UnknownGradeRole {
+                attribute: "severity".to_string(),
+                role: "archivist".to_string()
+            }
+        );
+        assert_eq!(
+            base(vec![ok.clone(), ok.clone()]).unwrap_err(),
+            ValidationError::DuplicateGrade("severity".to_string())
+        );
+    }
+
+    /// ⚠ A decision written before grades existed still parses, and one
+    /// carrying no grade change still serializes without the key — the same
+    /// compatibility shape `scope_updates` already holds.
+    #[test]
+    fn a_decision_without_grades_round_trips_exactly_as_it_did_before() {
+        let plain = Decision::allow("working", BTreeMap::new());
+        let json = serde_json::to_string(&plain).unwrap();
+        assert!(!json.contains("grade_updates"), "an empty change is omitted: {json}");
+        assert_eq!(serde_json::from_str::<Decision>(&json).unwrap(), plain);
+
+        // And a snapshot from before grades existed loads with none.
+        let old: Snapshot = serde_json::from_str(r#"{"state":"working","counters":{}}"#).unwrap();
+        assert!(old.grades.is_empty());
+    }
+
     /// The reference loop plus permission to move a record between units of
     /// work: the worker may re-label the unit, the reviewer may not.
     fn with_rescopes() -> Engine {
@@ -1777,7 +2408,7 @@ mod tests {
             &moving_to("follow-up"),
             Some("rides to the follow-up unit"),
         );
-        let Decision::Allow { to, counter_updates, scope_updates } = decision else {
+        let Decision::Allow { to, counter_updates, scope_updates, .. } = decision else {
             panic!("a permitted rescope was refused: {decision:?}");
         };
         // The state does not move and nothing is spent: a rescope is not a

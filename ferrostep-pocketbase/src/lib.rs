@@ -617,7 +617,7 @@ impl PocketBaseLedger {
                 }
                 Ok(Record {
                     id,
-                    snapshot: Snapshot { state, counters },
+                    snapshot: Snapshot { state, counters, ..Snapshot::default() },
                     version: Version(version.to_string()),
                 })
             }
@@ -638,7 +638,7 @@ impl PocketBaseLedger {
                 }
                 Ok(Record {
                     id,
-                    snapshot: Snapshot { state, counters },
+                    snapshot: Snapshot { state, counters, ..Snapshot::default() },
                     version: Version(version.to_string()),
                 })
             }
@@ -834,7 +834,7 @@ impl Ledger for PocketBaseLedger {
         let id = body.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
         Ok(Record {
             id: RecordId(id),
-            snapshot: Snapshot { state: to.clone(), counters: BTreeMap::new() },
+            snapshot: Snapshot { state: to.clone(), counters: BTreeMap::new(), ..Snapshot::default() },
             version: Version("1".to_string()),
         })
     }
@@ -2670,7 +2670,7 @@ mod tests {
     fn a_record(version: &str) -> Record {
         Record {
             id: RecordId("abc123".to_string()),
-            snapshot: Snapshot { state: "open".to_string(), counters: BTreeMap::new() },
+            snapshot: Snapshot { state: "open".to_string(), counters: BTreeMap::new(), ..Snapshot::default() },
             version: Version(version.to_string()),
         }
     }
@@ -3161,13 +3161,14 @@ mod tests {
 
         let record = Record {
             id: RecordId("r1".to_string()),
-            snapshot: Snapshot { state: "open".to_string(), counters: BTreeMap::new() },
+            snapshot: Snapshot { state: "open".to_string(), counters: BTreeMap::new(), ..Snapshot::default() },
             version: Version("1".to_string()),
         };
         let moving = Decision::Allow {
             to: "open".to_string(),
             counter_updates: BTreeMap::new(),
             scope_updates: BTreeMap::from([("branch".to_string(), "follow-up".to_string())]),
+            grade_updates: BTreeMap::new(),
         };
         let Err(refused) = ledger.apply(&record, &an_event(moving)) else {
             panic!("a rescope was sent to routes that cannot write it");
@@ -3198,13 +3199,14 @@ mod tests {
         let ledger = PocketBaseLedger::connect(&base, "token").unwrap();
         let record = Record {
             id: RecordId("r1".to_string()),
-            snapshot: Snapshot { state: "open".to_string(), counters: BTreeMap::new() },
+            snapshot: Snapshot { state: "open".to_string(), counters: BTreeMap::new(), ..Snapshot::default() },
             version: Version("1".to_string()),
         };
         let moving = Decision::Allow {
             to: "open".to_string(),
             counter_updates: BTreeMap::new(),
             scope_updates: BTreeMap::from([("branch".to_string(), "follow-up".to_string())]),
+            grade_updates: BTreeMap::new(),
         };
         assert_eq!(ledger.apply(&record, &an_event(moving)).unwrap(), Version("2".to_string()));
     }
