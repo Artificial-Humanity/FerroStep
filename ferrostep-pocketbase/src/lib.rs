@@ -283,6 +283,9 @@ impl Default for ActorBinding {
 /// copies of an authorization check is three chances for one to drift, and
 /// the one that drifts is not the one anybody tests.
 fn role_binding_js(actors: &ActorBinding) -> String {
+    // Bound locally so the generated text and the adapter's matcher are
+    // ONE derivation — see `CAS_CONFLICT`.
+    let role_not_yours = ROLE_NOT_YOURS;
     let ActorBinding { role_field, allow_unbound, .. } = actors;
     let unbound = if *allow_unbound {
         r#"        // This deployment still permits an unbound principal (see
@@ -308,7 +311,7 @@ fn role_binding_js(actors: &ActorBinding) -> String {
     if (boundRole) {{
         if (claimedRole && claimedRole !== boundRole) {{
             throw new BadRequestError(
-                "role_not_yours: this account acts as '" + boundRole +
+                "{role_not_yours}: this account acts as '" + boundRole +
                 "', the request claimed '" + claimedRole + "'"
             );
         }}
@@ -327,6 +330,29 @@ enum Shape {
 }
 
 /// A FerroStep ledger on a PocketBase instance.
+/// ⚠⚠ **The wire's refusal prefixes — ONE derivation, because a caller has to
+/// tell a RETRY from a DENIAL and both arrive as a 400.**
+///
+/// A compare-and-swap that lost a race is *re-read and try again*; a role that
+/// may not make the move is *stop*. Same status, different remedy, and a caller
+/// that cannot tell them apart prints the wrong instruction — which is the
+/// recurring shape in this workspace: a right classification with a wrong
+/// instruction beside it.
+///
+/// ⚠ These were **two copies** until 2026-08-27 — emitted as literals into the
+/// generated JavaScript and grepped for as separate literals in the adapter,
+/// with no test asserting the two spellings matched. Nothing would have gone
+/// red if they drifted; the adapter would simply have stopped recognising a
+/// conflict and reported it as a transport error, and every consumer keying on
+/// the prefix would have broken silently. **They are a public contract now, not
+/// a convention**: adapters in other languages match on them too.
+pub const CAS_CONFLICT: &str = "cas_conflict";
+/// The record named by the request does not exist. See [`CAS_CONFLICT`].
+pub const NO_RECORD: &str = "no_record";
+/// The authenticated account does not act as the role the request claimed.
+/// **Not retryable** — the opposite of [`CAS_CONFLICT`].
+pub const ROLE_NOT_YOURS: &str = "role_not_yours";
+
 pub struct PocketBaseLedger {
     base: String,
     token: String,
@@ -854,13 +880,13 @@ impl Ledger for PocketBaseLedger {
         }
         // Measured mappings first; anything else is inferred and says so by
         // carrying the raw status and message.
-        if message.contains("cas_conflict") {
+        if message.contains(CAS_CONFLICT) {
             return Err(LedgerError::VersionConflict {
                 id: record.id.clone(),
                 expected: record.version.clone(),
             });
         }
-        if status == 404 || message.contains("no_record") {
+        if status == 404 || message.contains(NO_RECORD) {
             return Err(LedgerError::NotFound(record.id.clone()));
         }
         Err(LedgerError::Transport(format!("apply answered {status}: {message}")))
@@ -943,6 +969,9 @@ impl Ledger for PocketBaseLedger {
 /// helpers are not visible, so the duplication between the routes is
 /// load-bearing, not tidiness waiting to happen.
 pub fn hooks_file(actors: &ActorBinding) -> String {
+    // Bound locally so the generated text and the adapter's matcher are
+    // ONE derivation — see `CAS_CONFLICT`.
+    let (cas_conflict, no_record) = (CAS_CONFLICT, NO_RECORD);
     let version = env!("CARGO_PKG_VERSION");
     let binding = role_binding_js(actors);
     format!(
@@ -971,14 +1000,14 @@ routerAdd("POST", "/api/ferrostep/ferrostep_records/apply", (e) => {{
         try {{
             rec = txApp.findRecordById("ferrostep_records", recordId);
         }} catch (err) {{
-            throw new NotFoundError("no_record: " + recordId);
+            throw new NotFoundError("{no_record}: " + recordId);
         }}
         const held = rec.getInt("version");
         if (held !== expected) {{
             // The compare lives INSIDE the transaction. Measured as the only
             // placement that survives concurrent writers; the same check
             // outside it intermittently passes while losing updates.
-            throw new BadRequestError("cas_conflict: expected " + expected + ", found " + held);
+            throw new BadRequestError("{cas_conflict}: expected " + expected + ", found " + held);
         }}
         rec.set("state", String(body.state));
         rec.set("counters", body.counters || {{}});
@@ -1065,6 +1094,9 @@ pub fn hooks_file_mapped(
     release: Option<&ReleaseHook>,
     actors: &ActorBinding,
 ) -> String {
+    // Bound locally so the generated text and the adapter's matcher are
+    // ONE derivation — see `CAS_CONFLICT`.
+    let (cas_conflict, no_record) = (CAS_CONFLICT, NO_RECORD);
     let version = env!("CARGO_PKG_VERSION");
     let binding = role_binding_js(actors);
     let records = &map.records;
@@ -1181,14 +1213,14 @@ routerAdd("POST", "/api/ferrostep/{records}/apply", (e) => {{
         try {{
             rec = txApp.findRecordById("{records}", recordId);
         }} catch (err) {{
-            throw new NotFoundError("no_record: " + recordId);
+            throw new NotFoundError("{no_record}: " + recordId);
         }}
         const held = rec.getInt("{version_field}");
         if (held !== expected) {{
             // The compare lives INSIDE the transaction. Measured as the only
             // placement that survives concurrent writers; the same check
             // outside it intermittently passes while losing updates.
-            throw new BadRequestError("cas_conflict: expected " + expected + ", found " + held);
+            throw new BadRequestError("{cas_conflict}: expected " + expected + ", found " + held);
         }}
         rec.set("{state}", String(body.state));
 {counter_sets}
@@ -1744,6 +1776,42 @@ mod tests {
     /// attributes has to answer exactly what it answered before this category
     /// existed — otherwise every older deployment starts claiming a capability
     /// its generated file does not have.
+    /// ⚠⚠ **The adapter matches on these prefixes and the generated file emits
+    /// them; asserted against the GENERATED TEXT, not against a second copy of
+    /// the spellings.** They were two independent literals until 2026-08-27 —
+    /// emitted into the JavaScript, grepped for in the adapter, with nothing
+    /// asserting the two agreed. Drift would have gone unnoticed in the
+    /// direction that always does: the adapter would have stopped recognising a
+    /// conflict and reported a plain transport error, and the caller's remedy
+    /// text — *re-read and retry* — would have vanished with it.
+    ///
+    /// ⚠ It matters beyond this crate. A caller has to tell a **retryable**
+    /// refusal from a **denial**, both of which arrive as a 400, and adapters
+    /// in other languages key on the same prefixes. That makes them a wire
+    /// contract, and a contract with two spellings is a contract with none.
+    #[test]
+    fn the_wire_prefixes_the_adapter_matches_are_the_ones_the_hooks_emit() {
+        for hooks in [
+            hooks_file(&ActorBinding::default()),
+            hooks_file_mapped(&guarded_map(), None, &ActorBinding::default()),
+        ] {
+            assert!(
+                hooks.contains(&format!("\"{CAS_CONFLICT}: ")),
+                "the generated file does not emit the prefix the adapter matches"
+            );
+            assert!(hooks.contains(&format!("\"{NO_RECORD}: ")), "{NO_RECORD} not emitted");
+        }
+        // The role refusal only exists where an actor binding does.
+        let bound = ActorBinding { role_field: "role".to_string(), ..ActorBinding::default() };
+        assert!(
+            hooks_file_mapped(&guarded_map(), None, &bound).contains(ROLE_NOT_YOURS),
+            "{ROLE_NOT_YOURS} not emitted where roles are bound"
+        );
+        // ⚠ And the two must not be the same string, or a caller keying on the
+        // prefix cannot tell a retry from a denial — the whole point of them.
+        assert_ne!(CAS_CONFLICT, ROLE_NOT_YOURS);
+    }
+
     /// Reads the ping's `writes` list out of the generated file — the KIND
     /// list, which is the thing this test is about.
     ///

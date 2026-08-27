@@ -7,6 +7,19 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-pocketbase`: **the wire's refusal prefixes are a contract, with one
+  derivation.** `CAS_CONFLICT`, `NO_RECORD` and `ROLE_NOT_YOURS` are public
+  constants; the generated JavaScript interpolates them and the adapter matches
+  on them. They were **two independent literals** — emitted as text, grepped for
+  as separate strings, with no test asserting the spellings agreed. Drift would
+  have gone unnoticed in the usual direction: the adapter would have stopped
+  recognising a conflict, reported a plain transport error, and the caller's
+  *re-read and retry* remedy would have vanished with it.
+  ⚠ **Why it is a contract and not an internal detail:** a caller has to tell a
+  **retryable** refusal from a **denial**, and both arrive as a 400. Adapters in
+  other languages key on the same prefixes. The cross-check test asserts them
+  against the **generated text**, never a second copy of the spellings.
+
 - `ferrostep-pocketbase`: **the ping states which COLUMNS an installed file can
   write, and the adapter refuses by name.** `writes` answers in kinds — *state,
   counters, scope* — and that granularity was measured wrong. A mapped file
