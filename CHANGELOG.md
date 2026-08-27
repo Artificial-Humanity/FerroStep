@@ -7,6 +7,22 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-cli`: **a rescope that moves part of a record's address says what
+  it left behind** (owner, 2026-08-27). A record's unit of work is the whole
+  tuple of scope labels and every query that finds work filters on it, so
+  setting one label and leaving the rest does not relocate the record — it
+  leaves it in no consistent unit at all, with each untouched label still naming
+  the old one. Measured on the first adopter: one label moved, a tool still
+  selecting on the other counted four records its own queue could not act on,
+  and would have spent every remaining review before reporting it had not
+  converged. Two other tools there filtered on the full tuple and were right;
+  **the disagreement between instruments is what surfaced it.**
+  ⚠ **A warning, not a refusal, and deliberately.** That partial move was
+  legitimate at the time — there was no value for the other label yet — so
+  refusing would have gone red on correct behaviour, which is how a guard gets
+  switched off. Whether a definition should declare labels as one address, and
+  refuse then, is open and belongs with the satisfiability check.
+
 - `ferrostep-cli`: **`--note-file` on every move that takes a reason**, and a
   guard that no accepted flag is missing from the help text. A reason
   containing backticks or quotes could not survive a command line without a

@@ -354,15 +354,27 @@ fn run(args: &[String]) -> Result<String, String> {
         }
         "rescope" => {
             let role = flags.require("role")?;
-            do_rescope(
+            // ⚠ Loaded for the address, not for the connection. A record's unit
+            // of work is the whole tuple of scope labels, and only the map says
+            // what that tuple is.
+            let map = match flags.get("map") {
+                Some(path) => Some(load_map(path)?),
+                None => None,
+            };
+            let sets = flags.all("set");
+            let mut out = do_rescope(
                 &engine,
                 ledger.as_ref(),
                 flags.require("record")?,
                 role,
-                flags.all("set"),
+                sets,
                 note.as_deref(),
                 flags.get("actor").unwrap_or(role),
-            )
+            )?;
+            if let Some(warning) = partial_rescope_warning(map.as_ref(), sets) {
+                out.push_str(&warning);
+            }
+            Ok(out)
         }
         "notify" => {
             let rows = records_with_status(&engine, ledger.as_ref(), &scope, false)?;
@@ -686,6 +698,48 @@ fn load_engine(path: &str) -> Result<Engine, String> {
 
 /// One reader for the mapping file, because two subcommands now want it and
 /// only one of them opens a store.
+/// ⚠⚠ **A rescope moves the label it is given, and the others then lie.**
+/// A record's unit of work is the whole tuple of scope labels, and every query
+/// that finds work filters on it — so setting one label and leaving the rest
+/// does not relocate the record, it leaves it in no consistent unit at all.
+///
+/// Measured on the first adopter, 2026-08-27: one label moved, a tool still
+/// selecting on the other counted four records its own queue could not act on,
+/// and would have spent every remaining review before reporting it had not
+/// converged. Two other tools in that lane filtered on the full tuple and were
+/// right; the disagreement between them is what surfaced it.
+///
+/// ⚠ **A warning, not a refusal, deliberately.** Their partial move was
+/// legitimate at the time — there was no value for the other label yet — so
+/// refusing would have gone red on correct behaviour, which is how a guard gets
+/// switched off. Whether a definition should declare labels as one address, and
+/// refuse then, is open and belongs with the satisfiability check.
+fn partial_rescope_warning(
+    map: Option<&ferrostep_pocketbase::CollectionMap>,
+    sets: &[String],
+) -> Option<String> {
+    let map = map?;
+    let touched: Vec<&str> = sets.iter().filter_map(|s| s.split_once('=').map(|(l, _)| l)).collect();
+    if !map.scope_fields.iter().any(|l| touched.contains(&l.as_str())) {
+        return None;
+    }
+    let untouched: Vec<String> = map
+        .scope_fields
+        .iter()
+        .filter(|l| !touched.contains(&l.as_str()))
+        .map(|l| format!("'{l}'"))
+        .collect();
+    if untouched.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "\n\n⚠ {} still names the OLD unit of work. A record's unit is the whole tuple, so \
+         this record is now in neither: a query filtering on an untouched label still finds \
+         it where it was. Set them together, or say why it belongs in both.",
+        untouched.join(", ")
+    ))
+}
+
 fn load_map(path: &str) -> Result<ferrostep_pocketbase::CollectionMap, String> {
     let source =
         std::fs::read_to_string(path).map_err(|e| format!("cannot read map '{path}': {e}"))?;
@@ -1554,6 +1608,49 @@ mod tests {
         // vacuous pass this repo keeps re-finding.
         assert!(checked >= 20, "only {checked} flags enumerated; the listing is broken");
         assert!(missing.is_empty(), "accepted but undocumented: {missing:?}");
+    }
+
+    /// ⚠⚠ The case that cost a real loop a cycle: one label moved, the other
+    /// left naming the old unit, and a tool filtering on the untouched one
+    /// counting records its own queue could not act on.
+    #[test]
+    fn a_rescope_that_moves_part_of_the_address_says_what_it_left_behind() {
+        let map = map_with_scope(&["repo", "branch"]);
+        let w = partial_rescope_warning(Some(&map), &[String::from("repo=other/thing")])
+            .expect("a partial move must warn");
+        assert!(w.contains("'branch'"), "does not name what was left: {w}");
+        assert!(!w.contains("'repo'"), "names the label that DID move: {w}");
+    }
+
+    /// The negative controls, and each is a distinct way to be wrong.
+    #[test]
+    fn a_whole_address_a_single_label_and_an_unrelated_set_stay_quiet() {
+        let two = map_with_scope(&["repo", "branch"]);
+        // Whole tuple moved together — the thing the warning asks for.
+        assert!(
+            partial_rescope_warning(
+                Some(&two),
+                &[String::from("repo=x"), String::from("branch=y")]
+            )
+            .is_none(),
+            "warned about a complete move"
+        );
+        // One label cannot be out of step with itself.
+        let one = map_with_scope(&["branch"]);
+        assert!(
+            partial_rescope_warning(Some(&one), &[String::from("branch=y")]).is_none(),
+            "warned about a single-label address"
+        );
+        // ⚠ A set touching NO scope label is not a partial move of the address.
+        assert!(
+            partial_rescope_warning(Some(&two), &[String::from("unrelated=z")]).is_none(),
+            "warned when the address was not touched at all"
+        );
+        // No map means no address to reason about; silence is the honest answer.
+        assert!(partial_rescope_warning(None, &[String::from("repo=x")]).is_none());
+        // ⚠ Floor: the positive case must still fire, or every assertion above
+        // is satisfied by a function that never warns.
+        assert!(partial_rescope_warning(Some(&two), &[String::from("repo=x")]).is_some());
     }
 
     fn flags_of(pairs: &[(&str, &str)]) -> Flags {
