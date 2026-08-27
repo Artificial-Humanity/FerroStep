@@ -222,6 +222,17 @@ could not look is the failure this exists to remove — and the report counts
 and shows what it *did* verify, because a run that checked nothing also has no
 complaints.
 
+⚠⚠ **A generated file outlives the binary that wrote it, so upgrading this
+crate can leave a deployment behind.** The hooks installed in a store were
+written by whatever version generated them; a newer adapter meeting an older
+file is the ordinary case, not the exotic one. Where that matters, the file is
+built to **say what it can do** and the adapter refuses what it cannot reach —
+never to accept, drop, and answer success. So after upgrading, regenerate the
+generated files and reinstall them; `doctor` reports every question it could
+not ask as *unchecked* and **exits non-zero**, which is what a stale install
+looks like from the outside. ⚠ A refusal there is the correct behaviour and
+not a broken state: nothing has been mis-checked, and nothing was checked.
+
 `explain` takes no store at all. Besides who may file, what may move where,
 and who may change a scope label, it prints the numbers the definition
 asserts **and their off-by-one neighbours** — the list you want when a
