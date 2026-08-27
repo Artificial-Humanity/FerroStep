@@ -49,8 +49,8 @@ use std::path::{Path, PathBuf};
 
 use ferrostep_core::{Decision, Snapshot};
 use ferrostep_ledger::{
-    decided_scope_updates, decided_snapshot, Capabilities, Event, Ledger, LedgerError, Record,
-    Answer, RecordId, Scope, StoreShape, StoredEvent, Version,
+    decided_grade_updates, decided_scope_updates, decided_snapshot, Answer, Capabilities, Event,
+    Ledger, LedgerError, Record, RecordId, Scope, StoreShape, StoredEvent, Version,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -636,9 +636,36 @@ impl PocketBaseLedger {
                     let held = value.get(name).and_then(Value::as_u64).unwrap_or(0);
                     counters.insert(name.clone(), held as u32);
                 }
+                // ⚠⚠ **AN UNREAD GRADE IS A SILENTLY WIDENED PERMISSION.** The
+                // engine classifies a change as a raise or a lower by comparing
+                // the target against the value the record HOLDS — and a record
+                // that holds nothing is *opening* a grade, which any role with
+                // either direction may do. So an adapter that does not read
+                // this column does not fail to grade; it grades, and hands the
+                // act to roles the definition never granted it to.
+                //
+                // Measured on a live store, 2026-08-27, in exactly that state:
+                // a worker holding only `raise` lowered a finding from `high`
+                // to `low` and was answered success, because the seeded value
+                // never reached the snapshot.
+                //
+                // ⚠ An EMPTY column is absent rather than empty-string: a row
+                // predating the mapping has never been graded, and "" is not a
+                // value of any ladder — reading it as one would produce the
+                // "record holds a value the ladder does not contain" refusal
+                // on every ungraded row.
+                let mut grades = BTreeMap::new();
+                for name in &map.attribute_fields {
+                    match value.get(name).and_then(Value::as_str) {
+                        Some(held) if !held.is_empty() => {
+                            grades.insert(name.clone(), held.to_string());
+                        }
+                        _ => {}
+                    }
+                }
                 Ok(Record {
                     id,
-                    snapshot: Snapshot { state, counters, ..Snapshot::default() },
+                    snapshot: Snapshot { state, counters, grades },
                     version: Version(version.to_string()),
                 })
             }
@@ -862,6 +889,32 @@ impl Ledger for PocketBaseLedger {
             "scope label",
             decided_scope_updates(&event.decision).keys().collect(),
         )?;
+        // ⚠⚠ **THIS CALL SITE WAS DELIBERATELY ABSENT UNTIL NOW.** The
+        // attribute column list shipped before anything could write it, and a
+        // refusal guarding a write path that did not exist would have been
+        // untestable ceremony. The write path exists as of graded attributes,
+        // so the guard arrives with it rather than after it — which is the
+        // ordering the "guarded column with no write path" defect taught, run
+        // the other way round.
+        self.refuse_unwritable(
+            "attribute",
+            decided_grade_updates(&event.decision).keys().collect(),
+        )?;
+        // ⚠⚠ The generic collection has no per-attribute columns and no place
+        // to put a grade, so a grade decision against it would be written
+        // nowhere and read back as ungraded — which the engine would then
+        // treat as *opening* the grade, handing the act to roles that hold
+        // either direction. Refused by name instead. Grading needs a mapped
+        // collection because that is where a graded column can exist.
+        if !decided_grade_updates(&event.decision).is_empty()
+            && matches!(self.shape, Shape::Generic)
+        {
+            return Err(LedgerError::Unsupported(
+                "grade a record in the generic collections: a graded attribute needs a column, \
+                 which a mapped collection has and the generic shape does not"
+                    .to_string(),
+            ));
+        }
         if !decided_scope_updates(&event.decision).is_empty() && !self.writes_scope {
             return Err(LedgerError::Unsupported(
                 "write scope labels: the installed ferrostep hooks predate rescope — \
@@ -886,6 +939,11 @@ impl Ledger for PocketBaseLedger {
                 // these and leaves the record's other labels alone. Empty for
                 // every move that is not a rescope.
                 "scope": decided_scope_updates(&event.decision),
+                // ⚠ Named attributes, not the record's whole grade map, for
+                // exactly the reason scope is named: the route writes these and
+                // leaves the others alone, so a grade the decision never
+                // mentioned cannot be lost by a writer holding a stale read.
+                "attributes": decided_grade_updates(&event.decision),
                 "event": event_payload(event),
             }))
             .map_err(transport)?;
@@ -2470,6 +2528,79 @@ mod tests {
         assert!(hooks.contains(r#"rec.set("counters", body.counters || {})"#), "{hooks}");
     }
 
+    /// ⚠⚠ **AN UNREAD GRADE IS A SILENTLY WIDENED PERMISSION, AND THIS IS THE
+    /// REGRESSION FOR IT.** The engine classifies a change as a raise or a
+    /// lower by comparing the target against the value the record HOLDS, and a
+    /// record holding nothing is *opening* a grade — which any role with
+    /// either direction may do. So an adapter that does not read the column
+    /// does not fail to grade; it grades, and hands the act to roles the
+    /// definition never granted it to.
+    ///
+    /// **Measured on a live store, 2026-08-27, in exactly that state**: a
+    /// worker holding only `raise` lowered a finding from `high` to `low` and
+    /// was answered success, because the seeded value never reached the
+    /// snapshot. Found by running it; no text assertion here would have.
+    #[test]
+    fn a_mapped_record_reads_its_graded_columns_into_the_snapshot() {
+        let base = serve(vec![tickets_ping(), ("/api/collections/tickets/records/t1", 200,
+            r#"{"id":"t1","stage":"open","fs_version":"3","attempts":1,"lane":"main","severity":"high"}"#
+                .to_string())], 2);
+        let ledger = PocketBaseLedger::connect_mapped(&base, "tok", tickets_map()).unwrap();
+        let record = ledger.load(&RecordId("t1".to_string())).unwrap();
+        assert_eq!(
+            record.snapshot.grades.get("severity").map(String::as_str),
+            Some("high"),
+            "the graded column must reach the snapshot, or every grade reads as opening one"
+        );
+    }
+
+    /// ⚠ An empty column is **absent**, not the empty string. A row that
+    /// predates the mapping has never been graded, and `""` is not a value of
+    /// any ladder — reading it as one produces the "record holds a value the
+    /// ladder does not contain" refusal on every ungraded row, which is a
+    /// refusal about a defect that is not there.
+    #[test]
+    fn an_ungraded_row_has_no_grade_rather_than_an_empty_one() {
+        let base = serve(vec![tickets_ping(), ("/api/collections/tickets/records/t1", 200,
+            r#"{"id":"t1","stage":"open","fs_version":"0","attempts":0,"lane":"main","severity":""}"#
+                .to_string())], 2);
+        let ledger = PocketBaseLedger::connect_mapped(&base, "tok", tickets_map()).unwrap();
+        let record = ledger.load(&RecordId("t1".to_string())).unwrap();
+        assert!(record.snapshot.grades.is_empty(), "{:?}", record.snapshot.grades);
+    }
+
+    /// ⚠⚠ The generic collection has nowhere to put a grade — no per-attribute
+    /// column exists — so a grade decision against it would be written nowhere
+    /// and read back as ungraded, which the engine treats as *opening* the
+    /// grade. Refused by name rather than dropped, which is the rule this
+    /// adapter applies to every write path it does not have.
+    #[test]
+    fn grading_the_generic_collection_is_refused_rather_than_written_nowhere() {
+        let base = serve(vec![ping_with_scope()], 2);
+        let ledger = PocketBaseLedger::connect(&base, "tok").unwrap();
+        let graded = Decision::Allow {
+            to: "open".to_string(),
+            counter_updates: BTreeMap::new(),
+            scope_updates: BTreeMap::new(),
+            grade_updates: BTreeMap::from([("severity".to_string(), "high".to_string())]),
+        };
+        let err = ledger
+            .apply(&a_record("1"), &an_event(graded))
+            .expect_err("the generic shape cannot hold a grade");
+        assert!(matches!(err, LedgerError::Unsupported(_)), "{err:?}");
+        assert!(err.to_string().contains("needs a column"), "{err}");
+
+        // ⚠ Floor: an ordinary move against the same ledger still works, or
+        // this passes against an adapter that refuses everything.
+        let base = serve(
+            vec![ping_with_scope(), ("/api/ferrostep/ferrostep_records/apply", 200,
+                r#"{"version":2}"#.to_string())],
+            2,
+        );
+        let ledger = PocketBaseLedger::connect(&base, "tok").unwrap();
+        assert!(ledger.apply(&a_record("1"), &an_event(allow("review"))).is_ok());
+    }
+
     /// ⚠⚠ **THE ONE ROUTE WHOSE ANSWER MUST NOT BE A CONSTANT.** Every other
     /// generated route can honestly answer from what was known when it was
     /// written; this one exists to report what the collection accepts *now*,
@@ -3726,6 +3857,66 @@ mod tests {
         let history = ledger.history(&RecordId(id)).unwrap();
         assert_eq!(history.len(), 1, "one refused-free write, one event");
         assert_eq!(history[0].event.role, "reviewer", "the event records the account's role");
+    }
+
+    /// ⚠⚠ **THE REQUEST BODY IS NOT VISIBLE TO ANY TEST HERE THAT DOES NOT
+    /// SEND IT.** The mock server drains the body and does not expose it, so
+    /// nothing in this module can tell an adapter that sends its grade changes
+    /// from one that sends `{}` — measured by mutation: replacing the
+    /// `attributes` payload with an empty object left every text and mock test
+    /// green. Whether the value reaches the column is a property of a running
+    /// store.
+    ///
+    /// **Fixture:** the `guarded_tickets` collection and hooks from
+    /// `live_the_role_binding_and_the_direct_write_guard_actually_refuse`,
+    /// whose map declares `severity` as an attribute column.
+    #[test]
+    #[ignore = "needs a live PocketBase with the guarded_tickets fixture; set FERROSTEP_POCKETBASE_URL and FERROSTEP_POCKETBASE_TOKEN and run with --ignored"]
+    fn live_a_grade_reaches_the_column_and_comes_back_in_the_snapshot() {
+        let url = std::env::var("FERROSTEP_POCKETBASE_URL").unwrap();
+        let token = std::env::var("FERROSTEP_POCKETBASE_TOKEN").unwrap();
+        let ledger =
+            PocketBaseLedger::connect_mapped(&url, &token, guarded_live_map()).unwrap();
+        let client = agent();
+
+        let resp = client
+            .post(format!("{url}/api/collections/guarded_tickets/records"))
+            .header("Authorization", &token)
+            .send_json(json!({
+                "stage": "open", "attempts": 0, "lane": "live",
+                "fs_version": 0, "severity": "medium"
+            }))
+            .unwrap();
+        let (status, filed) = read(resp);
+        assert_eq!(status, 200, "{filed}");
+        let id = RecordId(filed["id"].as_str().unwrap().to_string());
+
+        // ⚠ Seeded at `medium`, so the round trip below cannot pass by reading
+        // an absent column as an absent grade.
+        let before = ledger.load(&id).unwrap();
+        assert_eq!(
+            before.snapshot.grades.get("severity").map(String::as_str),
+            Some("medium"),
+            "the seeded grade must reach the snapshot"
+        );
+
+        let raise = Decision::Allow {
+            to: "open".to_string(),
+            counter_updates: BTreeMap::new(),
+            scope_updates: BTreeMap::new(),
+            grade_updates: BTreeMap::from([("severity".to_string(), "high".to_string())]),
+        };
+        ledger.apply(&before, &an_event(raise)).unwrap();
+
+        // ⚠ Read back from the STORE, not from the decision. A 200 says the
+        // request was accepted; only the row says the column moved.
+        let after = ledger.load(&id).unwrap();
+        assert_eq!(
+            after.snapshot.grades.get("severity").map(String::as_str),
+            Some("high"),
+            "the grade must reach the column, not merely be accepted"
+        );
+        assert_eq!(after.version.0, "1", "and it is one refereed write");
     }
 
     #[test]

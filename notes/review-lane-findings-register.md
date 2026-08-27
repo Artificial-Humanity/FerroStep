@@ -179,8 +179,32 @@ makes it **countable**, which it is not today.
 
 ### 3. ⚠⚠ The referee can only guard its own vocabulary, and a lane's gate may key on a field outside it
 
-**Status: RULED 2026-08-27. A labelled stopgap shipped; the successor deferred
-behind entry 4.**
+**Status: RULED 2026-08-27, and BOTH HALVES NOW TAKEN.** The labelled stopgap
+shipped first; the successor — graded attributes, with an ordered ladder and
+per-direction grants — landed behind `doctor` as the owner sequenced it. Its
+design is in `graded-attributes-design.md`, written before the code so the two
+decisions that produce the shape could be argued with rather than discovered in
+a diff. ⚠ **The stopgap did not have to be unbuilt**, which is what its own
+docstring promised: a graded attribute still names its column in the map, the
+same split that puts `counter_fields` there and each counter's `max` in the
+definition.
+
+⚠⚠ **The decision worth carrying out of it: the engine has no opinion about
+which direction is dangerous.** The shape this arrived as was *raising is
+anyone's, lowering is the reviewer's* — right for a gate that blocks at or
+above a floor. A gate requiring a **minimum** inverts it, and an engine that
+assumed the first would be silently wrong for the second **in the direction
+that grants permission**. So a definition names roles per direction, `explain`
+prints that it has no opinion about which end clears your gate, and no
+threshold is modelled at all.
+
+⚠ **Found by running it, not by reasoning: an unread grade is a silently
+widened permission.** The adapter did not read the graded column into the
+snapshot, so every change read as *opening* a grade — which any role holding
+either direction may do. Measured live: a worker holding only `raise` lowered a
+finding from `high` to `low` and was answered success. The generic collection
+now refuses grading outright rather than writing it nowhere, for the same
+reason.
 
 ⚠ **The owner took both halves rather than choosing between them:** close the
 hole now with a category the engine has no opinion about, and design the real

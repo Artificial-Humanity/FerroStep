@@ -212,6 +212,15 @@ will refuse rather than assume a zero. Some deployments keep filing for
 themselves: a *mapped* PocketBase collection refuses it by name, so the
 procedure that already creates those records stays the one that does.
 
+**A graded attribute is an ordered ladder the definition controls.** Where a
+lane keys a decision on a value — a severity, a priority, a confidence —
+`ferrostep grade` moves it through the referee, and the definition says who may
+move it **in each direction**. ⚠ **The engine has no opinion about which
+direction is dangerous**, and that is deliberate: *raising is safe* is true of
+a gate that blocks at or above a floor and exactly backwards for one requiring
+a minimum, so nothing is inferred and no threshold is modelled. Order comes
+from the ladder's position, never the value's name.
+
 **`doctor` asks whether a definition is satisfiable against a store** —
 before a transition proves it is not. Are the definition's states values the
 state column will accept? Do its counters and scope labels have columns? Can

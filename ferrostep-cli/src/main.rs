@@ -56,7 +56,7 @@ use ferrostep_roster::Roster;
 const USAGE: &str = "ferrostep — the person-facing surface over a FerroStep-refereed ledger
 
 USAGE:
-  ferrostep <awaiting|audit|file|move|rescope|notify|doctor> --workflow <def.json> --store <target> [options]
+  ferrostep <awaiting|audit|file|move|rescope|grade|notify|doctor> --workflow <def.json> --store <target> [options]
   ferrostep explain --workflow <def.json> [--map <map.json>]
   ferrostep agent-env [--agent <title>] [--roster <config.yaml>]
 
@@ -85,6 +85,15 @@ file:                          (also spelled `create`; files a new record)
 
 move:
   --record <id> --role <role> --to <state> [--note <text> | --note-file <path>] [--actor <name>]
+
+grade:                         (move one graded attribute along its ladder)
+  --record <id> --role <role> --attribute <name> --to <value>
+  [--note <text> | --note-file <path>] [--actor <name>]
+                        ⚠ One attribute per invocation: each has its own
+                        ladder and its own grants per DIRECTION, and the
+                        definition says who may raise and who may lower — the
+                        engine never assumes which of those is the safe one.
+                        See `explain`.
 
 rescope:                       (move a record to a different unit of work)
   --record <id> --role <role> --set <label=value> [--set …] [--note <text> | --note-file <path>]
@@ -256,6 +265,10 @@ fn accepted_flags(command: &str) -> &'static [&'static str] {
         "rescope" => {
             &["workflow", "store", "token", "map", "scope", "record", "role", "set", "note", "actor", "note-file"]
         }
+        "grade" => &[
+            "workflow", "store", "token", "map", "scope", "record", "role", "attribute", "to",
+            "note", "actor", "note-file",
+        ],
         "notify" => {
             &["workflow", "store", "token", "map", "scope", "role", "ntfy", "topic", "ntfy-token"]
         }
@@ -371,6 +384,18 @@ fn run(args: &[String]) -> Result<String, String> {
                 flags.require("record")?,
                 role,
                 flags.require("to")?,
+                note.as_deref(),
+                flags.get("actor").unwrap_or(role),
+            )
+        }
+        "grade" => {
+            let role = flags.require("role")?;
+            do_grade(
+                &engine,
+                ledger.as_ref(),
+                flags.require("record")?,
+                role,
+                (flags.require("attribute")?, flags.require("to")?),
                 note.as_deref(),
                 flags.get("actor").unwrap_or(role),
             )
@@ -537,19 +562,52 @@ fn diagnose(
                 );
             }
         }
-        // ⚠ Attributes get no definition-side check because there is nothing
-        // to check them against: the engine has no vocabulary for them yet, by
-        // design. Saying so beats silently covering three of four kinds.
-        if !map.attribute_fields.is_empty() {
-            say(
-                Level::Note,
-                DEF_MAP,
-                format!(
-                    "the map declares {} as attribute column(s); the engine has no vocabulary \
-                     for them, so nothing here can check what values they take",
-                    map.attribute_fields.join(", ")
-                ),
-            );
+        // ⚠ This check did not exist until graded attributes did. Before that
+        // the engine had no vocabulary for an attribute, so `doctor` said so
+        // rather than silently covering three kinds of four — and that note is
+        // now replaced by the check it was standing in for.
+        for grade in &def.grades {
+            if map.attribute_fields.contains(&grade.attribute) {
+                say(
+                    Level::Agreed,
+                    DEF_MAP,
+                    format!(
+                        "graded attribute '{}' is mapped to a column of the same name",
+                        grade.attribute
+                    ),
+                );
+            } else {
+                say(
+                    Level::Fault,
+                    DEF_MAP,
+                    format!(
+                        "graded attribute '{}' has no column in the map — the ladder is \
+                         documented and every grade of it would be dropped",
+                        grade.attribute
+                    ),
+                );
+            }
+        }
+        // ⚠⚠ AND THE OTHER DIRECTION, which is the one that matters more. A
+        // column refereed as an attribute with no ladder behind it is the
+        // STOPGAP shape: closed to direct writes, so the write is
+        // authenticated and evented, and with nothing saying who may set which
+        // value or in which direction. That is a real deployment state and not
+        // a fault — it is what the stopgap was for — but a report that stayed
+        // silent about it would let an adopter believe the ladder is guarding
+        // a column it has never heard of.
+        for column in &map.attribute_fields {
+            if !def.grades.iter().any(|g| &g.attribute == column) {
+                say(
+                    Level::Note,
+                    DEF_MAP,
+                    format!(
+                        "column '{column}' is refereed as an attribute and no ladder grades it: \
+                         writes to it are authenticated and evented, and nothing says who may \
+                         set which value"
+                    ),
+                );
+            }
         }
     } else {
         say(
@@ -947,6 +1005,53 @@ fn explain(engine: &Engine, map: Option<&ferrostep_pocketbase::CollectionMap>) -
         }
         None => {
             let _ = writeln!(out, "\nfiling: nobody, through this engine");
+        }
+    }
+
+    if !def.grades.is_empty() {
+        let _ = writeln!(out, "\ngraded attributes:");
+        for grade in &def.grades {
+            // ⚠ The ladder printed in order, with the direction words attached
+            // to the ROLES that hold them. A reader's question here is never
+            // "what are the values" alone — it is "who can move this toward
+            // the end I care about", and the answer differs per attribute.
+            let _ = writeln!(
+                out,
+                "  {}: {}",
+                grade.attribute,
+                grade.ladder.join("  ->  ")
+            );
+            let who = |roles: &[String]| -> String {
+                if roles.is_empty() { "nobody".to_string() } else { roles.join(", ") }
+            };
+            let _ = writeln!(
+                out,
+                "    raise (toward '{}'): {}",
+                grade.ladder.last().map(String::as_str).unwrap_or("?"),
+                who(&grade.raise)
+            );
+            let _ = writeln!(
+                out,
+                "    lower (toward '{}'): {}",
+                grade.ladder.first().map(String::as_str).unwrap_or("?"),
+                who(&grade.lower)
+            );
+            if grade.requires_note {
+                let _ = writeln!(out, "    a reason is required, in both directions");
+            }
+            // ⚠⚠ THE SENTENCE AN ADOPTER MOST NEEDS, and the one a definition
+            // cannot state: the engine guards who moves the value and has no
+            // opinion about which end of the ladder passes a gate. An adopter
+            // reading only the grants will assume the familiar shape — that
+            // raising is the safe direction — which is true of a gate with a
+            // floor and exactly backwards for one with a minimum.
+            let _ = writeln!(
+                out,
+                "    ⚠ the referee guards WHO MOVES THIS AND WHICH WAY, and has no opinion\n\
+                 \x20     about which end of the ladder clears your gate — that is your policy,\n\
+                 \x20     and it is what decides which of the two directions above is the\n\
+                 \x20     permissive one."
+            );
         }
     }
 
@@ -1690,6 +1795,59 @@ fn do_rescope(
     ))
 }
 
+/// Move one graded attribute along its ladder.
+///
+/// ⚠ **One attribute per invocation, deliberately.** A rescope takes several
+/// labels at once because a record's unit of work is the whole tuple and
+/// moving part of it leaves the rest lying — the defect `explain` now warns
+/// about. A grade is the opposite: each attribute has its own ladder, its own
+/// directions and its own grants, so batching them would let one refusal
+/// silently decide the fate of the others.
+fn do_grade(
+    engine: &Engine,
+    ledger: &dyn Ledger,
+    record_id: &str,
+    role: &str,
+    // ⚠ Paired rather than passed separately, to stay under the argument
+    // ceiling this file already holds itself to — the same reason
+    // `partial_rescope_warning` was extracted out of `do_rescope`. The pair is
+    // meaningful anyway: an attribute without a target value is not a request.
+    change: (&str, &str),
+    note: Option<&str>,
+    actor: &str,
+) -> Result<String, String> {
+    let (attribute, value) = change;
+    let record = ledger.load(&RecordId(record_id.to_string())).map_err(|e| e.to_string())?;
+    let held = record.snapshot.grades.get(attribute).cloned();
+    let decision = engine.authorize_grade(&record.snapshot, role, attribute, value, note);
+    if let Decision::Deny { reason } = &decision {
+        return Err(format!("refused: {reason}"));
+    }
+    let event = Event {
+        actor: actor.to_string(),
+        role: role.to_string(),
+        // A grade change does not move the record, so its history says it came
+        // from — and stays in — the state it is in. Same reasoning as a
+        // rescope: a state change in the history that never happened is worse
+        // than no entry at all.
+        from_state: Some(record.snapshot.state.clone()),
+        decision,
+        note: note.map(str::to_string),
+    };
+    let version = ledger.apply(&record, &event).map_err(|e| e.to_string())?;
+    // ⚠ The report says where it came FROM, because "severity is now high" is
+    // the same sentence whether it was raised from low or lowered from
+    // critical — and those are different acts with different grants.
+    let from = match held {
+        Some(previous) => format!("{previous} -> "),
+        None => String::new(),
+    };
+    Ok(format!(
+        "record {} {attribute} {from}{value} (version {})",
+        record.id.0, version.0
+    ))
+}
+
 /// One notification per awaiting record. Pure assembly; the send is the
 /// adapter's.
 fn notifications_for(
@@ -2366,6 +2524,119 @@ mod tests {
         // Floor: the sets agreeing is only meaningful if they are not empty,
         // and the count is the number of kinds the fixture exercises.
         assert_eq!(flattened.len(), 5, "the fixture must hold one column of every kind");
+    }
+
+    fn engine_with_grades() -> Engine {
+        let mut def =
+            WorkflowDef::from_json(include_str!("../../examples/review-loop.json")).unwrap();
+        def.grades = vec![ferrostep_core::GradeDef {
+            attribute: "severity".to_string(),
+            ladder: vec!["low".to_string(), "medium".to_string(), "high".to_string()],
+            raise: vec!["worker".to_string()],
+            lower: vec!["reviewer".to_string()],
+            requires_note: false,
+        }];
+        Engine::new(def).unwrap()
+    }
+
+    /// The whole point of the subcommand: a grade moves through the referee
+    /// rather than through a database console, and the report says which way
+    /// it went.
+    #[test]
+    fn grade_moves_one_attribute_and_says_which_way_it_went() {
+        let (_dir, ledger, ids) = seeded();
+        let engine = engine_with_grades();
+        let id = ids["live"].0.clone();
+
+        let opened =
+            do_grade(&engine, &ledger, &id, "worker", ("severity", "medium"), None, "worker").unwrap();
+        assert!(opened.contains("severity medium"), "{opened}");
+        // ⚠ Opening reports no origin, because there was none — reporting a
+        // fabricated "low -> medium" would claim the record had been graded
+        // before, which is exactly the distinction the engine keeps.
+        assert!(!opened.contains("->"), "an opening grade has nowhere to come from: {opened}");
+
+        let raised =
+            do_grade(&engine, &ledger, &id, "worker", ("severity", "high"), None, "worker").unwrap();
+        assert!(raised.contains("medium -> high"), "a move states its origin: {raised}");
+
+        // And it landed, rather than being reported and dropped.
+        let record = ledger.load(&RecordId(id.clone())).unwrap();
+        assert_eq!(record.snapshot.grades["severity"], "high");
+    }
+
+    /// ⚠⚠ The refusal a person acts on names the DIRECTION and who holds it.
+    /// "role 'worker' may not grade severity" is true and useless when the
+    /// worker may raise it and this was a lower.
+    #[test]
+    fn a_direction_the_role_does_not_hold_is_refused_by_direction() {
+        let (_dir, ledger, ids) = seeded();
+        let engine = engine_with_grades();
+        let id = ids["live"].0.clone();
+        do_grade(&engine, &ledger, &id, "worker", ("severity", "high"), None, "worker").unwrap();
+
+        let refused =
+            do_grade(&engine, &ledger, &id, "worker", ("severity", "low"), None, "worker")
+                .expect_err("the worker holds raise, not lower");
+        assert!(refused.contains("lower"), "{refused}");
+        assert!(refused.contains("reviewer"), "and names who does hold it: {refused}");
+
+        // ⚠ Floor: the role that does hold it succeeds, or the assertion above
+        // is satisfied by a command that refuses everything.
+        let allowed =
+            do_grade(&engine, &ledger, &id, "reviewer", ("severity", "low"), None, "reviewer")
+                .unwrap();
+        assert!(allowed.contains("high -> low"), "{allowed}");
+    }
+
+    /// ⚠⚠ **THE SENTENCE `explain` MUST CARRY.** An adopter reading only the
+    /// grants will assume the familiar shape — that raising is the safe
+    /// direction — which is true of a gate with a floor and exactly backwards
+    /// for one requiring a minimum. The engine has no opinion, and a surface
+    /// that prints the grants without saying so invites the reader to supply
+    /// the missing opinion themselves.
+    #[test]
+    fn explain_prints_the_ladder_and_refuses_to_imply_which_end_is_safe() {
+        let out = explain(&engine_with_grades(), None);
+        assert!(out.contains("graded attributes:"), "{out}");
+        assert!(out.contains("low  ->  medium  ->  high"), "the ladder, in order: {out}");
+        assert!(out.contains("raise (toward 'high'): worker"), "{out}");
+        assert!(out.contains("lower (toward 'low'): reviewer"), "{out}");
+        // ⚠ Both halves. Anchoring only on the tail survived a mutation that
+        // deleted "has no opinion" and left the rest — the assertion passed
+        // while the load-bearing clause was gone.
+        assert!(out.contains("has no opinion"), "the disclaimer's subject: {out}");
+        assert!(
+            out.contains("about which end of the ladder clears your gate"),
+            "the warning that keeps a reader from supplying the missing opinion: {out}"
+        );
+        // ⚠ A definition with no grades prints no section, rather than an
+        // empty heading that reads as "there are none, checked".
+        let plain = explain(&engine(), None);
+        assert!(!plain.contains("graded attributes:"), "{plain}");
+    }
+
+    /// The definition-side check `doctor` said it could not do until the
+    /// engine had a vocabulary for attributes.
+    #[test]
+    fn doctor_checks_a_ladder_against_the_column_it_needs() {
+        let graded = engine_with_grades();
+        let mut map = doctor_map();
+        map.attribute_fields.clear();
+
+        let report = doctor_report(graded.def(), Some(&map), &Ok(agreeing_shape()))
+            .expect_err("a ladder with no column is a fault");
+        assert!(report.contains("severity"), "{report}");
+        assert!(report.contains("would be dropped"), "{report}");
+
+        // ⚠ And the other direction is a NOTE, not a fault: a refereed
+        // attribute with no ladder is the stopgap shape, which is a real
+        // deployment state. Reporting it as broken would go red on a
+        // deployment that is exactly as its owner intended.
+        let ungraded = doctor_report(engine().def(), Some(&doctor_map()), &Ok(agreeing_shape()));
+        let text = ungraded.unwrap_or_else(|e| e);
+        assert!(text.contains("no ladder grades it"), "{text}");
+        assert!(text.contains("nothing says who may set which value"), "{text}");
     }
 
     fn engine_with_rescopes() -> Engine {

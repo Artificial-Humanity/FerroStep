@@ -7,6 +7,52 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-core`, `ferrostep-ledger`, `ferrostep-sqlite`,
+  `ferrostep-pocketbase`, `ferrostep-cli`: **graded attributes** — an ordered
+  ladder in the definition, with **each direction granted separately**, and
+  `ferrostep grade` to move one. Register entry 3 item B, the successor the
+  owner sequenced behind `doctor`. Design written down first in
+  `notes/graded-attributes-design.md`.
+  Closes the hole the stopgap could only half-close: a lane's merge gate reads
+  a severity grade, and the only thing between a developer and clearing their
+  own gate was a **self-declared author flag** in a script whose own comment
+  called it *a convention, not a mechanism*.
+
+  ⚠⚠ **The engine has no opinion about which direction is dangerous.** The
+  shape this arrived as was *raising is anyone's, lowering is the reviewer's* —
+  correct for a gate that blocks at or above a floor. A gate requiring a
+  **minimum** ("confidence must be `high` to merge") inverts it completely, and
+  an engine that assumed the first would be silently wrong for the second **in
+  the direction that grants permission**. A definition names roles per
+  direction; `explain` prints that the referee guards who moves the value and
+  which way, and has no opinion about which end clears your gate. **No
+  threshold is modelled**, deliberately: the moment the engine knows which side
+  is blocked it has that opinion back.
+
+  ⚠ Order is the ladder's position, never the value's name, so `p3 p2 p1`
+  works. The first grade is **neither a raise nor a lower** — treating an
+  ungraded record as sitting on the floor would classify every opening grade as
+  a raise and hand it to whoever holds that direction.
+
+  ⚠⚠ **An unread grade is a silently widened permission, and this was measured
+  rather than anticipated.** The PocketBase adapter did not read the graded
+  column into the snapshot, so every change read as *opening* a grade — which
+  any role with either direction may do. **On a live store a worker holding
+  only `raise` lowered a finding from `high` to `low` and was answered
+  success.** Found by running it; no text assertion here would have. Fixed,
+  with a regression test, and the generic collection now refuses grading
+  outright rather than writing it nowhere.
+  ⚠ SQLite gained a `grades` column **including for files that predate it** —
+  `CREATE TABLE IF NOT EXISTS` does nothing to an existing table, and without
+  the upgrade path an old ledger opens cleanly and reads every record as
+  ungraded.
+
+  ⚠ `doctor` now checks a ladder against the column it needs — the gap it
+  previously reported as unavailable "because the engine has no vocabulary for
+  attributes". The reverse direction is a **note, not a fault**: a refereed
+  attribute with no ladder is the stopgap shape, and reporting it as broken
+  would go red on a deployment that is exactly as its owner intended.
+
 - `ferrostep-pocketbase` (tests): ⚠⚠ **the two authorization controls this
   crate advertises were proven by grep; now they are executed.** An audit of
   every text-level assertion over a generated file — 23 of them — asked which
