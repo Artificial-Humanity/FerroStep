@@ -461,6 +461,15 @@ change will do this again.
 
 ### 6. Smaller, and both real
 
+**Status: TAKEN 2026-08-27, both.** The emit config is now version-controlled in
+the adopter's repo with history (owner's call on which repo — the point was that
+*nowhere* was not an answer), and `--note-file` shipped on every note-bearing
+move together with a guard that no accepted flag is missing from the help text.
+⚠ **Marked late**, and the delay is itself the shape this register keeps
+catching: a register saying *open* about work that shipped is a doc disagreeing
+with an artifact, which is the whole subject of entries 4, 5 and 8.
+
+
 * **The emit config for the generated guard is in no repository.** The file
   that decides which columns become the guard's refereed list sits at a
   workspace root that is not a git repo — **checked, not assumed.** A security

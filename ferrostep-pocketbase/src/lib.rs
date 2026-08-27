@@ -1920,6 +1920,27 @@ pub fn install_files(pb_dir: &Path, actors: &ActorBinding) -> std::io::Result<(P
 
 #[cfg(test)]
 mod tests {
+//! ⚠⚠ **TWO KINDS OF TEST LIVE HERE, AND CONFUSING THEM IS THE MISTAKE THIS
+//! MODULE HAS ALREADY MADE.**
+//!
+//! Most assertions about a generated file are about its **text**, which is the
+//! right level for a file this crate *writes* and never *runs*: a missing
+//! branch, a wrong column name, an access rule that is public because it is an
+//! empty string. Those are real properties and a string is how you check them.
+//!
+//! ⚠ **They cannot tell you a check RUNS.** Measured 2026-08-27: replacing a
+//! generated guard's condition with `if (false)` leaves the allowlist, the
+//! refusal name and every other asserted string in place, and **the entire
+//! text suite stays green while the route refuses nothing.** The same mutation
+//! against the role binding and the direct-write guard also left the text
+//! suite green. Whether a check runs is a property of a JavaScript runtime.
+//!
+//! So: a property that is a **behaviour** gets a `live_*` test, which is
+//! `#[ignore]`d and needs a real store. A property that is genuinely about the
+//! artifact stays a text assertion. Where a behaviour is knowingly left
+//! text-only, its doc says **TEXT-ONLY** and why — because the dangerous state
+//! is not an uncovered property, it is an uncovered property that reads as
+//! covered.
     use super::*;
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::TcpListener;
@@ -2422,9 +2443,9 @@ mod tests {
         // returning them — measured live, and the reason the adapter lowercases
         // before matching. A test using the lowercase spelling would pass while
         // the wire form went unrecognised.
-        let refused = format!(
-            r#"{{"message":"Unwritable_column: counters.ghost — this installed file has no branch."}}"#
-        );
+        let refused =
+            r#"{"message":"Unwritable_column: counters.ghost — this installed file has no branch."}"#
+                .to_string();
         let base = serve(vec![tickets_ping(), ("/api/ferrostep/tickets/apply", 400, refused)], 2);
         let ledger = PocketBaseLedger::connect_mapped(&base, "tok", tickets_map()).unwrap();
         let err = ledger
@@ -2889,6 +2910,12 @@ mod tests {
         assert!(!events.contains(r#"Rule":"""#), "an empty-string rule is public");
     }
 
+    /// ⚠⚠ **TEXT-ONLY: this asserts the generated file SAYS it, not that it
+    /// DOES it.** The idempotency this asserts is a property of running the migration twice,
+    /// which only a store can do. Measured on this crate: disabling a generated check's
+    /// condition leaves every asserted string in place and the whole text suite
+    /// green, so read this as evidence about the artifact and not about the
+    /// deployment's behaviour.
     #[test]
     fn the_mapped_migration_guards_both_of_its_changes() {
         let migration = migration_file_mapped(&tickets_map(), &ActorBinding::default());
@@ -3019,6 +3046,12 @@ mod tests {
     /// The transition this default exists for: a deployment with no actors
     /// yet authenticates as an administrator, so refusing unbound principals
     /// on install would break every write the moment the hooks landed.
+    /// ⚠⚠ **TEXT-ONLY: this asserts the generated file SAYS it, not that it
+    /// DOES it.** Covering it live needs a SECOND generated file — `allow_unbound` is baked at
+    /// generation — and therefore a second collection and fixture. Measured on this crate: disabling a generated check's
+    /// condition leaves every asserted string in place and the whole text suite
+    /// green, so read this as evidence about the artifact and not about the
+    /// deployment's behaviour.
     #[test]
     fn a_deployment_can_require_every_actor_to_be_bound_but_is_not_forced_to() {
         let strict = ActorBinding { allow_unbound: false, ..Default::default() };
@@ -3203,6 +3236,11 @@ mod tests {
     /// is expressed differently: merge into what is stored rather than
     /// replace it. A record that loses an unnamed label falls out of every
     /// query filtering on it, silently.
+    /// ⚠⚠ **TEXT-ONLY: this asserts the generated file SAYS it, not that it
+    /// DOES it.** Merge-versus-replace is a runtime outcome; this checks the merge is written. Measured on this crate: disabling a generated check's
+    /// condition leaves every asserted string in place and the whole text suite
+    /// green, so read this as evidence about the artifact and not about the
+    /// deployment's behaviour.
     #[test]
     fn the_generic_route_merges_scope_labels_rather_than_replacing_them() {
         let hooks = hooks_file(&ActorBinding::default());
@@ -3214,6 +3252,12 @@ mod tests {
         );
     }
 
+    /// ⚠⚠ **TEXT-ONLY: this asserts the generated file SAYS it, not that it
+    /// DOES it.** ⚠ The `WRITERS` allowlist is an authorization control proven here by grep;
+    /// covering it live needs a release-hook fixture and a non-listed account. Measured on this crate: disabling a generated check's
+    /// condition leaves every asserted string in place and the whole text suite
+    /// green, so read this as evidence about the artifact and not about the
+    /// deployment's behaviour.
     #[test]
     fn the_release_hook_is_a_guarded_transition_with_the_bookkeeping_attached() {
         let release = ReleaseHook {
@@ -3530,6 +3574,156 @@ mod tests {
         let (status, body) = read(ok);
         assert_eq!(status, 200, "a request naming only declared columns must land: {body}");
         assert_eq!(ledger.load(&id).unwrap().snapshot.counters["attempts"], 1);
+    }
+
+    /// The guarded fixture, on its own collection so it can coexist with the
+    /// unguarded one. ⚠ Two hooks files for the same collection cannot both be
+    /// installed, and `tickets` is already spoken for by the test above.
+    fn guarded_live_map() -> CollectionMap {
+        CollectionMap {
+            records: "guarded_tickets".to_string(),
+            events: "guarded_ticket_events".to_string(),
+            ..guarded_map()
+        }
+    }
+
+    /// ⚠⚠ **THE TWO AUTHORIZATION CONTROLS THIS CRATE ADVERTISES, EXECUTED.**
+    /// Until this existed both were verified by asserting that a *string*
+    /// appeared in generated text — `const boundRole =` for the role binding,
+    /// `refereed_field` for the direct-write guard. **Measured on this crate's
+    /// own tests, 2026-08-27: replacing a generated check's condition with
+    /// `if (false)` leaves every such string in place and all the text tests
+    /// green.** A security control proven by grep is not proven.
+    ///
+    /// Three properties, and the positive control that keeps them honest:
+    ///
+    /// * **The acting role comes from the account.** An account bound to one
+    ///   role, claiming another, is refused by name. Without this a route that
+    ///   authenticates and then believes `body.event.role` lets any
+    ///   authenticated caller act as any role — invisible while every actor
+    ///   shares one credential, and the entire point once they do not.
+    /// * **The refereed columns move through the route or not at all.** A
+    ///   direct write to the state column is refused, which is the claim that
+    ///   makes this a hook rather than an access rule.
+    /// * **A column the map does not declare is refused**, not dropped — the
+    ///   same property as the undeclared-column test, checked here against a
+    ///   *guarded* file so the two guards cannot interfere.
+    ///
+    /// **Fixture:** a `guarded_tickets` collection (stage text, fs_version
+    /// number, attempts number, lane text, severity text), a
+    /// `guarded_ticket_events` collection, the hooks from
+    /// `hooks_file_mapped(&guarded_live_map(), None, &ActorBinding::default())`
+    /// installed, and an auth collection whose records carry a `role` field
+    /// with one record whose role is `reviewer`. Its token goes in
+    /// `FERROSTEP_POCKETBASE_ACTOR_TOKEN`; the superuser token stays in
+    /// `FERROSTEP_POCKETBASE_TOKEN` for filing.
+    ///
+    /// ⚠ Skipped rather than failed when the actor token is absent, because a
+    /// deployment without an actor account cannot answer these questions and
+    /// saying so beats a red that means "fixture missing".
+    #[test]
+    #[ignore = "needs a live PocketBase with the guarded_tickets fixture and an actor account; set FERROSTEP_POCKETBASE_URL, FERROSTEP_POCKETBASE_TOKEN and FERROSTEP_POCKETBASE_ACTOR_TOKEN and run with --ignored"]
+    fn live_the_role_binding_and_the_direct_write_guard_actually_refuse() {
+        let url = std::env::var("FERROSTEP_POCKETBASE_URL").unwrap();
+        let token = std::env::var("FERROSTEP_POCKETBASE_TOKEN").unwrap();
+        let Ok(actor) = std::env::var("FERROSTEP_POCKETBASE_ACTOR_TOKEN") else {
+            eprintln!("no FERROSTEP_POCKETBASE_ACTOR_TOKEN — the authorization checks need a bound account; nothing was verified");
+            return;
+        };
+        let client = agent();
+
+        // Filed as superuser, through the collection's own procedure. ⚠ The
+        // guard refuses direct writes to refereed columns on UPDATE, not on
+        // create, so filing is unaffected — asserted by this succeeding.
+        let resp = client
+            .post(format!("{url}/api/collections/guarded_tickets/records"))
+            .header("Authorization", &token)
+            .send_json(json!({ "stage": "open", "attempts": 0, "lane": "live", "fs_version": 0 }))
+            .unwrap();
+        let (status, filed) = read(resp);
+        assert_eq!(status, 200, "filing must stay possible under the guard: {filed}");
+        let id = filed["id"].as_str().unwrap().to_string();
+
+        // ---- 1. the acting role comes from the account ----
+        let claimed = client
+            .post(format!("{url}/api/ferrostep/guarded_tickets/apply"))
+            .header("Authorization", &actor)
+            .send_json(json!({
+                "record_id": id, "expected_version": 0, "state": "open",
+                "event": { "actor": "t", "role": "operator", "from_state": "open",
+                           "decision": { "kind": "allow", "to": "open" } }
+            }))
+            .unwrap();
+        let (status, body) = read(claimed);
+        assert_eq!(status, 400, "an account may not act as a role it is not bound to: {body}");
+        assert!(refusal(&body).contains(ROLE_NOT_YOURS), "and refused by name: {body}");
+
+        // ---- 2. the refereed columns are closed to direct writes ----
+        let direct = client
+            .patch(format!("{url}/api/collections/guarded_tickets/records/{id}"))
+            .header("Authorization", &token)
+            .send_json(json!({ "stage": "closed" }))
+            .unwrap();
+        let (status, body) = read(direct);
+        assert_eq!(status, 400, "a direct write to a refereed column must be refused: {body}");
+        assert!(
+            refusal(&body).contains("refereed_field"),
+            "and say which column and where it must go instead: {body}"
+        );
+
+        // ---- 3. a column the map does not declare ----
+        let undeclared = client
+            .post(format!("{url}/api/ferrostep/guarded_tickets/apply"))
+            .header("Authorization", &actor)
+            .send_json(json!({
+                "record_id": id, "expected_version": 0, "state": "open",
+                "counters": { "ghost_counter": 1 },
+                "event": { "actor": "t", "from_state": "open",
+                           "decision": { "kind": "allow", "to": "open" } }
+            }))
+            .unwrap();
+        let (status, body) = read(undeclared);
+        assert_eq!(status, 400, "an undeclared column must be refused: {body}");
+        assert!(refusal(&body).contains(UNWRITABLE_COLUMN), "{body}");
+
+        // ⚠⚠ NOTHING ABOVE MOVED THE RECORD. Three refusals that had each
+        // spent a version would be a worse failure than the writes they
+        // refused, and this is the assertion that would catch it.
+        let ledger =
+            PocketBaseLedger::connect_mapped(&url, &token, guarded_live_map()).unwrap();
+        let before = ledger.load(&RecordId(id.clone())).unwrap();
+        assert_eq!(before.version.0, "0", "a refused request must not spend a version");
+        assert_eq!(before.snapshot.state, "open", "nor move the record");
+
+        // ---- positive control ----
+        // ⚠ Without this, a route that refused everything would satisfy all
+        // three assertions above and read as a hardened deployment.
+        let allowed = client
+            .post(format!("{url}/api/ferrostep/guarded_tickets/apply"))
+            .header("Authorization", &actor)
+            .send_json(json!({
+                "record_id": id, "expected_version": 0, "state": "open",
+                "counters": { "attempts": 1 },
+                // ⚠ A complete decision, because the history is read back
+                // below and `Decision` requires every field. A hand-rolled
+                // payload that the route accepts can still be one this crate
+                // cannot parse — which is its own small finding, and the
+                // reason this test reads the event rather than trusting 200.
+                "event": { "actor": "t", "from_state": "open",
+                           "decision": { "kind": "allow", "to": "open",
+                                         "counter_updates": { "attempts": 1 },
+                                         "scope_updates": {} } }
+            }))
+            .unwrap();
+        let (status, body) = read(allowed);
+        assert_eq!(status, 200, "the bound account's own role must still work: {body}");
+        let after = ledger.load(&RecordId(id.clone())).unwrap();
+        assert_eq!(after.snapshot.counters["attempts"], 1, "and the write must land");
+
+        // And the event records the BOUND role, not one the request supplied.
+        let history = ledger.history(&RecordId(id)).unwrap();
+        assert_eq!(history.len(), 1, "one refused-free write, one event");
+        assert_eq!(history[0].event.role, "reviewer", "the event records the account's role");
     }
 
     #[test]

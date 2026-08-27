@@ -7,6 +7,28 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-pocketbase` (tests): ⚠⚠ **the two authorization controls this
+  crate advertises were proven by grep; now they are executed.** An audit of
+  every text-level assertion over a generated file — 23 of them — asked which
+  claim a *string* can actually support. **Measured: disabling the role binding,
+  and separately the direct-write guard, by replacing each condition with
+  `if (false)`, left the entire text suite green in both cases.** A security
+  control verified by asserting that `const boundRole =` appears in a file is
+  not verified.
+  New live test covering, on a real store: an account bound to one role
+  claiming another is refused by name; a direct write to a refereed column is
+  refused; an undeclared column is refused; **none of the three spends a
+  version or moves the record**; and — the positive control, without which a
+  route that refused everything would pass — the bound account's own role still
+  works and the appended event records the **account's** role rather than the
+  request's. Verified to go red under each mutation above and green when
+  restored.
+  ⚠ Four behaviours are knowingly left text-only (`unbound_principal`, the
+  release hook's `WRITERS` allowlist, migration idempotency, generic scope
+  merge) and **each now says so in its doc, with the reason**. The dangerous
+  state is not an uncovered property; it is an uncovered property that reads as
+  covered. The tests module says which kind is which and why.
+
 - `ferrostep-pocketbase`: ⚠⚠ **the mapped apply route refuses a column it has
   no branch for, instead of ignoring it** — new wire prefix
   `unwritable_column:`. A mapped file emits one write branch per column name
