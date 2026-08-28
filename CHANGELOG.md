@@ -7,6 +7,44 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-pocketbase`: **refuse a grade sent to hooks that predate graded
+  attributes**, instead of dropping it and answering success. Found by
+  self-review of the commit that introduced grading.
+
+  ⚠⚠ **THE GENERATOR EMITTED THE SIGNAL AND THE ADAPTER NEVER READ IT.** The
+  generated ping already advertises `"attributes"` in `writes`; `open()`
+  extracted `writes_scope` from that same array and nothing else. So the
+  capability check existed on the wire, on one side only.
+
+  ⚠ **The column allowlist could not cover it, and that is not a bug in the
+  allowlist.** A file old enough to predate attributes also predates the
+  `columns` key, so `writable` is `None` and `refuse_unwritable` returns `Ok` —
+  the honest answer to *are these names writable*, and the wrong answer to *can
+  this file write attributes at all*. Only the kind check reaches that file.
+
+  Measured against the pre-attribute ping before the fix: the grade was
+  accepted, dropped, and answered `version 2` — the version advanced and the
+  appended event recorded a grade the row never took. The same defect
+  `writes_scope` exists for, one column-kind over, shipped by the commit whose
+  own message is about that defect. The reader is now one closure over the
+  kind, so a kind added later cannot be advertised and left unread again.
+
+  A behaviour change requiring a deliberate install: grading against hooks
+  installed before `e20ffd4` moves from a silent 200 to a refusal naming the
+  remedy.
+
+- `ferrostep-core`: **a refusal to open a grade names every role that could
+  open it.** Opening is permitted to `raise` ∪ `lower`, and the message
+  reported one list — so with an empty `raise` a refused operator was told
+  *"grants that to nobody"* while a `lower` holder could do it right then. A
+  refusal that hides an existing remedy is worse than a vague one. Roles
+  holding both directions are named once.
+
+- `ferrostep-ledger`: restore `decided_scope_updates`'s documentation. Adding
+  `decided_grade_updates` *inside* its doc block left the scope function
+  publishing bare and gave the grade function fourteen lines about scope. The
+  two now sit in order and use the same idiom for their empty case.
+
 - `ferrostep-core`, `ferrostep-ledger`, `ferrostep-sqlite`,
   `ferrostep-pocketbase`, `ferrostep-cli`: **graded attributes** — an ordered
   ladder in the definition, with **each direction granted separately**, and

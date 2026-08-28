@@ -381,6 +381,22 @@ pub struct PocketBaseLedger {
     /// the ping at connect time rather than assumed from this crate's own
     /// version, because the two are deployed separately.
     writes_scope: bool,
+    /// The same question for graded attributes, and it needs its own answer.
+    ///
+    /// ⚠⚠ **[`Self::writable`] CANNOT STAND IN FOR THIS.** A file old enough
+    /// to predate attributes is also old enough to predate the `columns` key,
+    /// so `writable` is `None` and `refuse_unwritable` returns `Ok` — the
+    /// honest answer to *are these names writable* and the wrong answer to
+    /// *can this file write attributes at all*. The kind check is the only one
+    /// that reaches that file.
+    ///
+    /// Measured 2026-08-28 against the pre-attribute ping: a grade was
+    /// accepted, dropped, and answered `version 2` — the version advanced and
+    /// the appended event recorded a grade the row never took. Exactly the
+    /// defect `writes_scope` exists for, one column-kind over, and it was
+    /// missed because the generated ping already *advertises* `attributes`
+    /// and nothing here read it.
+    writes_attributes: bool,
     /// ⚠⚠ **Which COLUMNS the installed file admits, when it says.** `writes`
     /// answers in kinds — *state, counters, scope* — and that granularity was
     /// measured wrong: a mapped file emits one branch per column name known at
@@ -497,10 +513,16 @@ impl PocketBaseLedger {
         // caller is told a record moved between units of work when it did
         // not, which is worse than any refusal. The ping says what it can
         // write; anything that does not say is assumed not to.
-        let writes_scope = body
-            .get("writes")
-            .and_then(Value::as_array)
-            .is_some_and(|w| w.iter().any(|v| v.as_str() == Some("scope")));
+        // ⚠ One reader for every kind, so a kind added later cannot be
+        // advertised by the generator and left unread by the adapter — which
+        // is precisely how `attributes` shipped with a signal nobody consumed.
+        let advertises = |kind: &str| {
+            body.get("writes")
+                .and_then(Value::as_array)
+                .is_some_and(|w| w.iter().any(|v| v.as_str() == Some(kind)))
+        };
+        let writes_scope = advertises("scope");
+        let writes_attributes = advertises("attributes");
         // ⚠ Column names when the file states them; `None` when it does not.
         // See `PocketBaseLedger::writable` for why absence is not "nothing".
         let writable = WritableColumns::from_ping(&body);
@@ -511,6 +533,7 @@ impl PocketBaseLedger {
             mode,
             shape,
             writes_scope,
+            writes_attributes,
             writable,
         })
     }
@@ -919,6 +942,19 @@ impl Ledger for PocketBaseLedger {
             return Err(LedgerError::Unsupported(
                 "write scope labels: the installed ferrostep hooks predate rescope — \
                  regenerate them and reinstall"
+                    .to_string(),
+            ));
+        }
+        // ⚠⚠ The KIND check, and the column allowlist above cannot replace it.
+        // A file predating attributes also predates the `columns` key, so
+        // `refuse_unwritable` has nothing to check the names against and
+        // returns `Ok` — correct for the question it asks, and silent about
+        // this one. Without this line such a file accepts the grade, drops it,
+        // advances the version and answers 200.
+        if !decided_grade_updates(&event.decision).is_empty() && !self.writes_attributes {
+            return Err(LedgerError::Unsupported(
+                "write a graded attribute: the installed ferrostep hooks predate graded \
+                 attributes — regenerate them and reinstall"
                     .to_string(),
             ));
         }
@@ -3313,6 +3349,102 @@ mod tests {
             matches!(refused, LedgerError::Unsupported(_)),
             "expected a refusal by name, got {refused:?}"
         );
+    }
+
+    /// A mapped ping from hooks installed **before** graded attributes: no
+    /// `"attributes"` in `writes`, and no `columns` key at all. This is what
+    /// every deployment predating `e20ffd4` answers, including the `v0.1.0`
+    /// tag, so it is the ordinary case rather than the exotic one.
+    fn tickets_ping_before_attributes() -> (&'static str, u16, String) {
+        (
+            "/api/ferrostep/tickets/ping",
+            200,
+            r#"{"ferrostep":"test","writes":["state","counters","scope"]}"#.to_string(),
+        )
+    }
+
+    /// ⚠⚠ **THE COLUMN ALLOWLIST CANNOT COVER THIS, AND THAT IS THE WHOLE
+    /// POINT.** A file old enough to predate attributes is also old enough to
+    /// predate the `columns` key, so `writable` is `None` and
+    /// `refuse_unwritable` returns `Ok` — the honest answer to *are these
+    /// names writable*, and the wrong answer to *can this file write
+    /// attributes at all*. Only the KIND check reaches that file, which is
+    /// exactly why `writes_scope` exists, and this is the same defect one
+    /// column-kind over.
+    ///
+    /// Measured before the fix, against this fixture with an apply route added
+    /// that answers 200: the grade was accepted, dropped, and answered
+    /// `version 2` — the version advanced and the event recorded a grade the
+    /// row never took.
+    ///
+    /// ⚠ **One request is served on purpose.** The refusal has to be local, so
+    /// there is deliberately no apply route behind this ping: if the check
+    /// ever stops firing, the call reaches a dead socket and this fails on the
+    /// error type rather than quietly spending the record's version.
+    #[test]
+    fn a_grade_against_hooks_that_predate_attributes_is_refused_rather_than_lost() {
+        let base = serve(vec![tickets_ping_before_attributes()], 1);
+        let ledger = PocketBaseLedger::connect_mapped(&base, "tok", tickets_map()).unwrap();
+        assert_eq!(ledger.mode(), Mode::Full, "the routes are installed, just older");
+
+        let record = Record {
+            id: RecordId("r1".to_string()),
+            snapshot: Snapshot { state: "open".to_string(), ..Snapshot::default() },
+            version: Version("1".to_string()),
+        };
+        let grading = Decision::Allow {
+            to: "open".to_string(),
+            counter_updates: BTreeMap::new(),
+            scope_updates: BTreeMap::new(),
+            grade_updates: BTreeMap::from([("severity".to_string(), "high".to_string())]),
+        };
+        let Err(refused) = ledger.apply(&record, &an_event(grading)) else {
+            panic!("a grade was sent to routes that cannot write it");
+        };
+        let message = refused.to_string();
+        assert!(message.contains("graded attribute"), "{message}");
+        assert!(message.contains("regenerate"), "the refusal must say what to do: {message}");
+        // ⚠ Local, like the rescope twin: reaching the network first would
+        // spend the record's version on a write that did nothing.
+        assert!(
+            matches!(refused, LedgerError::Unsupported(_)),
+            "expected a refusal by name, got {refused:?}"
+        );
+    }
+
+    /// The other half. Without it the refusal above could be unconditional and
+    /// grading would be unreachable everywhere, which passes the test for the
+    /// wrong reason — and an ordinary move must still go through untouched,
+    /// because a check on the wrong population is how a working lane stops.
+    #[test]
+    fn a_grade_is_sent_where_the_installed_hooks_say_they_write_attributes() {
+        let base = serve(
+            vec![
+                tickets_ping(),
+                ("/api/ferrostep/tickets/apply", 200, r#"{"version":2}"#.to_string()),
+                ("/api/ferrostep/tickets/apply", 200, r#"{"version":3}"#.to_string()),
+            ],
+            3,
+        );
+        let ledger = PocketBaseLedger::connect_mapped(&base, "tok", tickets_map()).unwrap();
+        let record = Record {
+            id: RecordId("r1".to_string()),
+            snapshot: Snapshot { state: "open".to_string(), ..Snapshot::default() },
+            version: Version("1".to_string()),
+        };
+        let grading = Decision::Allow {
+            to: "open".to_string(),
+            counter_updates: BTreeMap::new(),
+            scope_updates: BTreeMap::new(),
+            grade_updates: BTreeMap::from([("severity".to_string(), "high".to_string())]),
+        };
+        let landed = ledger.apply(&record, &an_event(grading)).expect("the file writes attributes");
+        assert_eq!(landed, Version("2".to_string()));
+
+        // ⚠ And a move carrying no grade is unaffected by the check — the
+        // population it guards is grade decisions, not every apply.
+        let ordinary = Decision::allow("open", BTreeMap::new());
+        ledger.apply(&record, &an_event(ordinary)).expect("an ordinary move still applies");
     }
 
     /// The other half: the refusal must not fire where the routes can do it,

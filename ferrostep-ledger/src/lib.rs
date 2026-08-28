@@ -177,6 +177,19 @@ pub fn decided_snapshot(current: &Snapshot, decision: &Decision) -> Option<Snaps
 /// Empty is the common answer, which lets an adapter skip touching scope at
 /// all on an ordinary move: a write that always fires is a write that can
 /// always go wrong.
+pub fn decided_scope_updates(decision: &Decision) -> &BTreeMap<String, String> {
+    match decision {
+        Decision::Allow { scope_updates, .. } => scope_updates,
+        _ => {
+            // A denial persists nothing, and an exhausted decision routes a
+            // record without moving it between units of work.
+            static NONE: std::sync::LazyLock<BTreeMap<String, String>> =
+                std::sync::LazyLock::new(BTreeMap::new);
+            &NONE
+        }
+    }
+}
+
 /// The graded attributes a decision moves, empty for every ordinary move.
 ///
 /// Companion to [`decided_scope_updates`] and the same shape for the same
@@ -194,19 +207,6 @@ pub fn decided_grade_updates(decision: &Decision) -> &BTreeMap<String, String> {
         _ => {
             // Same reasoning as the scope companion: a denial persists
             // nothing, and an exhausted decision routes without grading.
-            static NONE: std::sync::OnceLock<BTreeMap<String, String>> =
-                std::sync::OnceLock::new();
-            NONE.get_or_init(BTreeMap::new)
-        }
-    }
-}
-
-pub fn decided_scope_updates(decision: &Decision) -> &BTreeMap<String, String> {
-    match decision {
-        Decision::Allow { scope_updates, .. } => scope_updates,
-        _ => {
-            // A denial persists nothing, and an exhausted decision routes a
-            // record without moving it between units of work.
             static NONE: std::sync::LazyLock<BTreeMap<String, String>> =
                 std::sync::LazyLock::new(BTreeMap::new);
             &NONE

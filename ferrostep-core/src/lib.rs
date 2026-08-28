@@ -1109,22 +1109,40 @@ impl Engine {
         if !permitted {
             // ⚠ The refusal names the DIRECTION, because "role X may not grade"
             // is true and useless when X may raise and this was a lower.
-            let direction = match held {
-                None => "open".to_string(),
+            //
+            // ⚠⚠ **AND IT NAMES EVERY HOLDER OF THAT DIRECTION — WHICH FOR AN
+            // OPENING GRADE IS BOTH LISTS.** Opening is permitted to
+            // `raise` ∪ `lower`, so reporting one list answers a question
+            // nobody asked; and when that one list is empty the refusal says
+            // the workflow grants the act to nobody while the other list's
+            // holders may do it right now. A reader takes "nobody" for *not
+            // possible* and stops looking — the remedy exists and the message
+            // is what hid it.
+            let (direction, holders): (&str, Vec<&String>) = match held {
+                None => ("open", rule.raise.iter().chain(rule.lower.iter()).collect()),
                 Some(current) => {
+                    // Unreachable otherwise: a value off the ladder returned
+                    // above, before permission was considered at all.
                     let from = rule.ladder.iter().position(|v| v == current).unwrap_or(0);
-                    if target > from { "raise".to_string() } else { "lower".to_string() }
+                    if target > from {
+                        ("raise", rule.raise.iter().collect())
+                    } else {
+                        ("lower", rule.lower.iter().collect())
+                    }
                 }
             };
-            let holders = match direction.as_str() {
-                "raise" => &rule.raise,
-                "lower" => &rule.lower,
-                _ => &rule.raise,
-            };
-            let who = if holders.is_empty() {
+            // ⚠ A role holding both directions is named once. Listing it twice
+            // reports how the answer was computed rather than what it is.
+            let mut named: Vec<&str> = Vec::new();
+            for holder in holders {
+                if !named.contains(&holder.as_str()) {
+                    named.push(holder.as_str());
+                }
+            }
+            let who = if named.is_empty() {
                 format!("workflow '{}' grants that to nobody", self.def.name)
             } else {
-                format!("that is: {}", holders.join(", "))
+                format!("that is: {}", named.join(", "))
             };
             return Decision::Deny {
                 reason: format!(
@@ -2178,6 +2196,55 @@ mod tests {
             None,
         );
         assert!(matches!(raised, Decision::Deny { .. }), "but not raise one: {raised:?}");
+    }
+
+    /// ⚠⚠ **A REFUSAL THAT NAMES HALF THE HOLDERS CAN CLAIM THERE ARE NONE.**
+    /// Opening a grade is permitted to `raise` ∪ `lower`, so a refusal that
+    /// reports one direction's holders is describing a different question than
+    /// the one it just answered — and when that direction is empty it tells the
+    /// reader the workflow grants the act to nobody, while the other
+    /// direction's holders may do it right now. A refused operator reads
+    /// "nobody" as *not possible* and stops, which is the expensive way for a
+    /// refusal to be wrong: the remedy exists and the message hides it.
+    #[test]
+    fn the_refusal_to_open_a_grade_names_every_role_that_could_open_it() {
+        let mut def = review_loop();
+        def.grades = vec![GradeDef {
+            attribute: "severity".to_string(),
+            ladder: vec!["low".to_string(), "high".to_string()],
+            // ⚠ An empty `raise` is the discriminating shape, because that is
+            // the list an opening refusal used to report.
+            raise: vec![],
+            lower: vec!["reviewer".to_string()],
+            requires_note: false,
+        }];
+        let engine = Engine::new(def).unwrap();
+        let Decision::Deny { reason } =
+            engine.authorize_grade(&graded("working", None), "worker", "severity", "high", None)
+        else {
+            panic!("a role holding neither direction must be refused");
+        };
+        assert!(
+            !reason.contains("nobody"),
+            "'reviewer' may open this, so the refusal must not say nobody can: {reason}"
+        );
+        assert!(reason.contains("reviewer"), "the refusal must name who may: {reason}");
+
+        // ⚠ Floor, and it runs the other way: where BOTH directions have
+        // holders the refusal names both, so the assertions above cannot be
+        // satisfied by swapping one hardcoded list for the other.
+        let engine = with_grades();
+        let Decision::Deny { reason } =
+            engine.authorize_grade(&graded("working", None), "operator", "severity", "high", None)
+        else {
+            panic!("'operator' holds neither direction");
+        };
+        for holder in ["worker", "reviewer"] {
+            assert!(reason.contains(holder), "opening is also {holder}'s: {reason}");
+        }
+        // ⚠ Named once. `reviewer` holds both directions here, and a refusal
+        // that lists it twice is reporting the implementation, not the answer.
+        assert_eq!(reason.matches("reviewer").count(), 1, "{reason}");
     }
 
     /// ⚠ Order is the ladder's position and never the value's name. A ladder
