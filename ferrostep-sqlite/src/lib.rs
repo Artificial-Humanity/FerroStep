@@ -496,10 +496,20 @@ impl Ledger for SqliteLedger {
                 self.path.display()
             )));
         }
+        // ⚠ Every column takes any value, and that is a checked fact rather
+        // than an assumption: this adapter owns the DDL above, which declares
+        // no `CHECK` constraint and no enumerated type — SQLite has no select.
+        // So "the store cannot refuse a value" is a real all-clear here, and
+        // reporting it as unknown would send an operator hunting for a
+        // constraint that cannot exist.
+        let accepted_values = Answer::Said(
+            columns.keys().map(|name| (name.clone(), Answer::NothingToConstrain)).collect(),
+        );
         Ok(StoreShape {
             subject: "ferrostep_records".to_string(),
             accepted_states: Answer::NothingToConstrain,
             columns: Answer::Said(columns),
+            accepted_values,
             writable: Answer::NothingToConstrain,
         })
     }

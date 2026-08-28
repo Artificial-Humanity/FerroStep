@@ -341,6 +341,26 @@ pub struct StoreShape {
     /// what its store calls a column and does not know what the column being
     /// that type would cost.
     pub columns: Answer<BTreeMap<String, String>>,
+    /// The values each column will accept, by column name.
+    ///
+    /// ⚠⚠ **THE SAME QUESTION AS [`Self::accepted_states`], ASKED OF EVERY
+    /// COLUMN — AND IT HAD TO BE, BECAUSE A DEFINITION CONSTRAINS MORE THAN
+    /// STATE.** A graded attribute's ladder is a list of values a column must
+    /// accept, exactly as a workflow's states are. Checking one and not the
+    /// structurally identical other is a checker whose population is narrower
+    /// than its subject: the ladder value the column would refuse passes every
+    /// check and arrives as a refused write on the first grade — which is the
+    /// defect the whole type exists to catch, one column over.
+    ///
+    /// ⚠ **NESTED [`Answer`]s, and both levels earn their keep.** The outer
+    /// one is *did the store enumerate this at all* — an installed file
+    /// predating the question says nothing, and that is not an all-clear. The
+    /// inner one is per column: [`Answer::Said`] is a column stating its
+    /// values, [`Answer::NothingToConstrain`] is a column that takes anything,
+    /// and those are opposite facts about whether a definition can be wrong
+    /// against it. A column absent from the map does not exist; that is
+    /// [`Self::columns`]'s answer to give, not this one's.
+    pub accepted_values: Answer<BTreeMap<String, Answer<Vec<String>>>>,
     /// The column names the *installed* write path admits, grouped by whatever
     /// the adapter calls those groups.
     ///

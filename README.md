@@ -223,8 +223,9 @@ from the ladder's position, never the value's name.
 
 **`doctor` asks whether a definition is satisfiable against a store** —
 before a transition proves it is not. Are the definition's states values the
-state column will accept? Do its counters and scope labels have columns? Can
-the *installed* write path reach them? Read-only, and explicit rather than
+state column will accept? Are its ladders' values ones the graded columns will
+accept? Do its counters and scope labels have columns? Can the *installed*
+write path reach them? Read-only, and explicit rather than
 automatic: run it when a definition changes. ⚠ **A question it could not
 answer exits non-zero, exactly like a fault.** A gate that passes because it
 could not look is the failure this exists to remove — and the report counts

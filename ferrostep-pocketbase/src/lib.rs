@@ -1172,6 +1172,33 @@ impl Ledger for PocketBaseLedger {
             Some(Value::Null) => Answer::NothingToConstrain,
             _ => Answer::Unknown,
         };
+        // ⚠⚠ Same three-way distinction as `states`, once per column, and it
+        // is nested for a reason: the OUTER answer is whether this file was
+        // ever asked, and the INNER one is what each column said. A file
+        // predating the key says nothing at all, which is not the same as
+        // every column constraining nothing — the first is unchecked and the
+        // second is a clean bill of health.
+        let accepted_values = match body.get("values").and_then(Value::as_object) {
+            Some(map) => Answer::Said(
+                map.iter()
+                    .map(|(name, value)| {
+                        let answer = match value {
+                            Value::Array(values) => Answer::Said(
+                                values
+                                    .iter()
+                                    .filter_map(|v| v.as_str().map(str::to_string))
+                                    .collect(),
+                            ),
+                            // `null` is the route reporting that it looked and
+                            // the column constrains nothing.
+                            _ => Answer::NothingToConstrain,
+                        };
+                        (name.clone(), answer)
+                    })
+                    .collect::<BTreeMap<String, Answer<Vec<String>>>>(),
+            ),
+            None => Answer::Unknown,
+        };
         // From the ping, not from this route: what the INSTALLED file admits.
         // ⚠ The generic shape stores counters and scope as JSON on the row, so
         // there is no per-name column list that could go stale — that is
@@ -1190,6 +1217,7 @@ impl Ledger for PocketBaseLedger {
             subject: records,
             accepted_states,
             columns,
+            accepted_values,
             writable,
         })
     }
@@ -1246,19 +1274,22 @@ routerAdd("GET", "/api/ferrostep/{path}/schema", (e) => {{
     // Read at request time, never baked in: this answers what the collection
     // accepts NOW, which is the only version of the question worth asking.
     const columns = {{}};
-    let states = null;
+    const values = {{}};
     let failed = "";
     try {{
         const col = JSON.parse(JSON.stringify($app.findCollectionByNameOrId("{records}")));
         const fields = col.fields || [];
         for (let i = 0; i < fields.length; i++) {{
             columns[fields[i].name] = String(fields[i].type);
-            // `states` stays null unless the column actually constrains its
-            // values. A text column takes any string, and reporting that as
-            // "no accepted states" would invent a fault in every definition.
-            if (fields[i].name === "{state_field}" && fields[i].type === "select") {{
-                states = fields[i].values || [];
-            }}
+            // ⚠ ONE ENTRY PER FIELD, ALWAYS. `null` says the column was looked
+            // at and does not enumerate its accepted values, so no list in any
+            // definition can be wrong against it; an array is the column
+            // stating them. A MISSING entry means the column does not exist,
+            // which is `columns`'s answer to give and not this one's — and
+            // collapsing those three is how a checker reports an all-clear it
+            // never obtained.
+            values[fields[i].name] =
+                (fields[i].type === "select") ? (fields[i].values || []) : null;
         }}
     }} catch (err) {{
         failed = String(err);
@@ -1266,11 +1297,18 @@ routerAdd("GET", "/api/ferrostep/{path}/schema", (e) => {{
     if (failed !== "") {{
         return e.json(200, {{ "ferrostep": "{version}", "collection": "{records}", "error": failed }});
     }}
+    // ⚠ DERIVED, never looked up a second time. `states` is this same question
+    // asked of the state column, and it stays in the response so an adapter
+    // written before `values` existed reads exactly what it read before — the
+    // same compatibility shape `columns` used when it joined `writes`. One
+    // derivation, so the two cannot come to disagree.
+    const states = values["{state_field}"] !== undefined ? values["{state_field}"] : null;
     return e.json(200, {{
         "ferrostep": "{version}",
         "collection": "{records}",
         "state_field": "{state_field}",
         "columns": columns,
+        "values": values,
         "states": states
     }});
 }}, $apis.requireAuth());
@@ -2684,6 +2722,12 @@ mod tests {
         // ⚠ Floor: both assertions above are satisfied by a file with no
         // routes at all, so prove the blocks are the routes they claim to be.
         assert!(ping.contains("\"writes\""), "{ping}");
+        // ⚠ Necessary and NOT sufficient: this says the key is in the text,
+        // never that the route computes it. The live test is what answers
+        // that, and this exists so a regeneration that drops the key fails
+        // without one.
+        assert!(hooks_file_mapped(&tickets_map(), None, &ActorBinding::default())
+            .contains("\"values\": values"), "the schema route must emit the values map");
         assert!(schema.contains("\"columns\""), "{schema}");
     }
 
@@ -2765,6 +2809,52 @@ mod tests {
             .store_shape()
             .unwrap();
         assert!(shape.accepted_states.is_unknown(), "a missing key is not an answer");
+    }
+
+    /// ⚠⚠ **THE SAME THREE ANSWERS, ONCE PER COLUMN — AND THE OUTER ONE IS A
+    /// FOURTH.** A file that never enumerated any column's values says nothing
+    /// at all, which is not the same as every column constraining nothing: the
+    /// first is unchecked and the second is a clean bill of health. The nested
+    /// [`Answer`] is what keeps them one match arm apart instead of one
+    /// `unwrap_or_default` apart.
+    ///
+    /// ⚠ This tests the ADAPTER's reading, not the route's writing. Whether
+    /// the generated JavaScript computes the map correctly is a property of a
+    /// runtime — see the live test.
+    #[test]
+    fn each_column_answers_for_itself_and_a_silent_file_answers_for_none() {
+        let stated = r#"{"ferrostep":"t","collection":"tickets","columns":{"stage":"select"},
+                         "values":{"stage":["open","closed"],"severity":["low","high"],
+                                   "lane":null}}"#;
+        let base = serve(vec![tickets_ping(), schema_route(stated)], 2);
+        let shape = PocketBaseLedger::connect_mapped(&base, "tok", tickets_map())
+            .unwrap()
+            .store_shape()
+            .unwrap();
+        let by_column = shape.accepted_values.said().expect("the file stated them");
+        assert_eq!(
+            by_column.get("severity"),
+            Some(&Answer::Said(vec!["low".to_string(), "high".to_string()]))
+        );
+        // ⚠ `null` is the route saying it looked. Folding this into the arm
+        // above would report a text column as enumerating no values, which
+        // faults every ladder against it.
+        assert_eq!(by_column.get("lane"), Some(&Answer::NothingToConstrain));
+        // ⚠ And a column the route never mentioned is not an entry at all —
+        // whether it exists is `columns`'s answer, not this one's.
+        assert_eq!(by_column.get("fs_version"), None);
+
+        let silent = r#"{"ferrostep":"t","collection":"tickets","columns":{"stage":"text"}}"#;
+        let base = serve(vec![tickets_ping(), schema_route(silent)], 2);
+        let shape = PocketBaseLedger::connect_mapped(&base, "tok", tickets_map())
+            .unwrap()
+            .store_shape()
+            .unwrap();
+        assert!(
+            shape.accepted_values.is_unknown(),
+            "a file predating the key has not told us every column is unconstrained: {:?}",
+            shape.accepted_values
+        );
     }
 
     /// A collection the map names and the store does not have comes back
@@ -3749,6 +3839,34 @@ mod tests {
         if let Some(accepted) = shape.accepted_states.said() {
             assert!(!accepted.is_empty(), "a select column with no values accepts nothing");
         }
+
+        // ⚠⚠ **THE PROPERTY NO TEXT ASSERTION REACHES: one entry per field,
+        // and the state column's entry IS `states`.** The route derives
+        // `states` from this map rather than looking the column up a second
+        // time, and the only way to know that derivation survives a JavaScript
+        // runtime is to run it. Measured live 2026-08-28: a `select` column
+        // answers with its values, every other type answers `null`, and no
+        // field is missing.
+        assert!(
+            !shape.accepted_values.is_unknown(),
+            "a file carrying the schema route states which values its columns accept"
+        );
+        let by_column = shape.accepted_values.said().expect("said, not unknown");
+        for name in columns.keys() {
+            assert!(
+                by_column.contains_key(name),
+                "column '{name}' exists and has no entry in `values` — a missing entry means \
+                 the column does not exist, so the two answers disagree: {by_column:?}"
+            );
+        }
+        // ⚠ The derivation, asserted end to end. If `states` ever stops being
+        // read out of this map these two drift, and a definition would be
+        // checked against one list while a grade is refused by the other.
+        assert_eq!(
+            by_column.get(&tickets_map().state_field),
+            Some(&shape.accepted_states),
+            "`states` must be this map's entry for the state column, not a second lookup"
+        );
 
         // The installed file's own limits arrive from the ping, beside the
         // collection's — two different ages of truth in one value.

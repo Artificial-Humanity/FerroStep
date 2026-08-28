@@ -7,6 +7,44 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-pocketbase`, `ferrostep-ledger`, `ferrostep-sqlite`,
+  `ferrostep-cli`: **`doctor` checks a ladder against the values its column
+  accepts**, the same check it already made for the state column. Raised by the
+  first adopter, who was about to declare such a column.
+
+  ⚠⚠ **THIS IS THE FAULT `doctor` WAS BUILT FOR, ONE COLUMN OVER.** The finding
+  that created the tool was a definition naming a state value the select column
+  would refuse: it passed every check and failed at the first transition. A
+  ladder value the column would refuse did exactly that and failed at the first
+  **grade**, while the instrument built to catch it reported clean — a checker
+  whose population is narrower than its subject.
+
+  ⚠ **It was invisible in the state that makes it invisible.** The adopter's
+  column is a select whose accepted values match its ladder exactly, so the
+  check would have passed the day it was added and stayed passing until someone
+  edited either list. "It does not affect us" was not available; only *before or
+  after somebody touches one side* was.
+
+  The schema route now reports **one entry per field** — an array where the
+  column enumerates its values, `null` where it does not, and no entry where the
+  column does not exist. Those are three different facts and the nested
+  `Answer` keeps them one match arm apart. `states` is now **derived from that
+  map** rather than looked up separately, so the two cannot come to disagree,
+  and it stays in the response so an adapter predating `values` reads exactly
+  what it read before.
+
+  ⚠ **A behaviour change requiring a deliberate install**: the answer comes from
+  the generated route, so an existing install keeps reporting the ladder
+  question `?` (unchecked, non-zero) until the hooks are regenerated. That is
+  the intended reading — unchecked is not clean.
+
+  Verified live against a disposable instance, both directions: a ladder value
+  outside the column's select is reported as a fault and exits non-zero; a
+  ladder the column accepts is counted and shown as an agreement. The live test
+  asserts the derivation end to end and is red under two mutations of the
+  generated JavaScript — which is the only way to know a generated file
+  *computes* anything, as the text suite has now failed to notice three times.
+
 - `ferrostep-pocketbase`: **refuse a grade sent to hooks that predate graded
   attributes**, instead of dropping it and answering success. Found by
   self-review of the commit that introduced grading.

@@ -356,10 +356,25 @@ column types and select values, refuses an anonymous caller 401, and reports a
 missing collection as a refusal rather than an empty schema. All three drift
 classes were reproduced end-to-end and exit 1; the clean case exits 0.
 
-**Left undone, on purpose:** attributes get no definition-side check, because
-the engine has no vocabulary for them — `doctor` says so rather than covering
-three kinds of four in silence. That closes when graded attributes land (entry
-3, item B).
+**Left undone, on purpose — CLOSED 2026-08-28.** Attributes got no
+definition-side check while the engine had no vocabulary for them, and `doctor`
+said so rather than covering three kinds of four in silence. Graded attributes
+gave it the vocabulary (`ea177c0`), and the ladder-versus-column check followed
+once the adopter pointed out the half still missing: doctor checked accepted
+*values* for the state column and not for the structurally identical graded
+one, so a ladder value the column would refuse passed clean and failed at the
+first grade.
+
+⚠⚠ **The narrow-population failure reappeared inside the instrument built to
+catch it.** Worth stating plainly, because "we already have a checker for that
+class" is exactly the belief that let it through — a checker is only as wide as
+the population it enumerates, and this one enumerated one column.
+
+⚠ **Raised by the adopter in the state that hides it**: their column is a select
+whose values match their ladder exactly, so the check would have passed the day
+it was added and gone on passing until someone edited either list. There is no
+"does not affect us" available in that shape, only *before or after somebody
+touches one side*.
 
 ---
 

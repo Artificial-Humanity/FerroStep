@@ -693,6 +693,118 @@ fn diagnose(
         ),
     }
 
+    // ⚠⚠ **THE SAME QUESTION AS THE BLOCK ABOVE, ASKED OF EVERY LADDER.** A
+    // definition's states have to be values the state column accepts; a
+    // ladder's values have to be values ITS column accepts. Checking the first
+    // and not the structurally identical second is a checker whose population
+    // is narrower than its subject — and the fault it misses is the one that
+    // created this tool, arriving at the first grade instead of the first
+    // transition. Raised by the adopter who was about to declare such a
+    // column, whose ladder happened to match it exactly: the state in which
+    // the gap is invisible and stays invisible until someone edits either
+    // list.
+    if !def.grades.is_empty() {
+        match &shape.accepted_values {
+            Answer::Said(by_column) => {
+                for grade in &def.grades {
+                    match by_column.get(&grade.attribute) {
+                        Some(Answer::Said(accepted)) => {
+                            let refused: Vec<&String> =
+                                grade.ladder.iter().filter(|v| !accepted.contains(v)).collect();
+                            for value in &refused {
+                                say(
+                                    Level::Fault,
+                                    DEF_STORE,
+                                    format!(
+                                        "'{value}' is on the '{}' ladder and is not an accepted \
+                                         value of that column in '{}' — every grade to it would \
+                                         be refused by the store",
+                                        grade.attribute, shape.subject
+                                    ),
+                                );
+                            }
+                            if refused.is_empty() {
+                                say(
+                                    Level::Agreed,
+                                    DEF_STORE,
+                                    format!(
+                                        "all {} values of the '{}' ladder are accepted by its \
+                                         column",
+                                        grade.ladder.len(),
+                                        grade.attribute
+                                    ),
+                                );
+                            }
+                            // ⚠ Mirrors the note the state block already makes,
+                            // and means more here: a value the column accepts
+                            // and no ladder names is one the referee has no
+                            // opinion about, so nothing says who may set it.
+                            let unused: Vec<&String> =
+                                accepted.iter().filter(|v| !grade.ladder.contains(v)).collect();
+                            if !unused.is_empty() {
+                                say(
+                                    Level::Note,
+                                    DEF_STORE,
+                                    format!(
+                                        "the '{}' column also accepts {}, which its ladder never \
+                                         uses — values the referee has no opinion about, \
+                                         reachable only by a writer going around it",
+                                        grade.attribute,
+                                        unused
+                                            .iter()
+                                            .map(|v| format!("'{v}'"))
+                                            .collect::<Vec<_>>()
+                                            .join(", ")
+                                    ),
+                                );
+                            }
+                        }
+                        Some(Answer::NothingToConstrain) => say(
+                            Level::Note,
+                            DEF_STORE,
+                            format!(
+                                "the '{}' column does not enumerate its accepted values, so no \
+                                 value on its ladder can be refused by it",
+                                grade.attribute
+                            ),
+                        ),
+                        // ⚠ Deliberately not a second fault: a column that does
+                        // not exist is reported where columns are compared.
+                        // What is true HERE is that the ladder was checked
+                        // against nothing, and an unchecked question must not
+                        // read as a pass.
+                        Some(Answer::Unknown) | None => say(
+                            Level::Unchecked,
+                            DEF_STORE,
+                            format!(
+                                "'{}' has no column in '{}', so its ladder was checked against \
+                                 nothing",
+                                grade.attribute, shape.subject
+                            ),
+                        ),
+                    }
+                }
+            }
+            Answer::NothingToConstrain => say(
+                Level::Note,
+                DEF_STORE,
+                "no column in this store enumerates its accepted values, so no ladder value can \
+                 be refused by one"
+                    .to_string(),
+            ),
+            Answer::Unknown => say(
+                Level::Unchecked,
+                DEF_STORE,
+                format!(
+                    "the store did not say which values its columns accept, so a ladder value it \
+                     would refuse is still possible ({} ladder{} unchecked)",
+                    def.grades.len(),
+                    if def.grades.len() == 1 { "" } else { "s" }
+                ),
+            ),
+        }
+    }
+
     // ---- mapping ↔ store ----
     match (&shape.columns, map) {
         (Answer::Said(columns), Some(map)) => {
@@ -2377,12 +2489,127 @@ mod tests {
                 ("branch".to_string(), "text".to_string()),
                 ("severity".to_string(), "text".to_string()),
             ])),
+            // ⚠ One entry per column that exists, matching `columns` above:
+            // the state column enumerates its values, the rest do not. A
+            // column missing from here is one the store does not have.
+            accepted_values: Answer::Said(BTreeMap::from([
+                ("stage".to_string(), Answer::Said(def.def().states.clone())),
+                ("fs_version".to_string(), Answer::NothingToConstrain),
+                ("agent_passes".to_string(), Answer::NothingToConstrain),
+                ("branch".to_string(), Answer::NothingToConstrain),
+                ("severity".to_string(), Answer::NothingToConstrain),
+            ])),
             writable: Answer::Said(BTreeMap::from([
                 ("counters".to_string(), vec!["agent_passes".to_string()]),
                 ("scope".to_string(), vec!["branch".to_string()]),
                 ("attributes".to_string(), vec!["severity".to_string()]),
             ])),
         }
+    }
+
+    /// The review loop plus a ladder on the column [`doctor_map`] already
+    /// referees, which is the shape an adopter reaches after declaring a
+    /// graded column.
+    fn graded_engine() -> Engine {
+        let mut def =
+            WorkflowDef::from_json(include_str!("../../examples/review-loop.json")).unwrap();
+        def.grades = vec![ferrostep_core::GradeDef {
+            attribute: "severity".to_string(),
+            ladder: vec!["low".to_string(), "high".to_string(), "critical".to_string()],
+            raise: vec!["worker".to_string()],
+            lower: vec!["reviewer".to_string()],
+            requires_note: false,
+        }];
+        Engine::new(def).unwrap()
+    }
+
+    /// [`agreeing_shape`] with the graded column stating the values given.
+    fn shape_accepting(severity: Answer<Vec<String>>) -> StoreShape {
+        let mut shape = agreeing_shape();
+        if let Answer::Said(by_column) = &mut shape.accepted_values {
+            by_column.insert("severity".to_string(), severity);
+        }
+        if let Answer::Said(columns) = &mut shape.columns {
+            columns.insert("severity".to_string(), "select".to_string());
+        }
+        shape
+    }
+
+    /// ⚠⚠ **THE SAME FAULT `doctor` WAS BUILT FOR, ONE COLUMN OVER.** The
+    /// entry that created this tool was a definition naming a state value the
+    /// select column would refuse: it passed every check and failed at the
+    /// first transition. A ladder value the column would refuse is that fault
+    /// exactly, and it would have failed at the first grade — while the
+    /// instrument built to catch it reported clean, because it checked
+    /// accepted values for one column and not for the structurally identical
+    /// other one.
+    #[test]
+    fn a_ladder_value_the_column_would_refuse_is_a_fault() {
+        let engine = graded_engine();
+        let shape = shape_accepting(Answer::Said(vec!["low".to_string(), "high".to_string()]));
+        let report = doctor_report(engine.def(), Some(&doctor_map()), &Ok(shape))
+            .expect_err("a ladder value the store refuses is a fault");
+        assert!(report.contains("critical"), "the refused value is named: {report}");
+        assert!(report.contains("severity"), "and its ladder: {report}");
+        // ⚠ The two values the column DOES accept must not be reported. A
+        // check that faults on the whole ladder is as useless as none.
+        assert!(!report.contains("'low'"), "'low' is accepted: {report}");
+    }
+
+    /// The other side, and the one that stops the check above from being
+    /// satisfied by faulting on every ladder. ⚠ It also asserts the NOTE: a
+    /// value the column accepts and no ladder uses is reachable only by a
+    /// writer going around the referee, which an adopter should be told.
+    #[test]
+    fn a_ladder_the_column_accepts_is_agreed_and_its_spare_values_noted() {
+        let engine = graded_engine();
+        let shape = shape_accepting(Answer::Said(vec![
+            "low".to_string(),
+            "high".to_string(),
+            "critical".to_string(),
+            "cosmetic".to_string(),
+        ]));
+        let report = doctor_report(engine.def(), Some(&doctor_map()), &Ok(shape))
+            .expect("every ladder value is accepted");
+        assert!(report.contains("cosmetic"), "the spare value is named: {report}");
+        assert!(
+            report.contains("all 3 values of the 'severity' ladder"),
+            "the agreement is counted and shown: {report}"
+        );
+    }
+
+    /// ⚠⚠ **AN INSTALLED FILE THAT NEVER ENUMERATED ITS COLUMNS' VALUES IS
+    /// UNCHECKED, NOT CLEAN.** This is the ordinary case, not the exotic one:
+    /// the `values` key is newer than the schema route, which is newer than
+    /// the hooks most deployments are running. Reporting it as a pass is
+    /// exactly the failure `Answer` exists to make unspellable.
+    #[test]
+    fn a_store_that_never_said_leaves_the_ladder_unchecked_rather_than_clean() {
+        let engine = graded_engine();
+        let mut shape = agreeing_shape();
+        shape.accepted_values = Answer::Unknown;
+        let report = doctor_report(engine.def(), Some(&doctor_map()), &Ok(shape))
+            .expect_err("unchecked is not a pass");
+        assert!(report.contains("0 fault(s)"), "the premise: no faults: {report}");
+        assert!(report.contains("1 unchecked"), "{report}");
+        assert!(report.contains("ladder"), "and it says which question: {report}");
+    }
+
+    /// ⚠ A column that does not enumerate its values cannot refuse anything,
+    /// so a ladder against it is a real all-clear rather than an unchecked
+    /// one — the distinction the whole nested `Answer` exists for. Without
+    /// this, the honest text-column case would read as a failure to check.
+    #[test]
+    fn a_column_that_enumerates_nothing_cannot_refuse_a_ladder_value() {
+        let engine = graded_engine();
+        let report =
+            doctor_report(engine.def(), Some(&doctor_map()), &Ok(agreeing_shape()))
+                .expect("a text column refuses nothing, so nothing is faulted");
+        assert!(report.contains("0 fault(s), 0 unchecked"), "{report}");
+        assert!(
+            report.contains("does not enumerate"),
+            "but the reader is told WHY it passed: {report}"
+        );
     }
 
     /// The floor under every other test here: when everything agrees, this
@@ -2491,6 +2718,13 @@ mod tests {
             columns: Answer::Said(BTreeMap::from([
                 ("state".to_string(), "text".to_string()),
                 ("counters".to_string(), "text".to_string()),
+            ])),
+            // The SQLite shape: this adapter owns the DDL, which declares no
+            // enumerated type, so every column taking any value is a checked
+            // fact rather than a shrug.
+            accepted_values: Answer::Said(BTreeMap::from([
+                ("state".to_string(), Answer::NothingToConstrain),
+                ("counters".to_string(), Answer::NothingToConstrain),
             ])),
             writable: Answer::NothingToConstrain,
         };
