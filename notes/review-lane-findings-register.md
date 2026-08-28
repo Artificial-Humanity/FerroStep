@@ -664,6 +664,56 @@ the adopter reading the JSON before landing it, not by me writing it.
 
 ---
 
+### 9. ⚠⚠ Three found by reviewing a SECOND adopter's first config — 2026-08-28
+
+The second adopter authored a mapped deployment from a standing start, which is
+the population this project keeps claiming to serve and had never actually
+observed. Three defects fell out of one review, and **all three are ours, not
+theirs**.
+
+**A. `explain` prints a filing permission the mapped adapter refuses — while
+holding the map that proves it.** `create` is refused by name for
+`Shape::Mapped` ("use the collection's own filing procedure"), so a `creation`
+block in a mapped deployment is inert. Given `--map`, `explain` knows both
+facts and prints the permissive one: *"filing: … may file into 'open' (needs a
+reason)"*. ⚠ The adopter wrote a `creation` block, was told by our own tool
+that it worked, and would have discovered otherwise at the first `file`. **A
+documented operation with no reachable path — the family this register exists
+for, emitted by the tool that reports on it.**
+
+**B. The refereed-columns guard is UPDATE-only; there is no create parity.**
+The generator emits `onRecordUpdateRequest` for the guard. The single
+`onRecordCreateRequest` belongs to the **release hook**, which got creation
+parity deliberately and commented (*"the decision field is the owner's from the
+first save, not only after it"*) — and the column guard did not get the same
+treatment.
+
+⚠⚠ **Compose A and B and the hole is structural: filing MUST be direct, and
+direct creation is exactly what the guard does not cover.** A row can be born
+in a terminal or paused state, counter untouched, skipping the loop entirely.
+**The only supported way to file is the one the referee does not guard** — the
+ceiling-clearable-by-the-actor shape, one layer below where we last found it.
+
+⚠ Non-trivial for a real reason, which is why it is written down rather than
+fixed in passing: the guard is emitted from the **map** and the initial state
+lives in the **definition**, so the generator cannot currently say *"a new
+record starts in `initial`"* — it does not have the word. That is the fix,
+and it needs the definition to reach the generator.
+
+**C. `ferrostep-roster` validates the persona path and not the auth path.**
+A persona pointing at nothing refuses to emit; an `auth.path` pointing at
+nothing emits happily. **One pointer is checked and the other is asserted, and
+the unchecked one is the one holding credentials.** Benign today because the
+crate deliberately never reads the secret — but the day a caller follows that
+pointer, it discovers the path is wrong at the least convenient moment.
+
+⚠ **Found by an adopter noticing a value they did not expect, not by anyone
+looking for a bug** — which is the argument for putting a first config in front
+of someone who has never seen the tool. Neither resident found these in months
+of use.
+
+---
+
 *Further entries land as the adopting loop routes them. The sort for the first
 batch is agreed between the two residents but the findings themselves have
 only been read by one of us, so the reader who reviewed them holds the
