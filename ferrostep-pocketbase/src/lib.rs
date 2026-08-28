@@ -3303,12 +3303,29 @@ mod tests {
     /// The transition this default exists for: a deployment with no actors
     /// yet authenticates as an administrator, so refusing unbound principals
     /// on install would break every write the moment the hooks landed.
-    /// ⚠⚠ **TEXT-ONLY: this asserts the generated file SAYS it, not that it
-    /// DOES it.** Covering it live needs a SECOND generated file — `allow_unbound` is baked at
-    /// generation — and therefore a second collection and fixture. Measured on this crate: disabling a generated check's
-    /// condition leaves every asserted string in place and the whole text suite
-    /// green, so read this as evidence about the artifact and not about the
-    /// deployment's behaviour.
+    /// ⚠ **Text-only, and it stays text-only on purpose** — it asserts the
+    /// generated file SAYS it. Disabling a generated check's condition leaves
+    /// every asserted string in place and the whole text suite green, so read
+    /// this as evidence about the artifact and not about behaviour.
+    ///
+    /// ✅ **BUT THE BEHAVIOUR IS NO LONGER UNMEASURED. Measured live
+    /// 2026-08-28** against a disposable instance, which needed the second
+    /// generated file this note used to say it would — `allow_unbound` is baked
+    /// at generation, so the comparison is two installs, not two requests:
+    ///
+    /// | `allow_unbound` | principal | claims | result |
+    /// |---|---|---|---|
+    /// | `false` | administrator, no role field | `worker` | **400 `unbound_principal`** |
+    /// | `false` | account bound to `worker` | `reviewer` | 400 `role_not_yours` |
+    /// | `false` | account bound to `worker` | `worker` | **200** — the control |
+    /// | `true`  | administrator, no role field | `worker` | **200** |
+    ///
+    /// So the flag is what makes administrator credentials insufficient, and
+    /// the refusals are not a route that refuses everything. ⚠ The control
+    /// earned its place: it FAILED first, on a fixture whose event collection
+    /// lacked the `seq` field the append needs — and without it, two correct
+    /// refusals would have been read as proof of a guard that was actually
+    /// rejecting every request for an unrelated reason.
     #[test]
     fn a_deployment_can_require_every_actor_to_be_bound_but_is_not_forced_to() {
         let strict = ActorBinding { allow_unbound: false, ..Default::default() };
