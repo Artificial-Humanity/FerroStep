@@ -7,6 +7,33 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `examples/product-review.json`: **declare a ladder**, and assert that every
+  optional kind appears in at least one shipped example.
+
+  ⚠⚠ **A DEFINITION THAT SHIPS IN `examples/` IS EXERCISED, NOT ILLUSTRATED.**
+  These files are `include_str!`'d into the test binary, so a kind one of them
+  declares gets a real round trip through the shipped bytes. `grades` was the
+  only configurable kind with none — which reads as a documentation gap and is
+  a **coverage gap wearing documentation's clothes**. Named by the first
+  adopter, who checked the load sites before answering.
+
+  A test now grades a record through the referee using the shipped file, and a
+  floor in `shipped_examples_stay_valid` fails if any kind stops appearing —
+  so the gap cannot return silently the next time a kind is added. Both are
+  red when the block is removed.
+
+  ⚠ Added to the file with **one** load site rather than the acceptance
+  fixture's twelve: a block added where a dozen tests already assert would
+  risk perturbing something else, and a green suite afterwards would not
+  distinguish a block that is *exercised* from one that is merely *tolerated*.
+
+  ⚠⚠ The example is deliberately **the ladder whose permissive direction is
+  the raise** — confidence must reach `high` before delivery, so raising
+  clears the gate and belongs to the human while the reviewer may only lower.
+  The familiar shape is the opposite. An example is read as a recommendation,
+  so this one illustrates the case an adopter's intuition gets backwards
+  rather than the case it gets right.
+
 - `ferrostep-pocketbase`, `ferrostep-ledger`, `ferrostep-sqlite`,
   `ferrostep-cli`: **`doctor` checks a ladder against the values its column
   accepts**, the same check it already made for the state column. Raised by the

@@ -18,6 +18,10 @@
   "rescopes": [
     { "label": "release_line", "role": "owner", "requires_note": true }
   ],
+  "grades": [
+    { "attribute": "confidence", "ladder": ["low", "medium", "high"],
+      "raise": ["owner"], "lower": ["product_reviewer"], "requires_note": true }
+  ],
   "transitions": [
     { "from": "queued", "to": "reviewing", "role": "product_reviewer", "spends": ["review_attempts"] },
     { "from": "reviewing", "to": "delivered", "role": "product_reviewer" },

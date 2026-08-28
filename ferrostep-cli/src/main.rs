@@ -2971,6 +2971,107 @@ mod tests {
         (dir, ledger)
     }
 
+    /// ⚠⚠ **A DEFINITION THAT SHIPS IN `examples/` IS EXERCISED, NOT
+    /// ILLUSTRATED.** These files are `include_str!`'d into the test binary,
+    /// so every kind one of them declares gets a real round trip: parsed from
+    /// the shipped bytes, validated, and driven through a decision. Until
+    /// `grades` was added to one, it was the only configurable kind with no
+    /// such trip — a coverage gap wearing documentation's clothes. Named by
+    /// the first adopter, who checked the load sites before answering.
+    ///
+    /// ⚠ Deliberately the shipped file with ONE load site. Adding a block to
+    /// the acceptance fixture, loaded at a dozen, would risk perturbing
+    /// assertions about something else — and a green suite afterwards would
+    /// not distinguish a block that is exercised from one that is tolerated.
+    ///
+    /// ⚠⚠ It is also the ladder whose PERMISSIVE direction is the raise:
+    /// confidence must reach `high` before delivery, so raising clears the
+    /// gate and belongs to the human. An engine that assumed the familiar
+    /// severity-floor shape would be silently wrong here **in the direction
+    /// that grants permission**, which is why the example is this way round.
+    #[test]
+    fn the_shipped_example_grades_a_record_through_the_referee() {
+        let (_dir, ledger) = empty_ledger();
+        let engine = filing_engine();
+        let scope = Scope::all().with("release_line", "0.1.x");
+        do_file(
+            &engine,
+            &ledger,
+            &scope,
+            "owner",
+            &[String::from("reviews_queued=0")],
+            Some("cutting 0.1.1"),
+            "Ada",
+        )
+        .unwrap();
+        let id = records_with_status(&engine, &ledger, &scope, true).unwrap()[0].0.id.0.clone();
+
+        // Opening: neither direction, so either grant suffices.
+        let opened = do_grade(
+            &engine,
+            &ledger,
+            &id,
+            "product_reviewer",
+            ("confidence", "medium"),
+            Some("first read"),
+            "Ada",
+        )
+        .unwrap();
+        assert!(opened.contains("confidence medium"), "{opened}");
+        assert!(!opened.contains("->"), "an opening grade comes from nowhere: {opened}");
+
+        // ⚠ The gate-clearing direction, and it is the human's. The reviewer
+        // holds `lower` only, so this is the assertion that fails if the
+        // engine ever decides raising is the safe direction.
+        let refused = do_grade(
+            &engine,
+            &ledger,
+            &id,
+            "product_reviewer",
+            ("confidence", "high"),
+            Some("looks good to me"),
+            "Ada",
+        )
+        .unwrap_err();
+        assert!(refused.contains("may not raise"), "{refused}");
+        assert!(refused.contains("owner"), "and names who may: {refused}");
+
+        let raised = do_grade(
+            &engine,
+            &ledger,
+            &id,
+            "owner",
+            ("confidence", "high"),
+            Some("agreed after reading the report"),
+            "Ada",
+        )
+        .unwrap();
+        assert!(raised.contains("medium -> high"), "the report says where it came from: {raised}");
+
+        // The other direction is the reviewer's, and it is not a raise.
+        do_grade(
+            &engine,
+            &ledger,
+            &id,
+            "product_reviewer",
+            ("confidence", "low"),
+            Some("found a gap on the second pass"),
+            "Ada",
+        )
+        .unwrap();
+
+        // ⚠ `requires_note` applies in BOTH directions. A note-less change is
+        // refused whichever way it moves, which is the half an adopter who
+        // thinks one direction is safe would leave off.
+        let unexplained =
+            do_grade(&engine, &ledger, &id, "owner", ("confidence", "high"), None, "Ada")
+                .unwrap_err();
+        assert!(unexplained.contains("requires a reason"), "{unexplained}");
+
+        let record = ledger.load(&RecordId(id)).unwrap();
+        assert_eq!(record.snapshot.grades.get("confidence").map(String::as_str), Some("low"));
+    }
+
     /// ⚠⚠ The zero-install path had no way in. A store with a console of its
     /// own can be handed a record without the referee ever being asked —
     /// which is exactly why the roadmap wanted a second adapter — and SQLite

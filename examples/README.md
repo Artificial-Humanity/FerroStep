@@ -17,6 +17,15 @@ or ignore them; nothing in the engine knows they exist.
   permissions `review-loop.json` leaves out, which is what makes the pair
   useful: absent from a definition, each grants the operation to **nobody**
   rather than to anybody.
+  - **`grades`** — an ordered ladder, with **each direction granted
+    separately**. ⚠ Deliberately the shape an adopter's intuition gets
+    backwards: the gate here is *confidence must reach `high` before this is
+    delivered*, so **raising is the direction that clears the gate** and it is
+    the owner's, while the reviewer may only lower. The familiar shape is the
+    opposite — a severity floor, where raising cannot clear anything — and an
+    engine that assumed either would be silently wrong for the other in the
+    direction that grants permission. So the referee guards who moves the
+    value and which way, and has no opinion about which end clears your gate.
   - **`rescopes`** — a review belongs to a release line, and only the owner
     may move it to another, with a reason: a record that changes which
     queries find it and says nothing about why is indistinguishable from one

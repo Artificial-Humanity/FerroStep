@@ -2015,14 +2015,39 @@ mod tests {
     fn shipped_examples_stay_valid() {
         // The files in examples/ are illustrations, not standards — but they
         // must never illustrate something the engine would reject.
+        let mut shipped = Vec::new();
         for (path, src) in [
             ("review-loop", include_str!("../../examples/review-loop.json")),
             ("product-review", include_str!("../../examples/product-review.json")),
         ] {
             let def = WorkflowDef::from_json(src)
                 .unwrap_or_else(|e| panic!("examples/{path}.json does not parse: {e}"));
-            Engine::new(def)
+            Engine::new(def.clone())
                 .unwrap_or_else(|e| panic!("examples/{path}.json does not validate: {e}"));
+            shipped.push(def);
+        }
+
+        // ⚠⚠ **THE FLOOR: EVERY OPTIONAL KIND HAS TO APPEAR IN AT LEAST ONE
+        // SHIPPED FILE.** These files are `include_str!`'d, so a kind one of
+        // them declares gets a real round trip through the shipped bytes —
+        // and a kind none of them declares gets none. `grades` was in exactly
+        // that state for a day: the only configurable kind whose parse path no
+        // test loaded from a real file, which reads as a documentation gap and
+        // is a coverage gap. Without this assertion it can return silently the
+        // next time a kind is added.
+        for (kind, present) in [
+            ("counters", shipped.iter().any(|d| !d.counters.is_empty())),
+            ("creation", shipped.iter().any(|d| d.creation.is_some())),
+            ("rescopes", shipped.iter().any(|d| !d.rescopes.is_empty())),
+            ("grades", shipped.iter().any(|d| !d.grades.is_empty())),
+            ("halted", shipped.iter().any(|d| !d.halted.is_empty())),
+            ("terminal", shipped.iter().any(|d| !d.terminal.is_empty())),
+        ] {
+            assert!(
+                present,
+                "no shipped example declares `{kind}`, so its parse path is never exercised \
+                 from a real file — add it to one rather than deleting this line"
+            );
         }
     }
 
