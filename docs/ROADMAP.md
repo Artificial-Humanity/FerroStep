@@ -491,6 +491,40 @@ SQLite-specific. The trait is the leaning.
 *Done when:* a person inspects a SQLite-backed loop and resolves what it is
 waiting on, without reaching for a SQL client.
 
+**E7 — Worktrees.** *(owner, 2026-08-29 — raised, not yet placed)*
+The owner asked for this to be on the road: **worktrees, addressed at some
+point in the product's evolution.** That is the whole of what was said, and
+this entry states no more than it.
+
+⚠ **The scope is not stated, and this file must not supply one.** A reading
+written here by anybody other than the owner becomes the shortlist the item is
+later built against, and it becomes it silently — the entry reads as a record
+of their intent whoever actually wrote the words. What the term covers, and
+which part of the product it lands in, is theirs to say.
+
+⚠ **Recorded now for E6's reason, one item up.** The owner proposed that
+console at the project's outset, nothing wrote it down, and it surfaced again
+on 2026-08-25 only because they said so from memory. **An owner proposal
+answered with silence is one that comes back from memory or does not come
+back.** The bar for an entry here is not a designed item. It is that somebody
+said it, and that the entry is dated and attributed.
+
+**One fact worth having before the scoping conversation, and it narrows
+nothing.** ⚠ **Scope already models a branch** — the README defines it as
+*which unit of work a record belongs to: a branch, a cycle, a tenant*, with
+`rescope` as its refereed move and per-label grants in the definition. So one
+reading of this item lands on machinery that exists, and a reading about
+*parallel checkouts of the same branch* — two actors at work in one unit,
+isolated from each other — does not obviously land there at all. Which of
+those is meant changes whether the item is configuration or a new category,
+and that is the first question to answer rather than the first thing to
+assume.
+
+*Admitted when:* the owner states the scope, and states whether it sits inside
+1.0.0 or beyond — the placement every item admitted after 2026-08-25 carries
+(§Releases). Until then this is a recorded intent and deliberately not a
+milestone, which is why it takes no rung on the ladder.
+
 ---
 
 ## Horizon — the ambitions that order the road
