@@ -7,6 +7,28 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-cli`: **`--map` accepts the generation config as well as the bare
+  map**, so a mapped deployment needs one file rather than two.
+
+  ⚠⚠ **TWO FILES THAT MUST AGREE WILL EVENTUALLY DISAGREE, AND THIS PAIR DID IT
+  QUIETLY.** The generator reads a wrapper (`{"map": …, "actors": …}`) and the
+  CLI read only the bare map, so a deployment kept both — a source and a
+  derived copy, held in agreement by somebody remembering a command. Edit the
+  wrapper, forget to re-derive, and **both files still parse and disagree**;
+  `doctor` then checks a map **nothing was generated from** and reports
+  agreement. An instrument confirming the wrong artifact is worse than no
+  instrument, and it was reachable by a documented workflow rather than a
+  mistake.
+
+  ⚠ **Ambiguity is refused, not resolved by precedence.** A file carrying both
+  a `map` key and a `records` key is one somebody is mid-conversion on, and
+  picking a winner would silently use the half they are not editing — the same
+  drift, reintroduced by its own fix.
+
+  Found by the second adopter's first deployment. They resolved it with a
+  derivation convention, which was right and which cannot detect its own
+  staleness — the fix belongs on this side.
+
 - `ferrostep-pocketbase`: **the mapped migration's idempotency is measured**,
   and the test that covered it now covers all three of its guarded changes
   rather than two.

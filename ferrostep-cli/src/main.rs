@@ -1426,10 +1426,42 @@ fn partial_rescope_warning(
     ))
 }
 
+/// Read a collection map, accepting **either** the bare map or the generation
+/// config that embeds it.
+///
+/// ⚠⚠ **ONE FILE, BECAUSE TWO WOULD DRIFT SILENTLY.** The generator takes a
+/// wrapper (`{"map": …, "actors": …}`) and this took only the bare map, so a
+/// deployment needed both — a source and a derived copy, kept in agreement by
+/// somebody remembering a command. The failure that shape allows is specific
+/// and quiet: edit the wrapper, forget to re-derive, and both files still
+/// parse and disagree. `doctor` then checks a map **nothing was generated
+/// from** and reports agreement. An instrument confirming the wrong artifact
+/// is worse than no instrument, and it was reachable by a documented workflow.
+///
+/// Found by the second adopter's first deployment, which needed both files and
+/// resolved it with a derivation convention — correct, and a convention cannot
+/// detect its own staleness.
 fn load_map(path: &str) -> Result<ferrostep_pocketbase::CollectionMap, String> {
     let source =
         std::fs::read_to_string(path).map_err(|e| format!("cannot read map '{path}': {e}"))?;
-    serde_json::from_str(&source).map_err(|e| format!("map '{path}' does not parse: {e}"))
+    let value: serde_json::Value = serde_json::from_str(&source)
+        .map_err(|e| format!("map '{path}' does not parse: {e}"))?;
+    // ⚠ Told apart by which key is present, and **ambiguity is refused rather
+    // than resolved by precedence**. A file carrying both is one somebody is
+    // mid-way through converting, and picking a winner would silently use the
+    // half they were not editing.
+    let embedded = value.get("map").is_some();
+    let bare = value.get("records").is_some();
+    let inner = match (embedded, bare) {
+        (true, true) => {
+            return Err(format!(
+                "map '{path}' has both a 'map' key and a 'records' key, so it is both a                  generation config and a bare map — remove one; guessing would use the half                  you are not editing"
+            ))
+        }
+        (true, false) => value.get("map").expect("checked").clone(),
+        _ => value,
+    };
+    serde_json::from_value(inner).map_err(|e| format!("map '{path}' does not parse: {e}"))
 }
 
 fn open_ledger(
@@ -2455,6 +2487,63 @@ mod tests {
             note_text(&flags_of(&[("note-file", ok.to_str().unwrap())])).unwrap().as_deref(),
             Some("a real reason")
         );
+    }
+
+    /// ⚠⚠ **ONE FILE OR TWO THAT DRIFT.** The generator reads a wrapper and
+    /// this read only the bare map, so a deployment needed both and kept them
+    /// in agreement by remembering a command. Edit the wrapper, forget to
+    /// re-derive, and both still parse and disagree — then `doctor` checks a
+    /// map nothing was generated from and reports agreement.
+    #[test]
+    fn a_map_is_read_from_the_bare_file_or_from_the_config_that_embeds_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let bare = serde_json::json!({
+            "records": "tickets", "events": "ticket_events",
+            "state_field": "stage", "version_field": "fs_version",
+            "counter_fields": ["attempts"], "scope_fields": ["lane"],
+            "attribute_fields": ["severity"], "guard_refereed_fields": true,
+        });
+        let bare_path = dir.path().join("bare.json");
+        std::fs::write(&bare_path, bare.to_string()).unwrap();
+
+        // The same map inside the generator's wrapper, beside the block that
+        // makes the wrapper worth having at all.
+        let wrapped = serde_json::json!({
+            "map": bare,
+            "actors": { "collection": "actors", "role_field": "role", "allow_unbound": false },
+        });
+        let wrapped_path = dir.path().join("generate.json");
+        std::fs::write(&wrapped_path, wrapped.to_string()).unwrap();
+
+        let from_bare = load_map(bare_path.to_str().unwrap()).expect("bare map still reads");
+        let from_wrapper =
+            load_map(wrapped_path.to_str().unwrap()).expect("the wrapper reads too");
+        assert_eq!(from_bare, from_wrapper, "one map, two spellings of the same file");
+        // ⚠ Floor: a fixture that parsed to a default would satisfy the
+        // equality above while proving nothing about either read.
+        assert_eq!(from_wrapper.records, "tickets");
+        assert_eq!(from_wrapper.attribute_fields, vec!["severity".to_string()]);
+    }
+
+    /// ⚠ **Ambiguity is refused, not resolved by precedence.** A file carrying
+    /// both keys is one somebody is mid-conversion on, and picking a winner
+    /// would silently use the half they are not editing — which is the exact
+    /// drift this change exists to remove, reintroduced by the fix.
+    #[test]
+    fn a_file_that_is_both_shapes_is_refused_rather_than_guessed_at() {
+        let dir = tempfile::tempdir().unwrap();
+        let both = serde_json::json!({
+            "records": "tickets", "events": "ticket_events",
+            "state_field": "stage", "version_field": "fs_version",
+            "counter_fields": [], "scope_fields": [], "attribute_fields": [],
+            "guard_refereed_fields": false,
+            "map": { "records": "other" },
+        });
+        let path = dir.path().join("both.json");
+        std::fs::write(&path, both.to_string()).unwrap();
+        let refused = load_map(path.to_str().unwrap()).expect_err("both shapes must refuse");
+        assert!(refused.contains("both"), "{refused}");
+        assert!(refused.contains("remove one"), "the refusal names the remedy: {refused}");
     }
 
     // ------------------------------------------------------------------
