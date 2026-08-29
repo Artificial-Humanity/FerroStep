@@ -682,6 +682,13 @@ documented operation with no reachable path — the family this register exists
 for, emitted by the tool that reports on it.**
 
 **B. The refereed-columns guard is UPDATE-only; there is no create parity.**
+**RESOLVED 2026-08-29 in `39d6cc1`** — a new record must start in the
+workflow's initial state, the state comes from the definition rather than the
+map, and the guard is opt-in so adoption over existing rows still works.
+Measured live in five cases, including the two that would have made it a bad
+fix: `apply` still writes, and the update guard still refuses. Original finding
+kept below.
+
 The generator emits `onRecordUpdateRequest` for the guard. The single
 `onRecordCreateRequest` belongs to the **release hook**, which got creation
 parity deliberately and commented (*"the decision field is the owner's from the
