@@ -352,13 +352,16 @@ What the two migrations done to date actually cost:
   migration and never executed, and it became evidence only once a marker
   file in the same restart proved new files execute at all. **A no-op and a
   no-run are the same diff.**
-- ⚠⚠ **`install_files` hardcodes `1756000000_ferrostep.js`, and on the
-  instance this project runs against the earliest existing migration is
-  `1786640266`.** A generic install therefore lands below every migration on
-  that instance. Whether the store still applies it is **unverified for this
-  path** — the measurement above covered a mapped hand-install — and
-  establishing that either way is the first thing this milestone measures,
-  because the two outcomes are a working installer and a silent one.
+- ⚠⚠ **`install_files` hardcodes `1756000000_ferrostep.js`, and that prefix
+  resolves to 2025-08-24 — a year before this repository's first commit.** On
+  a fresh store it sorts first, which is presumably the intent. On any store
+  already carrying migrations of its own it sorts below all of them, and no
+  adopter's store can have been migrated by this project before this project
+  existed. Whether the store still applies a file below its highwater mark is
+  **unverified for this path** — the measurement above covered a mapped
+  hand-install — and establishing it either way is the first thing this
+  milestone measures, because the two outcomes are a working installer and a
+  silent one.
 - **The mapped shape has no installer at all.** Both adopters use it;
   `emit-mapped` writes to two paths the caller names, and placement is a
   written instruction. The one installer that exists serves the shape neither
