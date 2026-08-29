@@ -7,14 +7,25 @@
 //! ```
 //!
 //! The config is deployment configuration, kept beside the workflow
-//! definition it serves:
+//! definition it serves. **Every key but `map` is optional, and each one left
+//! out emits a file that refuses less** — so the four are listed together
+//! here rather than discovered one at a time:
 //!
 //! ```json
 //! {
-//!   "map":     { …CollectionMap… },
-//!   "release": { …ReleaseHook…, optional }
+//!   "map":      { …CollectionMap… },
+//!   "release":  { …ReleaseHook… },
+//!   "actors":   { …ActorBinding… },
+//!   "workflow": "research.json"
 //! }
 //! ```
+//!
+//! ⚠ **This list went stale once already.** `actors` and `workflow` were both
+//! added after it was written, and the block kept naming two keys of four —
+//! read first by exactly the audience that cannot know what is missing from
+//! it. The manifest the command prints is the answer that cannot go stale
+//! this way: it is computed from the configuration actually loaded, so a key
+//! nobody documented still shows up as a protection nobody turned on.
 //!
 //! The hooks file lands in the server's `pb_hooks/` (⚠ a watching server
 //! restarts itself when it does). The optional third argument writes the
@@ -83,6 +94,22 @@ fn main() {
     );
     std::fs::write(&hooks_out, hooks).expect("writable hooks path");
     println!("wrote {hooks_out}");
+
+    // ⚠⚠ Printed on EVERY emission, not only when something is off. A warning
+    // that appears when there is a problem teaches a reader to skim past a
+    // quiet run; a manifest that always prints is read, and its OFF lines are
+    // read with it. Three of the four protections below are off unless a key
+    // says otherwise, and each of those keys is one an author can simply
+    // never meet.
+    print!(
+        "{}",
+        ferrostep_pocketbase::protection_manifest(
+            &config.map,
+            config.release.as_ref(),
+            &config.actors,
+            initial.as_deref(),
+        )
+    );
 
     if let Some(path) = migration_out {
         let migration = ferrostep_pocketbase::migration_file_mapped(&config.map, &config.actors);

@@ -7,6 +7,49 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-pocketbase`: **the emitter states what the file it wrote refuses,
+  and what it leaves open** — a manifest printed on every emission, plus a
+  third value for `guard_refereed_fields` so *absent* stops reading as
+  *stated false*.
+
+  ⚠⚠ **FOUR PROTECTIONS, ALL OFF BY DEFAULT, ALL SILENT ABOUT IT.** The column
+  guard, the initial-state refusal, the decision-field allowlist and the actor
+  binding each arm on one key, and each default is deliberate — arming any of
+  them by default would refuse a deployment part-way through adopting the
+  referee. The defaults are not the defect. **Emitting the permissive file
+  under `wrote hooks.pb.js` and nothing else is**: an author who never met a
+  key installs a file they believe closes columns it leaves open, and then
+  writes an access rule that leans on a guard which is not there. A
+  security-relevant default that fails open is defensible; one that fails open
+  *quietly* is not.
+
+  ⚠ **Three-valued, for the reason `Answer<T>` is.** `guard_refereed_fields`
+  is now `Option<bool>`. Stated-`false` was audited by somebody who chose to
+  leave the columns open; absent was written by somebody the question never
+  reached, and the two collapsed into one word. They emit the same file — they
+  must — and now they print different lines, in the manifest and in `explain`.
+  The same collapse the core refuses at the decision layer, found in the
+  configuration layer, where nothing was watching for it.
+
+  ⚠ **The manifest is checked against the emitted file, not against a second
+  reading of the emitter's conditions**, and the table carries a hook count
+  summed against the registrations in a fully-armed file. A protection added
+  to the generator and not to the table goes red rather than going unnamed —
+  a manifest that quietly drops a protection is the reported defect one level
+  up, and this project has shipped that shape before.
+
+  ⚠ **The config-shape doc block had gone stale in exactly this direction**:
+  `actors` and `workflow` were both added after it was written, and it went on
+  naming two keys of four — read first by the audience that cannot know what
+  is missing from it. Corrected, and superseded: the manifest is computed from
+  the configuration actually loaded, so a key nobody documented still prints
+  as a protection nobody turned on.
+
+  Generation is byte-identical — verified by regenerating an adopter's
+  installed file and matching its sha256 — so this reaches a running
+  deployment without a reinstall. Each of the four assertions carries a
+  mutation that turns it red, run and reverted.
+
 - `ferrostep-pocketbase`: **creation parity for the refereed-columns guard** —
   a new record must start in the workflow's initial state. Register entry 9B,
   and the first piece of the release rung about the store enforcing rules

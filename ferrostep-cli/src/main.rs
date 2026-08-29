@@ -1284,20 +1284,38 @@ fn explain_refereed_columns(out: &mut String, map: Option<&ferrostep_pocketbase:
     let route = map.apply_route();
     let _ = writeln!(out, "\n⚠ COLUMNS THIS REFEREE OWNS in '{}':", map.records);
     let _ = writeln!(out, "  {}", fields.join(", "));
-    if map.guard_refereed_fields {
-        let _ = writeln!(
-            out,
-            "\n  guard_refereed_fields is ON — these move through {route} or they do not\n  \
-             move. Anything still writing them directly is failing NOW, and reporting it\n  \
-             as the store refusing writes."
-        );
-    } else {
-        let _ = writeln!(
-            out,
-            "\n  guard_refereed_fields is OFF — any writer holding credentials can still\n  \
-             edit these directly, and the referee never hears about it. The sweep below\n  \
-             is what to run before you turn it on."
-        );
+    // ⚠ Three branches, because the map holds three values. A map that states
+    // `false` was audited by somebody who chose to leave the columns open; a
+    // map with no key was written by somebody the question never reached, and
+    // telling them "OFF" reads back as a setting they remember making. Same
+    // distinction the manifest draws at emission — this is the copy for
+    // whoever arrives later holding only the map.
+    match map.guard_refereed_fields {
+        Some(true) => {
+            let _ = writeln!(
+                out,
+                "\n  guard_refereed_fields is ON — these move through {route} or they do not\n  \
+                 move. Anything still writing them directly is failing NOW, and reporting it\n  \
+                 as the store refusing writes."
+            );
+        }
+        Some(false) => {
+            let _ = writeln!(
+                out,
+                "\n  guard_refereed_fields is OFF — any writer holding credentials can still\n  \
+                 edit these directly, and the referee never hears about it. The sweep below\n  \
+                 is what to run before you turn it on."
+            );
+        }
+        None => {
+            let _ = writeln!(
+                out,
+                "\n  guard_refereed_fields is ABSENT from this map, so the guard is off and\n  \
+                 nobody chose that. Any writer holding credentials can edit these directly.\n  \
+                 Decide it either way — an access rule written against a guard that was\n  \
+                 never turned on grants exactly what it reads as forbidding."
+            );
+        }
     }
     let _ = writeln!(
         out,
@@ -2561,7 +2579,7 @@ mod tests {
             counter_fields: vec!["agent_passes".to_string()],
             scope_fields: vec!["branch".to_string()],
             attribute_fields: vec!["severity".to_string()],
-            guard_refereed_fields: false,
+            guard_refereed_fields: Some(false),
         }
     }
 
@@ -3507,7 +3525,7 @@ mod tests {
             counter_fields: vec!["attempts".to_string()],
             scope_fields: vec!["lane".to_string()],
             attribute_fields: vec!["severity".to_string()],
-            guard_refereed_fields: guard,
+            guard_refereed_fields: Some(guard),
         }
     }
 
@@ -3593,6 +3611,20 @@ mod tests {
         assert!(out.contains("/api/ferrostep/tickets/apply"), "{out}");
         let on = explain(&engine(), Some(&cli_test_map(true)));
         assert!(on.contains("is ON") && on.contains("failing NOW"), "{on}");
+        // ⚠⚠ THE THIRD STATE, WHICH IS THE ONE AN ADOPTER ARRIVES IN. A map
+        // that never mentions the key is off like a map that states `false`,
+        // and the two must not read alike: "OFF" hands an author back a
+        // decision they never made, and the sentence that follows is what
+        // stops an access rule from being written against a guard nobody
+        // turned on.
+        let absent = ferrostep_pocketbase::CollectionMap {
+            guard_refereed_fields: None,
+            ..cli_test_map(false)
+        };
+        let never = explain(&engine(), Some(&absent));
+        assert!(never.contains("is ABSENT"), "an omitted key must not read as a setting: {never}");
+        assert!(never.contains("nobody chose that"), "{never}");
+        assert_ne!(never, out, "absent and stated-false must not print the same page");
         // ⚠ NEGATIVE CONTROL. Without it every assertion above would pass on a
         // section that printed unconditionally, which is a section that cannot
         // be wrong and cannot be right.

@@ -177,11 +177,41 @@ pub struct CollectionMap {
     /// discarded. **Before turning the guard on, reread every persona that
     /// names a write tool** — the ones that describe a fallback for
     /// "the store is refusing me" are the expensive ones.
-    #[serde(default)]
-    pub guard_refereed_fields: bool,
+    ///
+    /// ⚠⚠ **Three-valued, because stated-`false` and *absent* are different
+    /// facts and only one of them is a decision.** A map that says `false` was
+    /// written by somebody who considered these columns and left them open; a
+    /// map with no key at all was written by somebody the question never
+    /// reached. Both emit the same file — and that is right, because the
+    /// emitted default has to stay off or installing these hooks would refuse
+    /// a deployment adopting the referee over rows that already exist. What
+    /// the third value buys is the *manifest*: [`protections`] prints **"OFF
+    /// — the config does not mention it"**, where a bare **"OFF"** reads back
+    /// as a setting the author remembers making.
+    ///
+    /// ⚠ It is the same collapse `Answer<T>` exists to prevent one layer
+    /// down, arriving in the configuration layer where nothing watched for
+    /// it. Read it through [`CollectionMap::guards_refereed_fields`], which
+    /// answers the emitter's question — *is the guard on* — and leaves the
+    /// other one to the manifest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guard_refereed_fields: Option<bool>,
 }
 
 impl CollectionMap {
+    /// Whether the guard is on — the emitter's question, which has two
+    /// answers where the field has three.
+    ///
+    /// ⚠ Absent reads as off, exactly as stated-`false` does. The difference
+    /// between them is a *reporting* difference and belongs to
+    /// [`protections`]. Letting it reach the generated file would mean a
+    /// config omitting one key emits something a config stating `false` does
+    /// not — which is the drift the three-valued read exists to make visible,
+    /// not to cause.
+    pub fn guards_refereed_fields(&self) -> bool {
+        self.guard_refereed_fields.unwrap_or(false)
+    }
+
     /// Every column the referee owns: the ones the guard closes, and the ones
     /// an adopter must go hunting for before closing them.
     ///
@@ -1445,6 +1475,122 @@ routerAdd("POST", "/api/ferrostep/ferrostep_records/create", (e) => {{
     )
 }
 
+/// One protection the generated mapped hook file either carries or does not —
+/// and, when it does not, the configuration key that decides it.
+///
+/// ⚠⚠ **Every optional protection here is off by default, and every one of
+/// those defaults is deliberate.** The column guard, the initial-state
+/// refusal and the actor binding all have to start permissive, or installing
+/// these hooks would refuse a deployment part-way through adopting the
+/// referee. That is defensible. What is not defensible is emitting the
+/// permissive file *in silence*: an author who never met the key reads
+/// `wrote hooks.pb.js`, installs a file they believe closes those columns,
+/// and writes an access rule that leans on a guard which is not there. **The
+/// defaults stay. The silence goes.**
+///
+/// ⚠ **This table is the manifest and the floor at once.** `hooks` counts the
+/// request hooks each protection registers, and a test sums it against the
+/// registrations in a fully-armed file — so a protection added to the emitter
+/// and not to this table goes red rather than going unmentioned. A manifest
+/// that quietly drops a protection is the reported defect one level up, and
+/// this project has shipped that shape before.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Protection {
+    /// What the generated file refuses when this is on, in an operator's terms.
+    pub refuses: &'static str,
+    /// Whether the file this configuration emits carries it.
+    pub on: bool,
+    /// Why it stands as it does. Printed under an OFF line, so the manifest
+    /// names the edit rather than only the absence.
+    pub because: &'static str,
+    /// Text that appears in the generated file exactly when this is on.
+    ///
+    /// ⚠ Here so the manifest is checked against the emitted file rather than
+    /// against a second copy of the emitter's conditions. Two derivations
+    /// drift, and this pair would drift toward claiming protections the
+    /// installed file does not carry.
+    pub anchor: &'static str,
+    /// How many request-hook registrations this contributes when it is on.
+    pub hooks: usize,
+}
+
+/// What the file [`hooks_file_mapped`] emits for this configuration refuses,
+/// and what it leaves open — the same four arguments, answered before the
+/// file is written.
+///
+/// ⚠ Mapped only. The generic shape owns its collections and registers no
+/// request hooks on somebody else's, so it has nothing optional to report.
+pub fn protections(
+    map: &CollectionMap,
+    release: Option<&ReleaseHook>,
+    actors: &ActorBinding,
+    initial_state: Option<&str>,
+) -> Vec<Protection> {
+    let guarded = map.guards_refereed_fields();
+    vec![
+        Protection {
+            refuses: "a direct write to a refereed column",
+            on: guarded,
+            // ⚠ Three answers, because the field has three. "OFF" alone reads
+            // back to its author as a setting they remember making.
+            because: match map.guard_refereed_fields {
+                Some(true) => "",
+                Some(false) => "the map states guard_refereed_fields: false",
+                None => "the map has no guard_refereed_fields key — nobody decided this",
+            },
+            anchor: "\"refereed_field: \"",
+            hooks: 1,
+        },
+        Protection {
+            refuses: "a new record born outside the workflow's initial state",
+            on: guarded && initial_state.is_some(),
+            because: match (guarded, initial_state.is_some()) {
+                (true, true) => "",
+                (false, _) => "the column guard is off, and this refusal is emitted with it",
+                (true, false) => "the config has no workflow key, so no initial state reached here",
+            },
+            anchor: NOT_INITIAL_STATE,
+            hooks: 1,
+        },
+        Protection {
+            refuses: "a decision written by an account outside the allowlist",
+            on: release.is_some(),
+            because: "the config has no release block, so no decision field is claimed",
+            anchor: "const WRITERS = [",
+            hooks: 2,
+        },
+        Protection {
+            refuses: "an apply from a principal carrying no role",
+            on: !actors.allow_unbound,
+            because: "actors.allow_unbound is true — set it false once your actors exist",
+            anchor: "\"unbound_principal: ",
+            hooks: 0,
+        },
+    ]
+}
+
+/// The manifest an emitter prints beside the file it just wrote.
+///
+/// ⚠ It reports on the CONFIGURATION, and the configuration and the installed
+/// file are the same thing only until somebody installs a different one.
+/// `ferrostep doctor` is what asks the running store.
+pub fn protection_manifest(
+    map: &CollectionMap,
+    release: Option<&ReleaseHook>,
+    actors: &ActorBinding,
+    initial_state: Option<&str>,
+) -> String {
+    let mut out = format!("\nwhat this file refuses in '{}':\n", map.records);
+    for p in protections(map, release, actors, initial_state) {
+        if p.on {
+            out.push_str(&format!("  ON   {}\n", p.refuses));
+        } else {
+            out.push_str(&format!("  OFF  {}\n         {}\n", p.refuses, p.because));
+        }
+    }
+    out
+}
+
 /// The generated hook file for a **mapped** collection: the ping and the
 /// transactional apply route writing the mapped columns, plus — when the
 /// deployment asks for one — the store-side release: writing the decision
@@ -1664,7 +1810,7 @@ routerAdd("POST", "/api/ferrostep/{records}/apply", (e) => {{
     // passes control on; the release hook's writes happen downstream of it
     // and are not its business. Reversing the order would have the guard
     // refuse the release it is supposed to permit.
-    if map.guard_refereed_fields {
+    if map.guards_refereed_fields() {
         // ⚠ Through `refereed_fields`, never inline — `ferrostep explain`
         // prints the same list as the set to sweep for before this is turned
         // on, and a guard closing one set while the list names another is the
@@ -2212,7 +2358,7 @@ mod tests {
             !no_definition.contains(NOT_INITIAL_STATE),
             "a caller with no definition generates exactly what it generated before"
         );
-        let unguarded = CollectionMap { guard_refereed_fields: false, ..guarded_map() };
+        let unguarded = CollectionMap { guard_refereed_fields: Some(false), ..guarded_map() };
         assert!(
             !hooks_file_mapped(&unguarded, None, &ActorBinding::default(), Some("open"))
                 .contains(NOT_INITIAL_STATE),
@@ -2307,14 +2453,140 @@ mod tests {
             // below asserts this list by value, and a category the fixture
             // leaves empty is a category that test cannot see.
             attribute_fields: vec!["severity".to_string()],
-            guard_refereed_fields: false,
+            guard_refereed_fields: Some(false),
         }
     }
 
     /// The same map with the direct-write guard on — the hardened shape a
     /// deployment opts into once its actors exist.
     fn guarded_map() -> CollectionMap {
-        CollectionMap { guard_refereed_fields: true, ..tickets_map() }
+        CollectionMap { guard_refereed_fields: Some(true), ..tickets_map() }
+    }
+
+    fn manifest_release() -> ReleaseHook {
+        ReleaseHook {
+            decision_field: "verdict".to_string(),
+            from_state: "stalled".to_string(),
+            to_state: "queued".to_string(),
+            reset_counters: vec!["attempts".to_string()],
+            writers: vec!["a-person@example.invalid".to_string()],
+            role: "owner".to_string(),
+        }
+    }
+
+    /// ⚠⚠ **The manifest is checked against the emitted file, never against a
+    /// second reading of the emitter's conditions.** A manifest derived from
+    /// the same `if`s it describes agrees with them by construction and would
+    /// keep agreeing after one of them moved. Every row is asserted in both
+    /// directions across the whole matrix, so a protection that reports ON
+    /// while its text is absent — the direction nothing else goes red in —
+    /// fails here.
+    #[test]
+    fn every_protection_the_manifest_names_is_present_exactly_when_it_says() {
+        let bound = ActorBinding { allow_unbound: false, ..ActorBinding::default() };
+        let release = manifest_release();
+        let matrix: Vec<(CollectionMap, Option<&ReleaseHook>, ActorBinding, Option<&str>)> = vec![
+            // Nothing asked for: the file an author who met none of the keys installs.
+            (tickets_map(), None, ActorBinding::default(), None),
+            (guarded_map(), None, ActorBinding::default(), None),
+            (guarded_map(), None, ActorBinding::default(), Some("open")),
+            // ⚠ The create guard rides with the column guard, so this row must
+            // report it OFF even though a workflow was named.
+            (tickets_map(), None, ActorBinding::default(), Some("open")),
+            (tickets_map(), Some(&release), ActorBinding::default(), None),
+            (guarded_map(), Some(&release), bound.clone(), Some("open")),
+        ];
+        for (i, (map, rel, actors, initial)) in matrix.iter().enumerate() {
+            let hooks = hooks_file_mapped(map, *rel, actors, *initial);
+            for p in protections(map, *rel, actors, *initial) {
+                assert_eq!(
+                    hooks.contains(p.anchor),
+                    p.on,
+                    "row {i}: the manifest says {} for {:?}, the file disagrees (anchor {:?})",
+                    if p.on { "ON" } else { "OFF" },
+                    p.refuses,
+                    p.anchor
+                );
+            }
+        }
+    }
+
+    /// ⚠⚠ **The floor: a protection added to the emitter and not to the table
+    /// goes red here rather than going unmentioned.** Without it the manifest
+    /// stays green forever by describing a shrinking share of the file — the
+    /// vacuous pass this project has already shipped once, arriving in the
+    /// instrument built to report on it. Counted against the fully-armed
+    /// file, which is the only configuration where every hook is present.
+    #[test]
+    fn the_protection_table_accounts_for_every_request_hook_emitted() {
+        let bound = ActorBinding { allow_unbound: false, ..ActorBinding::default() };
+        let release = manifest_release();
+        let armed = hooks_file_mapped(&guarded_map(), Some(&release), &bound, Some("open"));
+        let registrations = armed.matches("onRecordUpdateRequest((e)").count()
+            + armed.matches("onRecordCreateRequest((e)").count();
+        let claimed: usize = protections(&guarded_map(), Some(&release), &bound, Some("open"))
+            .iter()
+            .filter(|p| p.on)
+            .map(|p| p.hooks)
+            .sum();
+        assert_eq!(
+            registrations, claimed,
+            "the armed file registers {registrations} request hooks and the table claims \
+             {claimed} — a protection is emitted that the manifest never names"
+        );
+        assert!(registrations > 0, "a fixture registering nothing would pass this vacuously");
+
+        let disarmed = hooks_file_mapped(&tickets_map(), None, &ActorBinding::default(), None);
+        assert_eq!(
+            disarmed.matches("onRecordUpdateRequest((e)").count()
+                + disarmed.matches("onRecordCreateRequest((e)").count(),
+            0,
+            "every request hook in this file is optional, so a config asking for none emits none"
+        );
+    }
+
+    /// ⚠⚠ **Stated-`false` and absent emit the same file and read differently
+    /// — which is the whole change.** The emitted default has to stay off, so
+    /// asserting on the file would assert nothing; the difference lives in
+    /// what the author is told. An author who wrote `false` chose it. An
+    /// author with no key never met the question, and telling them "OFF"
+    /// hands them back a decision they never made.
+    #[test]
+    fn an_absent_guard_key_reads_differently_from_a_stated_false() {
+        let bare = r#"{"records":"tickets","events":"ticket_events","state_field":"stage",
+            "version_field":"fs_version","counter_fields":[],"scope_fields":[]}"#;
+        let stated = r#"{"records":"tickets","events":"ticket_events","state_field":"stage",
+            "version_field":"fs_version","counter_fields":[],"scope_fields":[],
+            "guard_refereed_fields":false}"#;
+        let absent: CollectionMap = serde_json::from_str(bare).expect("a map may omit the key");
+        let explicit: CollectionMap = serde_json::from_str(stated).expect("or state it");
+        assert_eq!(absent.guard_refereed_fields, None, "an omitted key is not a stated false");
+        assert_eq!(explicit.guard_refereed_fields, Some(false));
+        assert!(!absent.guards_refereed_fields(), "both are off");
+        assert!(!explicit.guards_refereed_fields(), "both are off");
+
+        let of = |m: &CollectionMap| {
+            protection_manifest(m, None, &ActorBinding::default(), None)
+        };
+        assert_ne!(of(&absent), of(&explicit), "and the author is told which one they wrote");
+        assert!(
+            of(&absent).contains("nobody decided this"),
+            "an absent key must say so: {}",
+            of(&absent)
+        );
+        assert!(of(&explicit).contains("guard_refereed_fields: false"));
+
+        // ⚠ The manifest prints on every emission, including the one where
+        // nothing is off — a warning that only appears on trouble teaches its
+        // reader to skim the quiet runs.
+        let armed = protection_manifest(
+            &guarded_map(),
+            Some(&manifest_release()),
+            &ActorBinding { allow_unbound: false, ..ActorBinding::default() },
+            Some("open"),
+        );
+        assert_eq!(armed.matches("  ON   ").count(), 4, "all four, and each on its own line");
+        assert!(!armed.contains("OFF"), "nothing is off in this configuration: {armed}");
     }
 
     /// ⚠⚠ **A GUARDED COLUMN WITH NO WRITE PATH IS A DOCUMENTED, UNREACHABLE
