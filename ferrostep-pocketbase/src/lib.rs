@@ -371,6 +371,18 @@ pub const ROLE_NOT_YOURS: &str = "role_not_yours";
 /// JSON, so every name is writable and there is nothing to refuse.
 pub const UNWRITABLE_COLUMN: &str = "unwritable_column";
 
+/// A record created directly in a state that is not the workflow's initial
+/// one.
+///
+/// ⚠⚠ **THE UPDATE GUARD CLOSED THE LOOP'S MIDDLE AND LEFT ITS DOOR OPEN.**
+/// Refereed columns move through the apply route once a row exists — but the
+/// mapped shape refuses `create` by name, so filing MUST be direct, and direct
+/// creation was the one write the guard did not cover. A row could be born in
+/// a terminal or paused state: no transition, no counter spent, no history.
+/// That is a ceiling cleared by the actor it constrains, one layer below where
+/// this crate last found one.
+pub const NOT_INITIAL_STATE: &str = "not_initial_state";
+
 pub struct PocketBaseLedger {
     base: String,
     token: String,
@@ -1448,6 +1460,7 @@ pub fn hooks_file_mapped(
     map: &CollectionMap,
     release: Option<&ReleaseHook>,
     actors: &ActorBinding,
+    initial_state: Option<&str>,
 ) -> String {
     // Bound locally so the generated text and the adapter's matcher are
     // ONE derivation — see `CAS_CONFLICT`.
@@ -1692,6 +1705,46 @@ onRecordUpdateRequest((e) => {{
 }}, "{records}");
 "#
         ));
+
+        // ⚠⚠ **CREATION PARITY, AND THE GUARD WAS HALF A GUARD WITHOUT IT.**
+        // The block above closes the refereed columns to direct UPDATES. In
+        // the mapped shape `create` is refused by this adapter on purpose —
+        // filing belongs to the collection's own procedure — so **the only
+        // supported way to file is the one the guard did not cover**. A row
+        // created straight into a terminal or paused state skips every
+        // transition, spends no counter, and appears in no history. That is a
+        // ceiling cleared by the actor it constrains, one layer below where
+        // this crate last found one.
+        //
+        // ⚠ **Emitted only when the caller supplies the initial state, and it
+        // comes from the DEFINITION rather than the map.** The map holds
+        // column names; which state a record starts in is a workflow rule, and
+        // copying it into the map would be the second copy this project keeps
+        // deleting. A caller with no definition to hand generates exactly what
+        // it generated before.
+        //
+        // ⚠ **Adoption is the reason this is not unconditional.** A deployment
+        // taking the referee over rows that already exist creates them in
+        // mid-loop states on purpose; refusing that would make adoption the
+        // one thing the guard prevents.
+        if let Some(initial) = initial_state {
+            out.push_str(&format!(
+                r#"
+onRecordCreateRequest((e) => {{
+    const started = String(e.record.get("{state}") || "");
+    if (started !== "{initial}") {{
+        throw new BadRequestError(
+            "{not_initial}: a new record starts in '{initial}', not '" + started + "'. " +
+            "Moving it on from there goes through /api/ferrostep/{records}/apply, " +
+            "which records who moved it and why."
+        );
+    }}
+    e.next();
+}}, "{records}");
+"#,
+                not_initial = NOT_INITIAL_STATE
+            ));
+        }
     }
 
     if let Some(release) = release {
@@ -2139,6 +2192,51 @@ mod tests {
         )
     }
 
+    /// ⚠⚠ **THE UPDATE GUARD CLOSED THE MIDDLE OF THE LOOP AND LEFT ITS DOOR
+    /// OPEN.** `create` is refused by this adapter in the mapped shape, so
+    /// filing must be direct — and direct creation was the one write the guard
+    /// never covered. A row born in a terminal or paused state skips every
+    /// transition, spends no counter, and appears in no history.
+    #[test]
+    fn a_guarded_collection_refuses_a_record_born_outside_the_initial_state() {
+        let guarded =
+            hooks_file_mapped(&guarded_map(), None, &ActorBinding::default(), Some("open"));
+        assert!(guarded.contains("onRecordCreateRequest"), "no create guard emitted");
+        assert!(guarded.contains(NOT_INITIAL_STATE), "and it refuses by name");
+        assert!(guarded.contains(r#"!== "open""#), "against the definition's initial state");
+
+        // ⚠ Both sides of the switch. A guard that fires everywhere and one
+        // that fires nowhere are the same green.
+        let no_definition = hooks_file_mapped(&guarded_map(), None, &ActorBinding::default(), None);
+        assert!(
+            !no_definition.contains(NOT_INITIAL_STATE),
+            "a caller with no definition generates exactly what it generated before"
+        );
+        let unguarded = CollectionMap { guard_refereed_fields: false, ..guarded_map() };
+        assert!(
+            !hooks_file_mapped(&unguarded, None, &ActorBinding::default(), Some("open"))
+                .contains(NOT_INITIAL_STATE),
+            "creation parity belongs to the guard, and follows it off"
+        );
+    }
+
+    /// ⚠ The initial state comes from the DEFINITION and is never copied into
+    /// the map. This asserts the map has no field that could hold it, so a
+    /// later hand cannot add one and create the second copy.
+    #[test]
+    fn the_map_carries_no_initial_state_of_its_own() {
+        let json = serde_json::to_value(guarded_map()).unwrap();
+        let object = json.as_object().expect("a map serializes as an object");
+        for key in object.keys() {
+            assert!(
+                !key.contains("initial") && !key.contains("state") || key == "state_field",
+                "'{key}' looks like a second copy of a definition value"
+            );
+        }
+        // Floor: the assertion above is vacuous if the map serializes empty.
+        assert!(object.contains_key("records"), "{object:?}");
+    }
+
     /// ⚠⚠ **SLICE ON AN ANCHOR ONLY IF THE ANCHOR IS UNIQUE.** A guard that
     /// searches for its subject takes the first match for the only match, and
     /// the earliest occurrence of a name in a self-documenting file is very
@@ -2230,7 +2328,7 @@ mod tests {
     #[test]
     fn a_guarded_attribute_column_is_also_writable_through_the_route() {
         let hooks =
-            hooks_file_mapped(&guarded_map(), None, &ActorBinding::default());
+            hooks_file_mapped(&guarded_map(), None, &ActorBinding::default(), None);
         let refereed = slice_once(&hooks, "const REFEREED = [", ']').to_string();
         assert!(refereed.contains("\"severity\""), "guard does not close it: {refereed}");
         assert!(
@@ -2261,7 +2359,7 @@ mod tests {
     fn the_wire_prefixes_the_adapter_matches_are_the_ones_the_hooks_emit() {
         for hooks in [
             hooks_file(&ActorBinding::default()),
-            hooks_file_mapped(&guarded_map(), None, &ActorBinding::default()),
+            hooks_file_mapped(&guarded_map(), None, &ActorBinding::default(), None),
         ] {
             assert!(
                 hooks.contains(&format!("\"{CAS_CONFLICT}: ")),
@@ -2272,7 +2370,7 @@ mod tests {
         // The role refusal only exists where an actor binding does.
         let bound = ActorBinding { role_field: "role".to_string(), ..ActorBinding::default() };
         assert!(
-            hooks_file_mapped(&guarded_map(), None, &bound).contains(ROLE_NOT_YOURS),
+            hooks_file_mapped(&guarded_map(), None, &bound, None).contains(ROLE_NOT_YOURS),
             "{ROLE_NOT_YOURS} not emitted where roles are bound"
         );
         // ⚠ The unwritable-column refusal is MAPPED-ONLY, deliberately: the
@@ -2280,7 +2378,7 @@ mod tests {
         // writable and there is nothing to refuse. Asserted in both directions
         // so "mapped-only" cannot quietly become "nowhere".
         assert!(
-            hooks_file_mapped(&guarded_map(), None, &ActorBinding::default())
+            hooks_file_mapped(&guarded_map(), None, &ActorBinding::default(), None)
                 .contains(&format!("\"{UNWRITABLE_COLUMN}: ")),
             "{UNWRITABLE_COLUMN} not emitted by the mapped file"
         );
@@ -2312,11 +2410,11 @@ mod tests {
 
     #[test]
     fn the_ping_advertises_attributes_only_when_the_map_declares_some() {
-        let with = hooks_file_mapped(&guarded_map(), None, &ActorBinding::default());
+        let with = hooks_file_mapped(&guarded_map(), None, &ActorBinding::default(), None);
         assert!(ping_writes(&with).contains("attributes"), "declared, but not advertised");
 
         let without = CollectionMap { attribute_fields: vec![], ..guarded_map() };
-        let plain = hooks_file_mapped(&without, None, &ActorBinding::default());
+        let plain = hooks_file_mapped(&without, None, &ActorBinding::default(), None);
         assert!(
             !ping_writes(&plain).contains("attributes"),
             "a map with no attributes advertises the capability: {}",
@@ -2333,7 +2431,7 @@ mod tests {
     /// NAMES, so an adapter can refuse by name instead of being told yes.
     #[test]
     fn the_ping_states_the_column_names_it_can_actually_write() {
-        let hooks = hooks_file_mapped(&guarded_map(), None, &ActorBinding::default());
+        let hooks = hooks_file_mapped(&guarded_map(), None, &ActorBinding::default(), None);
         let columns = slice_once(&hooks, r#""columns": {"#, '}').to_string();
         assert!(columns.contains(r#""attempts""#), "counter not named: {columns}");
         assert!(columns.contains(r#""lane""#), "scope label not named: {columns}");
@@ -2511,7 +2609,7 @@ mod tests {
     fn a_kind_the_map_declares_nothing_for_leaves_no_gap_in_the_generated_file() {
         let mut map = tickets_map();
         map.attribute_fields.clear();
-        let hooks = hooks_file_mapped(&map, None, &ActorBinding::default());
+        let hooks = hooks_file_mapped(&map, None, &ActorBinding::default(), None);
 
         let apply = route_block(&hooks, "/api/ferrostep/tickets/apply");
         let body = apply
@@ -2540,7 +2638,7 @@ mod tests {
     /// and doing another, which is the failure both halves exist to prevent.
     #[test]
     fn the_apply_route_refuses_a_column_it_has_no_branch_for() {
-        let hooks = hooks_file_mapped(&tickets_map(), None, &ActorBinding::default());
+        let hooks = hooks_file_mapped(&tickets_map(), None, &ActorBinding::default(), None);
         let apply = route_block(&hooks, "/api/ferrostep/tickets/apply");
 
         assert!(apply.contains("const WRITABLE ="), "the route carries an allowlist: {apply}");
@@ -2684,7 +2782,7 @@ mod tests {
     /// an agreement test wearing a store's clothes.
     #[test]
     fn the_schema_route_reads_the_collection_instead_of_reciting_generation_time_values() {
-        let hooks = hooks_file_mapped(&tickets_map(), None, &ActorBinding::default());
+        let hooks = hooks_file_mapped(&tickets_map(), None, &ActorBinding::default(), None);
         let block = route_block(&hooks, "/api/ferrostep/tickets/schema");
 
         assert!(
@@ -2709,7 +2807,7 @@ mod tests {
     /// way to build this.
     #[test]
     fn the_schema_route_is_authenticated_where_the_ping_deliberately_is_not() {
-        let hooks = hooks_file_mapped(&tickets_map(), None, &ActorBinding::default());
+        let hooks = hooks_file_mapped(&tickets_map(), None, &ActorBinding::default(), None);
 
         let schema = route_block(&hooks, "/api/ferrostep/tickets/schema");
         assert!(schema.contains("$apis.requireAuth()"), "schema must require a caller: {schema}");
@@ -2726,7 +2824,7 @@ mod tests {
         // never that the route computes it. The live test is what answers
         // that, and this exists so a regeneration that drops the key fails
         // without one.
-        assert!(hooks_file_mapped(&tickets_map(), None, &ActorBinding::default())
+        assert!(hooks_file_mapped(&tickets_map(), None, &ActorBinding::default(), None)
             .contains("\"values\": values"), "the schema route must emit the values map");
         assert!(schema.contains("\"columns\""), "{schema}");
     }
@@ -3221,10 +3319,10 @@ mod tests {
     /// and does not bypass hooks.
     #[test]
     fn the_refereed_columns_can_be_closed_to_direct_writes() {
-        let open = hooks_file_mapped(&tickets_map(), None, &ActorBinding::default());
+        let open = hooks_file_mapped(&tickets_map(), None, &ActorBinding::default(), None);
         assert!(!open.contains("refereed_field"), "off unless asked for: {open}");
 
-        let guarded = hooks_file_mapped(&guarded_map(), None, &ActorBinding::default());
+        let guarded = hooks_file_mapped(&guarded_map(), None, &ActorBinding::default(), None);
         assert!(guarded.contains("refereed_field"), "{guarded}");
         // ⚠ Every column the map declares refereed, derived from the map
         // rather than listed here — a counter or scope label added later is
@@ -3253,7 +3351,7 @@ mod tests {
             writers: vec!["a-person@example.invalid".to_string()],
             role: "owner".to_string(),
         };
-        let hooks = hooks_file_mapped(&guarded_map(), Some(&release), &ActorBinding::default());
+        let hooks = hooks_file_mapped(&guarded_map(), Some(&release), &ActorBinding::default(), None);
         let guard = hooks.find("refereed_field").expect("the guard is emitted");
         let release_at = hooks.find("verdict is the owner's field").expect("the release is emitted");
         assert!(guard < release_at, "the guard must be registered first, or it refuses the release");
@@ -3269,7 +3367,7 @@ mod tests {
         let binding = ActorBinding::default();
         for (shape, hooks) in [
             ("generic", hooks_file(&binding)),
-            ("mapped", hooks_file_mapped(&tickets_map(), None, &binding)),
+            ("mapped", hooks_file_mapped(&tickets_map(), None, &binding, None)),
         ] {
             assert!(
                 !hooks.contains(r#"ev.set("role", String((body.event"#),
@@ -3437,7 +3535,7 @@ mod tests {
 
     #[test]
     fn the_mapped_hooks_write_the_mapped_columns_and_only_those() {
-        let hooks = hooks_file_mapped(&tickets_map(), None, &ActorBinding::default());
+        let hooks = hooks_file_mapped(&tickets_map(), None, &ActorBinding::default(), None);
         assert!(hooks.contains(r#"routerAdd("GET", "/api/ferrostep/tickets/ping""#));
         assert!(hooks.contains(r#"routerAdd("POST", "/api/ferrostep/tickets/apply""#));
         assert!(hooks.contains(r#"rec.getInt("fs_version")"#), "compare on the mapped token");
@@ -3615,7 +3713,7 @@ mod tests {
     /// line that would write it.
     #[test]
     fn a_mapped_rescope_can_only_write_the_labels_the_map_declares() {
-        let hooks = hooks_file_mapped(&tickets_map(), None, &ActorBinding::default());
+        let hooks = hooks_file_mapped(&tickets_map(), None, &ActorBinding::default(), None);
         assert!(hooks.contains(r#"body.scope["lane"]"#), "the declared label is writable");
         assert!(hooks.contains(r#"rec.set("lane", String(body.scope["lane"]))"#));
         // The shape that would make it general — and therefore unbounded.
@@ -3667,7 +3765,7 @@ mod tests {
             writers: vec!["a-person@example.invalid".to_string()],
             role: "owner".to_string(),
         };
-        let hooks = hooks_file_mapped(&tickets_map(), Some(&release), &ActorBinding::default());
+        let hooks = hooks_file_mapped(&tickets_map(), Some(&release), &ActorBinding::default(), None);
         assert!(hooks.contains("onRecordUpdateRequest"));
         assert!(hooks.contains("onRecordCreateRequest"), "the refusal holds from the first save");
         assert!(hooks.contains(r#"WRITERS = ["a-person@example.invalid"]"#), "fail-closed allowlist");
@@ -3917,6 +4015,53 @@ mod tests {
         assert!(!shape.writable.is_unknown(), "a current mapped file states its columns");
     }
 
+    /// ⚠⚠ **CREATION PARITY, AND ONLY A RUNTIME CAN SAY WHETHER IT FIRES.**
+    /// The text tests assert the generated file contains the guard and names
+    /// its refusal. Replacing the condition with `if (false)` leaves both true.
+    ///
+    /// ✅ **Measured 2026-08-29** against a disposable instance carrying a
+    /// guarded mapped collection whose definition starts in `open`:
+    ///
+    /// | created with | result |
+    /// |---|---|
+    /// | a terminal state | **400 `not_initial_state`** |
+    /// | a mid-loop state | **400 `not_initial_state`** |
+    /// | the initial state | **200** — the control |
+    /// | `apply` moving it on afterwards | 200 — the referee still writes |
+    /// | a direct update of a refereed column | 400 `refereed_field` |
+    ///
+    /// ⚠ The last two rows are the ones that would have made this a bad fix.
+    /// A create guard that also refused the route's own writes, or that
+    /// displaced the update guard, would have passed every assertion above it.
+    #[test]
+    #[ignore = "needs a live PocketBase with a guarded mapped collection generated from a definition; set FERROSTEP_POCKETBASE_URL and FERROSTEP_POCKETBASE_TOKEN and run with --ignored"]
+    fn live_a_record_cannot_be_born_outside_the_initial_state() {
+        let url = std::env::var("FERROSTEP_POCKETBASE_URL").unwrap();
+        let token = std::env::var("FERROSTEP_POCKETBASE_TOKEN").unwrap();
+        let map = tickets_map();
+        let agent = agent();
+        let create = |stage: &str| {
+            let resp = agent
+                .post(format!("{url}/api/collections/{}/records", map.records))
+                .header("Authorization", &token)
+                .send_json(json!({ "stage": stage, "attempts": 0, "lane": "live" }));
+            match resp {
+                Ok(r) => read(r),
+                Err(ureq::Error::StatusCode(code)) => (code, Value::Null),
+                Err(e) => panic!("transport: {e}"),
+            }
+        };
+        // ⚠ Control FIRST. A guard that refuses everything and one that works
+        // produce the same two refusals below, and only this tells them apart.
+        let (ok, body) = create("open");
+        assert_eq!(ok, 200, "a record must still be creatable in its initial state: {body}");
+
+        for outside in ["done", "working"] {
+            let (status, body) = create(outside);
+            assert_eq!(status, 400, "a record born in '{outside}' must be refused: {body}");
+        }
+    }
+
     /// ⚠⚠ **THE PROPERTY NO TEXT ASSERTION CAN REACH.** Everything else this
     /// module says about the generated route is a claim about a *string* — that
     /// it contains an allowlist, that it names the refusal. **Measured by
@@ -4039,7 +4184,7 @@ mod tests {
     /// **Fixture:** a `guarded_tickets` collection (stage text, fs_version
     /// number, attempts number, lane text, severity text), a
     /// `guarded_ticket_events` collection, the hooks from
-    /// `hooks_file_mapped(&guarded_live_map(), None, &ActorBinding::default())`
+    /// `hooks_file_mapped(&guarded_live_map(), None, &ActorBinding::default(), None)`
     /// installed, and an auth collection whose records carry a `role` field
     /// with one record whose role is `reviewer`. Its token goes in
     /// `FERROSTEP_POCKETBASE_ACTOR_TOKEN`; the superuser token stays in

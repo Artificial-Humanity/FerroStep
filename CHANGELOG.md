@@ -7,6 +7,38 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-pocketbase`: **creation parity for the refereed-columns guard** —
+  a new record must start in the workflow's initial state. Register entry 9B,
+  and the first piece of the release rung about the store enforcing rules
+  rather than only the referee.
+
+  ⚠⚠ **THE GUARD CLOSED THE MIDDLE OF THE LOOP AND LEFT ITS DOOR OPEN.**
+  Refereed columns moved through the apply route once a row existed — but the
+  mapped shape refuses `create` by name, so filing must be direct, and **direct
+  creation was the one write the guard never covered**. A row could be born in
+  a terminal or paused state: no transition, no counter spent, no history. A
+  ceiling cleared by the actor it constrains, one layer below where this crate
+  last found one.
+
+  ⚠ **The initial state comes from the DEFINITION, never from the map.**
+  `hooks_file_mapped` takes it as an optional argument and `emit-mapped` reads
+  it from the workflow the config points at. Copying it into the map would be
+  the second copy this project keeps deleting — asserted by a test that fails
+  if the map ever grows a field that could hold one.
+
+  ⚠ **Opt-in, because adoption needs the other behaviour.** A deployment
+  taking the referee over rows that already exist creates them in mid-loop
+  states on purpose; refusing that would make adoption the one thing the guard
+  prevents. A caller passing no definition generates exactly what it generated
+  before.
+
+  Measured live, five cases: born terminal and born mid-loop both refused by
+  name; born in the initial state accepted; `apply` still moves the record
+  afterwards; a direct update of a refereed column still refused. ⚠ The last
+  two are the rows that would have made this a bad fix — a create guard that
+  also refused the route's own writes would have passed every text assertion.
+  Red under `if (false)` on the live instance.
+
 - `ferrostep-cli`: **`--map` accepts the generation config as well as the bare
   map**, so a mapped deployment needs one file rather than two.
 

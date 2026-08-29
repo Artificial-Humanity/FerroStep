@@ -3525,6 +3525,10 @@ mod tests {
             &map,
             None,
             &ferrostep_pocketbase::ActorBinding::default(),
+            // ⚠ No initial state: this test is about the REFEREED list, and
+            // the creation guard is a separate emission that must not change
+            // what that list contains.
+            None,
         );
         let guarded = slice_once(&hooks, "const REFEREED = [", ']').to_string();
         let out = explain(&engine(), Some(&map));
