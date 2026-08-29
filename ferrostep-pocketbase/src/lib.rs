@@ -3167,19 +3167,46 @@ mod tests {
         assert!(!events.contains(r#"Rule":"""#), "an empty-string rule is public");
     }
 
-    /// ⚠⚠ **TEXT-ONLY: this asserts the generated file SAYS it, not that it
-    /// DOES it.** The idempotency this asserts is a property of running the migration twice,
-    /// which only a store can do. Measured on this crate: disabling a generated check's
-    /// condition leaves every asserted string in place and the whole text suite
-    /// green, so read this as evidence about the artifact and not about the
-    /// deployment's behaviour.
+    /// ⚠ Text-only by nature — it asserts the generated file SAYS it. Disabling
+    /// a generated check's condition leaves every asserted string in place and
+    /// the whole text suite green.
+    ///
+    /// ✅ **THE BEHAVIOUR IS MEASURED as of 2026-08-29**, against a disposable
+    /// instance. Applied once to a collection having none of the three, all
+    /// three appeared. Applied a second time with a live record and a live
+    /// event present: the schema came back **identical** and both rows
+    /// survived.
+    ///
+    /// ⚠⚠ **THE FIRST ATTEMPT AT THAT MEASUREMENT WAS VACUOUS AND LOOKED
+    /// EXACTLY THE SAME.** PocketBase keys applied migrations on FILENAME and
+    /// applies them in filename order, so a re-run copy numbered *below* a
+    /// migration the store had auto-written when the fixture was created gives
+    /// a flawless "nothing changed" from a file that may never have run. **It
+    /// became evidence only once the copy was numbered above the highwater
+    /// mark and a marker migration in the same restart proved new files
+    /// execute at all.** A no-op and a no-run are the same diff.
+    ///
+    /// ⚠⚠ **AND THE DOWN PATH IS DESTRUCTIVE — MEASURED, not inferred.**
+    /// `pocketbase migrate down 1` **deleted the events collection and every
+    /// row in it**, deleted the actor collection, and removed the version
+    /// field — while leaving the refereed records themselves in place. A
+    /// revert therefore separates records from their history, which is the one
+    /// thing the mapped shape exists to keep together. It prompts first and
+    /// will not run unattended; that is the only mitigation there is. ⚠ Every
+    /// COPY of this file carries the same down path, so a duplicate installed
+    /// to force a re-run is a file whose revert destroys the deployment.
     #[test]
-    fn the_mapped_migration_guards_both_of_its_changes() {
+    fn the_mapped_migration_guards_all_three_of_its_changes() {
         let migration = migration_file_mapped(&tickets_map(), &ActorBinding::default());
-        // Re-running must be harmless: the field add and the collection
-        // create are both conditional.
+        // Re-running must be harmless: the field add and both collection
+        // creates are conditional.
+        // ⚠ THREE, not two. This asserted two and was NAMED for two while the
+        // migration grew a third — the actor collection — so it would have
+        // passed with that guard deleted outright. The name encoded a
+        // population that was complete when it was written.
         assert!(migration.contains(r#"if (!records.fields.getByName("fs_version"))"#));
         assert!(migration.contains("haveEvents"));
+        assert!(migration.contains("haveActors"), "the third guarded creation");
         assert!(migration.contains("idx_ticket_events_record_seq"), "the (record, seq) referee");
         assert!(!migration.contains(r#"Rule": """#), "an empty-string rule is public");
         assert!(migration.contains(r#"records.fields.removeByName("fs_version")"#), "a down path");

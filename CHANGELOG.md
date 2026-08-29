@@ -7,6 +7,38 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-pocketbase`: **the mapped migration's idempotency is measured**,
+  and the test that covered it now covers all three of its guarded changes
+  rather than two.
+
+  ⚠⚠ **THE TEST WAS NAMED FOR A POPULATION THAT HAD GROWN.**
+  `..._guards_both_of_its_changes` asserted the version-field guard and the
+  events guard while the migration had since gained a third — the actor
+  collection — so it would have passed with that guard deleted outright.
+  Renamed, widened, and red under exactly that mutation.
+
+  ✅ **Measured against a disposable instance**: applied once to a collection
+  having none of the three, all three appeared; applied again with a live
+  record and a live event present, the schema came back identical and both
+  rows survived.
+
+  ⚠⚠ **The first attempt at that measurement was vacuous and looked exactly
+  the same.** PocketBase keys applied migrations on filename and applies them
+  in filename order, so a re-run copy numbered *below* a migration the store
+  had auto-written gives a flawless "nothing changed" from a file that may
+  never have executed. It became evidence only once the copy was numbered
+  above the highwater mark and a marker migration in the same restart proved
+  new files execute at all. **A no-op and a no-run are the same diff.**
+
+  ⚠⚠ **And the down path is destructive, measured rather than inferred.**
+  `pocketbase migrate down 1` deleted the events collection and every row in
+  it, deleted the actor collection, and removed the version field — while
+  leaving the refereed records in place. A revert separates records from their
+  history, which is the one thing the mapped shape exists to keep together. It
+  prompts first and will not run unattended; that is the only mitigation.
+  ⚠ Every copy of the file carries the same down path, so a duplicate
+  installed to force a re-run is a file whose revert destroys the deployment.
+
 - `examples/product-review.json`: **declare a ladder**, and assert that every
   optional kind appears in at least one shipped example.
 
