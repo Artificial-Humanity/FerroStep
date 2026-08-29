@@ -52,11 +52,18 @@ this file's proposal and are moved freely.
 |---|---|---|
 | **0.1.0** ✅ | the internal MVP — the author's lane runs on the referee | B1–B5 |
 | **0.2.0** | **the store enforces, not just the referee** — actors stop authenticating as an administrator, and the rules the engine validates are also applied by the store | B6 |
-| **0.3.0** | **a stranger can adopt it from the documentation alone** *(owner)* | B8 |
+| **0.3.0** | **a stranger can adopt it from the documentation alone** *(owner)* | B8, B9 |
 | **0.4.0** | *unassigned* — see the note below | — |
 | **0.5.0** | **the zero-install path gets a console** *(owner)* | E6 |
 | **0.6.0 →** | the remaining expansion tier, in whatever order demand arrives | E1–E5, B7 |
 | **1.0.0** | the planned road complete | — |
+
+⚠ **B9 on 0.3.0 is this file's proposal on an owner-placed rung**, and is
+the one addition above that is not free to move without the owner. The
+argument for the pairing is that the rung's outcome is unreachable without
+it: a stranger who adopts from the documentation alone is following an
+install procedure, and documenting a hand procedure leaves them holding it.
+Move it if the outcome reads differently from here.
 
 ⚠ **This ladder places items; it does not gate them.** An expansion item
 whose demand arrives early lands early and moves the ladder rather than
@@ -315,6 +322,79 @@ is the same friction over again.
 *Done when:* somebody outside this project stands a loop up from the
 documentation, and the places they get stuck become entries rather than
 surprises.
+
+**B9 — Install and update as an operation, not a procedure.** *(proposed:
+0.3.0, with B8)*
+The generator stops at the file. Everything after it belongs to a human with
+a shell: where each artifact goes, in what order relative to the other one,
+whether the thing now running is the thing that was generated, and how to get
+back. That is a *procedure*, it is carried in somebody's head or in a note,
+and B8 cannot fix it — documenting an unsafe sequence documents an unsafe
+sequence. Both items serve the same sentence, which is why the pairing is
+proposed rather than a later rung.
+
+⚠ **This is the generator/installer split, not a backend complaint.** Two of
+the constraints below are the store's and are not going anywhere: on this
+backend a hooks write *is* the restart, which couples artifact placement to
+service lifecycle, and migrations are files applied in filename order that
+the store also writes itself, so a generated migration competes for position
+with machine-authored ones. Everything else is ours, and would reappear on
+Postgres (E2) or on any backend where this project emits artifacts into a
+runtime it does not own. The zero-install path and a native store escape it
+by having no extension layer to install into — which is an absence, not a
+solution to copy.
+
+What the two migrations done to date actually cost:
+
+- ⚠⚠ **The migration's filename decides whether it runs, and a migration
+  that did not run looks exactly like one that changed nothing.** Measured
+  2026-08-29: an idempotency re-run sorted below the instance's highwater
+  migration and never executed, and it became evidence only once a marker
+  file in the same restart proved new files execute at all. **A no-op and a
+  no-run are the same diff.**
+- ⚠⚠ **`install_files` hardcodes `1756000000_ferrostep.js`, and on the
+  instance this project runs against the earliest existing migration is
+  `1786640266`.** A generic install therefore lands below every migration on
+  that instance. Whether the store still applies it is **unverified for this
+  path** — the measurement above covered a mapped hand-install — and
+  establishing that either way is the first thing this milestone measures,
+  because the two outcomes are a working installer and a silent one.
+- **The mapped shape has no installer at all.** Both adopters use it;
+  `emit-mapped` writes to two paths the caller names, and placement is a
+  written instruction. The one installer that exists serves the shape neither
+  of them chose.
+- **Nothing compares what is about to be installed with what is running.**
+  Both adopters staged copies under `.ferrostep/` by hand and diffed by eye,
+  and one of those staged copies then had to be cleaned up by the owner
+  because no step owned removing it.
+- **The way back is destructive.** Measured: `migrate down 1` deletes the
+  events collection and every row in it, deletes the actor collection and
+  removes the version field. That is a removal, not a rollback, and an
+  adopter reaching for it mid-update loses the history the referee exists to
+  keep.
+
+What it needs, stated as outcomes because the shape is not decided:
+
+- One command that installs or updates, and **refuses rather than
+  half-applies** — the ordering constraint between the two artifacts is the
+  store's, so the command owns it instead of the reader.
+- A migration name derived from the target instance rather than a constant.
+- A pre-flight that answers *what is running, and what would change* before
+  anything is written.
+- A verification the command runs itself. A checklist a human works through
+  is the artifact this milestone is replacing.
+- ⚠ A non-destructive way back, **or a plain statement that there is not
+  one** — the same rule the adapters follow about what they cannot guarantee.
+
+✅ **First piece landed 2026-08-29:** the emitter now prints what the file it
+wrote refuses and what it leaves open, and `guard_refereed_fields` gained a
+third value so *absent* stops reading as *stated false*. That is the
+pre-flight's first half — what the artifact *would* do — with the other half,
+what the running store *does*, still unanswered by anything but `doctor`.
+
+*Done when:* an adopter installs a deployment and later updates it with one
+command each, and the command tells them what will change before it changes
+it.
 
 ---
 
