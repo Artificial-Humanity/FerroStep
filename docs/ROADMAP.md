@@ -528,6 +528,58 @@ assume.
 (§Releases). Until then this is a recorded intent and deliberately not a
 milestone, which is why it takes no rung on the ladder.
 
+**E8 — Multi-root project configuration.** *(owner, 2026-09-03 — raised, not
+yet placed)*
+The owner asked for this to be on the road: **multi-root project
+configurations, with some form of routing at the top level.** The stated
+intent, in full: agents start in a workspace directory while the actual
+assignment is one of several projects beneath it, and routing at the top level
+would ease guiding an agent that has just been spun up, or one whose context
+cache has been cleared. The owner named their own workspace as an existing
+example of the shape.
+
+⚠ **The scope is not stated beyond that, and this file must not supply one** —
+E7's warning one item up, for E7's reason. What the routing maps, what reads
+it, and whether the top-level artifact is FerroStep's at all are the owner's
+to say.
+
+**Facts worth having before the scoping conversation. None of them narrows the
+item.**
+
+⚠ **Layering exists, and it walks the other way.** `Roster::discover` collects
+every roster file from the working directory *upward*, nearest winning, and
+every value remembers the file that supplied it — so an inherited persona path
+resolves against the parent that wrote it and not the repo that inherited it. A
+workspace-level roster above several repos is therefore already built and
+tested. But what it answers is *what applies where I am*; routing asks *where
+should I be*, and an upward walk cannot answer that — from the workspace root
+there is nothing above but the root file, and discovery holds no notion of the
+projects beneath it, nor of a name that means one of them. The direction of the
+walk is the whole of the gap, which is what makes this a plausible addition to
+`ferrostep-roster` rather than a new category — plausible only, and only if
+what the item resolves is an actor and a place.
+
+⚠ **A workspace root is not a repository, so the check that keeps a roster
+honest cannot run there.** `xtask`'s guard asserts the persona a roster names
+is *tracked*, not merely present, because a fresh clone is what `CLAUDE.md`
+imports from. A file sitting above every repo has no index to ask: AGENTS.md
+§Conventions' *existence is a working-tree question, shipping is an index
+question* has no shipping side at that level. Whatever lands here inherits that
+condition rather than fixing it, and the honest form states it the way an
+adapter states its capabilities — rather than leaving a reader to assume the
+guarantee the repo-level file has.
+
+⚠ **The motivating instance cannot ship as the example.** This repo is public;
+the workspace named as the example carries deploy targets and a credential
+inventory. The shape is publishable, that instance's table is not — an
+`examples/` entry or a test fixture for this item is written generic from the
+start.
+
+*Admitted when:* the owner states the scope, and states whether it sits inside
+1.0.0 or beyond — the placement every item admitted after 2026-08-25 carries
+(§Releases). Until then this is a recorded intent and deliberately not a
+milestone, which is why it takes no rung on the ladder.
+
 ---
 
 ## Horizon — the ambitions that order the road
