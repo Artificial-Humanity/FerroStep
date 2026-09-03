@@ -124,8 +124,9 @@ explain:                       (takes no --store)
 
 agent-env:                     (takes no --workflow and no --store)
   --agent <title>       the roster entry to resolve (default: its default_agent)
-  --roster <path>       the roster file (default: the nearest config.yaml at
-                        or above the working directory)
+  --roster <path>       the roster file (default: FerroStep/config.yaml, or
+                        bare config.yaml, whichever is nearest at or above
+                        the working directory)
   --format shell|json   shell assignments to eval (default), or JSON for a
                         caller that is not a shell
 ";

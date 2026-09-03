@@ -7,6 +7,16 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-roster`: **`Roster::discover` also finds `FerroStep/config.yaml`**
+  — the standard deployment folder (`config.yaml`, `workflow/`, `personas/`)
+  a consumer repo installs into, checked at every level of the upward walk
+  before the bare file at that same level. Purely additive: a repo that has
+  not adopted the folder (this one included — `FerroStep/config.yaml` here
+  would mean a folder named `FerroStep` inside FerroStep) resolves exactly as
+  before, and the two shapes layer across workspace levels the same way two
+  bare files already did. `ferrostep agent-env --roster`'s default and the
+  module docs now describe both shapes.
+
 - `ferrostep-pocketbase`: **the emitter states what the file it wrote refuses,
   and what it leaves open** — a manifest printed on every emission, plus a
   third value for `guard_refereed_fields` so *absent* stops reading as

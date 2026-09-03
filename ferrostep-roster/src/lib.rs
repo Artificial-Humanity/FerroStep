@@ -5,7 +5,10 @@
 //! under, and the document that tells it how to behave. Both are data a
 //! deployment configures, and neither is compiled in.
 //!
-//! A roster is a `config.yaml` at the root of the repo the loop works on:
+//! A roster is a `config.yaml`, found as `<repo>/FerroStep/config.yaml` — the
+//! standard deployment folder, alongside `workflow/` (scripts) and
+//! `personas/` — or, for a repo that has not adopted that folder (this one
+//! included), bare at the repo root:
 //!
 //! ```yaml
 //! default_agent: developer
@@ -13,11 +16,11 @@
 //!   developer:
 //!     name: Ada
 //!     email: ada@example.com
-//!     persona: workflow/DEVELOPER.md
+//!     persona: personas/DEVELOPER.md
 //!   reviewer:
 //!     name: Grace
 //!     email: grace@example.com
-//!     persona: workflow/REVIEWER.md
+//!     persona: personas/REVIEWER.md
 //! ```
 //!
 //! Entries are keyed by **title**, and a title is a configured value rather
@@ -41,8 +44,17 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-/// The file a roster lives in, at the root of the repo it describes.
+/// The file a roster lives in.
 pub const ROSTER_FILE: &str = "config.yaml";
+
+/// The standard deployment folder a consumer repo installs FerroStep's
+/// working files into: `<repo>/FerroStep/config.yaml`, alongside `workflow/`
+/// and `personas/`. Checked first, at every level of the upward walk, before
+/// the bare [`ROSTER_FILE`] at that same level — so a repo that has adopted
+/// the folder is found without a flag, and a repo that has not (this one
+/// included: `FerroStep/config.yaml` here would mean a folder named
+/// `FerroStep` inside FerroStep) keeps working unchanged.
+pub const ROSTER_DIR: &str = "FerroStep";
 
 /// A parsed roster: every file that contributed to it, and what they said.
 ///
@@ -153,14 +165,25 @@ impl Roster {
     /// ⚠ **Every file on the way up contributes**, not just the first one
     /// found. That is what lets a workspace share values across the repos
     /// beneath it; the nearest file wins wherever two speak.
+    ///
+    /// ⚠ **At each level, `FerroStep/config.yaml` is checked before the bare
+    /// file at that same level.** A repo either has adopted the deployment
+    /// folder or has not; it does not have both, so this is "which one" and
+    /// not a precedence rule anybody has to reason about across two files
+    /// that actually coexist.
     pub fn discover(start: impl AsRef<Path>) -> Result<Roster, RosterError> {
         let start = start.as_ref();
         let mut found = Vec::new();
         let mut dir = start.to_path_buf();
         loop {
-            let candidate = dir.join(ROSTER_FILE);
-            if candidate.is_file() {
-                found.push(candidate);
+            let in_folder = dir.join(ROSTER_DIR).join(ROSTER_FILE);
+            if in_folder.is_file() {
+                found.push(in_folder);
+            } else {
+                let bare = dir.join(ROSTER_FILE);
+                if bare.is_file() {
+                    found.push(bare);
+                }
             }
             if !dir.pop() {
                 break;
@@ -782,6 +805,84 @@ agents:
         let dir = tempfile::tempdir().unwrap();
         let Err(error) = Roster::discover(dir.path()) else { panic!("a roster was invented") };
         assert!(error.to_string().contains(ROSTER_FILE), "{error}");
+    }
+
+    #[test]
+    fn discover_finds_the_ferrostep_folder_convention() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("FerroStep/personas")).unwrap();
+        std::fs::write(dir.path().join("FerroStep/personas/DEVELOPER.md"), "# persona").unwrap();
+        std::fs::write(
+            dir.path().join("FerroStep/config.yaml"),
+            "default_agent: developer\nagents:\n  developer:\n    name: Ada\n    \
+             email: a@example.com\n    persona: personas/DEVELOPER.md\n",
+        )
+        .unwrap();
+
+        let deep = dir.path().join("a/b");
+        std::fs::create_dir_all(&deep).unwrap();
+        let found = Roster::discover(&deep).unwrap();
+
+        assert_eq!(found.source(), dir.path().join("FerroStep/config.yaml"));
+        let dev = found.resolve(None).unwrap();
+        assert_eq!(dev.name(), "Ada");
+        assert_eq!(dev.persona_path(), dir.path().join("FerroStep/personas/DEVELOPER.md"));
+    }
+
+    /// A directory carrying both shapes is not a real deployment state (a
+    /// repo adopts the folder or it does not), but the precedence has to be
+    /// *something* rather than an arbitrary directory-read order, so this
+    /// pins the folder as the winner.
+    #[test]
+    fn the_ferrostep_folder_wins_over_a_bare_file_at_the_same_level() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("FerroStep")).unwrap();
+        std::fs::write(dir.path().join("FerroStep/config.yaml"), "default_agent: folder\n").unwrap();
+        std::fs::write(dir.path().join(ROSTER_FILE), "default_agent: bare\n").unwrap();
+
+        let found = Roster::discover(dir.path()).unwrap();
+        assert_eq!(found.source(), dir.path().join("FerroStep/config.yaml"));
+        assert_eq!(found.default_title(), Some("folder"));
+    }
+
+    /// A repo that has not migrated keeps working unchanged — this is the
+    /// back-compat half, and it is what lets FerroStep's own repo (whose
+    /// `config.yaml` stays at its root) and a migrated consumer coexist in
+    /// the same workspace with the same reader.
+    #[test]
+    fn a_bare_file_is_still_found_when_no_ferrostep_folder_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(ROSTER_FILE), "default_agent: bare\n").unwrap();
+        let found = Roster::discover(dir.path()).unwrap();
+        assert_eq!(found.source(), dir.path().join(ROSTER_FILE));
+    }
+
+    /// The two shapes layer across levels exactly like two bare files do —
+    /// a workspace layer does not have to have migrated for a repo beneath
+    /// it to, or the other way round.
+    #[test]
+    fn the_two_shapes_layer_across_levels_like_one_shape_does() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(ROSTER_FILE),
+            "agents:\n  reviewer:\n    name: Grace\n    email: g@example.com\n    \
+             persona: workflow/REVIEWER.md\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("repo/FerroStep")).unwrap();
+        std::fs::write(
+            dir.path().join("repo/FerroStep/config.yaml"),
+            "default_agent: developer\nagents:\n  developer:\n    name: Ada\n    \
+             email: a@example.com\n    persona: personas/DEVELOPER.md\n",
+        )
+        .unwrap();
+
+        let found = Roster::discover(dir.path().join("repo")).unwrap();
+        assert_eq!(found.resolve(Some("developer")).unwrap().name(), "Ada");
+        // Inherited from the parent's bare file, resolved against the PARENT.
+        let rev = found.resolve(Some("reviewer")).unwrap();
+        assert_eq!(rev.name(), "Grace");
+        assert_eq!(rev.persona_path(), dir.path().join("workflow/REVIEWER.md"));
     }
 
     #[test]
