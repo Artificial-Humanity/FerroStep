@@ -413,6 +413,18 @@ impl<'a> Resolved<'a> {
         //
         // Absent rather than empty when unconfigured, so a consumer under
         // `set -u` fails loudly instead of authenticating as nobody.
+        //
+        // ⚠ Configured-and-missing is emitted like configured-and-present,
+        // on purpose, and unlike the persona above. The persona is consumed
+        // by every caller of this reader; the credential file only by the
+        // callers that authenticate, and the commit-identity flow — the most
+        // common caller — never opens it. A refusal here would stop every
+        // `agent-env` under a workspace whose file is declared but not yet
+        // created, which is the ordinary state between declaring the source
+        // and provisioning it. The caller that does look up gets its own
+        // refusal from a file that is not there. Revisit if a caller is found
+        // that authenticates without checking the open — then the refusal
+        // belongs at that open, not here.
         if let Some(auth) = self.roster.auth() {
             out.push_str(&format!(
                 "\nAGENT_AUTH_TYPE={}\nAGENT_AUTH_PATH={}",
@@ -631,6 +643,29 @@ agents:
         let (_d2, plain) = roster_on_disk(SAMPLE, &["workflow/DEVELOPER.md"]);
         let block = plain.resolve(None).unwrap().shell_assignments().unwrap();
         assert!(!block.contains("AGENT_AUTH"), "{block}");
+    }
+
+    /// A declared credential source that does not exist yet is still
+    /// emitted — the reader reports where to look, and only a caller that
+    /// looks can know whether it needed to. Refusing here would stop the
+    /// commit-identity flow, which never opens the file, for as long as a
+    /// workspace has declared its source and not provisioned it.
+    #[test]
+    fn a_declared_auth_path_is_emitted_whether_or_not_the_file_exists_yet() {
+        let (dir, repo) = layered(
+            "auth:\n  type: simple\n  path: secrets/actors.json\nagents: {}\n",
+            "default_agent: developer\nagents:\n  developer:\n    name: Ada\n    email: a@example.com\n    persona: workflow/DEVELOPER.md\n",
+        );
+        let missing = dir.path().join("secrets/actors.json");
+        assert!(!missing.exists(), "the fixture must declare a file that is not there");
+
+        let roster = Roster::discover(&repo).unwrap();
+        let block = roster.resolve(None).unwrap().shell_assignments().unwrap();
+        assert!(block.contains("AGENT_AUTH_TYPE='simple'"), "{block}");
+        assert!(
+            block.contains(&format!("AGENT_AUTH_PATH={}", shell_quote(&missing.to_string_lossy()))),
+            "the declared path is reported as declared: {block}"
+        );
     }
 
     /// A roster on disk, with the persona files its entries name.
