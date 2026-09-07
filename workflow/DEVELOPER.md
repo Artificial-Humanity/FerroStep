@@ -124,3 +124,17 @@ can referee one (owner, 2026-08-20). Until then:
   diff already says that.
 * **Push only what the owner asked to ship.** A push here deploys nothing, but the repo is
   public: the moment it lands, it is published.
+* ⚠ **You do not install FerroStep into another repo — consumers pull** (owner, 2026-09-07).
+  A project's own resident takes FerroStep's latest and deploys it into their workspace, on
+  their schedule. This replaced a push model in which this repo's resident delivered the
+  install, and that model **was never written down** — not here, not in any consumer, not
+  anywhere. It directed real work across several repos on memory alone, which is the whole
+  argument for this line existing.
+  ⚠ **What "deploys it" covers was not stated, and this file must not decide it.** Two
+  different things travel under that word: the working files a consumer drops in (the
+  `FerroStep/` folder — roster and personas), and the referee's install into a running store
+  (a migration and hooks). The first is copying files. The second is B9's territory and is
+  not the same act. Ask rather than assume which a request means.
+  ⚠ **What this leaves you is the artifact, not the act.** Handing the install to people who
+  did not build the generator raises the bar on what the generator emits; it does not lower
+  it. See B9 — its hazards did not go away, they changed hands.

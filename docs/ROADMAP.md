@@ -395,6 +395,19 @@ third value so *absent* stops reading as *stated false*. That is the
 pre-flight's first half — what the artifact *would* do — with the other half,
 what the running store *does*, still unanswered by anything but `doctor`.
 
+⚠ **The pull model changed who holds this procedure** (owner, 2026-09-07).
+Consumers now take FerroStep themselves and install it into their own
+workspace; before, this repo's resident delivered it. Nothing above got safer
+— it changed hands, from the one holder who also wrote the generator to every
+consumer's resident, none of whom did. Read the measured hazards as things
+each of them now meets alone, and two in particular: **the mapped shape both
+adopters use has no installer at all**, so placement is a written instruction
+somebody must follow correctly; and **a migration that did not run looks
+exactly like one that changed nothing**, so the failure is silent on the way
+in. The item did not become less necessary by being handed over. It became
+the thing standing between a consumer's resident and a store they can damage
+without being told.
+
 *Done when:* an adopter installs a deployment and later updates it with one
 command each, and the command tells them what will change before it changes
 it.
