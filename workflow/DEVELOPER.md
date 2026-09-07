@@ -21,7 +21,7 @@ repo `cargo xtask agent-env` needs no install; `ferrostep agent-env` is the
 same command once the binary is on your PATH.
 
 ```bash
-env="$(cargo xtask agent-env)" || exit 1   # AGENT_TITLE, NAME, EMAIL, PERSONA, ROSTER
+env="$(cargo xtask agent-env)" || exit 1   # the AGENT_* vars, identity among them
 eval "$env"
 git -c user.name="$AGENT_NAME" -c user.email="$AGENT_EMAIL" commit -F msg.txt
 ```

@@ -89,6 +89,25 @@ pub struct Agent {
     name: String,
     email: String,
     persona: String,
+    /// What a launcher may spend on one run of this agent, in US dollars.
+    ///
+    /// ⚠ **Absent is no ceiling, and that is the state every deployment
+    /// starts in.** A cap is opted into per entry; nothing here invents one,
+    /// and nothing here defaults one, because a default ceiling would be a
+    /// blessed number and this crate does not hold those.
+    ///
+    /// ⚠ **A quantity, never a switch.** This says how many dollars. Which
+    /// flag carries them belongs to whatever a launcher runs — the program on
+    /// the far side is something an adapter speaks to, so naming its spelling
+    /// here would put one vendor's command line in the format every other
+    /// deployment has to write.
+    ///
+    /// ⚠ **It sits on the agent, not on a role.** Titles are configured
+    /// values and this crate means nothing by any of them, so a ceiling is
+    /// available to every entry and a deployment decides which of its actors
+    /// carries one.
+    #[serde(default)]
+    budget_usd: Option<f64>,
 }
 
 /// Where an actor's credential comes from.
@@ -329,6 +348,20 @@ impl Roster {
                 });
             }
         }
+        // ⚠ A ceiling that cannot be spent is refused, not rounded and not
+        // quietly read as absent. Absent already means "no ceiling"; a zero, a
+        // negative or a NaN is somebody meaning something else and getting it
+        // wrong, and folding those into "no ceiling" would answer a request to
+        // spend less by removing the limit entirely.
+        if let Some(written) = agent.budget_usd {
+            if !written.is_finite() || written <= 0.0 {
+                return Err(RosterError::InvalidBudget {
+                    title: title.clone(),
+                    written,
+                    path: entry.source.clone(),
+                });
+            }
+        }
         Ok(Resolved { roster: self, title, entry })
     }
 }
@@ -368,6 +401,13 @@ impl<'a> Resolved<'a> {
     /// The persona path exactly as the roster writes it.
     pub fn persona(&self) -> &'a str {
         &self.entry.agent.persona
+    }
+
+    /// The ceiling a launcher may spend on one run of this agent, in US
+    /// dollars. `None` is no ceiling, and is what an entry that says nothing
+    /// resolves to.
+    pub fn budget_usd(&self) -> Option<f64> {
+        self.entry.agent.budget_usd
     }
 
     /// The file that supplied this entry, which in a layered roster is not
@@ -427,6 +467,14 @@ impl<'a> Resolved<'a> {
             shell_quote(&persona.to_string_lossy()),
             shell_quote(&self.roster.source().to_string_lossy()),
         );
+        // ⚠ Absent rather than empty when no ceiling is set, like the
+        // credential source below. A launcher tests whether the variable
+        // arrived and adds its spend flag only then; emitting `''` would hand
+        // an empty argument to every launcher that forgot to check, and an
+        // empty argument is the shape a spend limit fails open in.
+        if let Some(budget) = self.budget_usd() {
+            out.push_str(&format!("\nAGENT_BUDGET_USD={}", shell_quote(&budget.to_string())));
+        }
         // ⚠⚠ The credential source, and never the credential. A password put
         // in the environment is inherited by every subprocess — including one
         // launched to act as somebody *else*, which is how an actor ends up
@@ -476,6 +524,7 @@ pub enum RosterError {
     UnknownTitle { title: String, known: Vec<String>, path: PathBuf },
     IncompleteEntry { title: String, field: &'static str, path: PathBuf },
     MissingPersona { title: String, written: String, resolved: PathBuf, path: PathBuf },
+    InvalidBudget { title: String, written: f64, path: PathBuf },
 }
 
 impl fmt::Display for RosterError {
@@ -509,6 +558,12 @@ impl fmt::Display for RosterError {
             RosterError::IncompleteEntry { title, field, path } => {
                 write!(f, "agent '{title}' has an empty {field} in {}", path.display())
             }
+            RosterError::InvalidBudget { title, written, path } => write!(
+                f,
+                "agent '{title}' in {} sets budget_usd to {written}, which is not an \
+                 amount anything can spend — omit the key for no ceiling",
+                path.display()
+            ),
             RosterError::MissingPersona { title, written, resolved, path } => write!(
                 f,
                 "agent '{title}' in {} names the persona '{written}', which resolves to \
@@ -966,6 +1021,94 @@ agents:
                 dir.path().join("workflow/REVIEWER.md").display(),
                 dir.path().join(ROSTER_FILE).display()
             )
+        );
+    }
+
+    /// SAMPLE with a ceiling on the reviewer — the owner's case, though the
+    /// key is available to any entry.
+    fn with_budget(written: &str) -> String {
+        SAMPLE.replace(
+            "    persona: workflow/REVIEWER.md",
+            &format!("    persona: workflow/REVIEWER.md\n    budget_usd: {written}"),
+        )
+    }
+
+    #[test]
+    fn a_budget_is_absent_from_the_block_until_a_roster_sets_one() {
+        let (_dir, roster) = roster_on_disk(SAMPLE, &["workflow/REVIEWER.md"]);
+        let entry = roster.resolve(Some("reviewer")).unwrap();
+        assert_eq!(entry.budget_usd(), None);
+        assert!(!entry.shell_assignments().unwrap().contains("AGENT_BUDGET_USD"));
+    }
+
+    /// ⚠ The flag below is a stand-in and deliberately not any real launcher's
+    /// spelling. What is under test is the *shape* of the caller's idiom — no
+    /// variable, no flag; a variable, the amount — because the reader emits a
+    /// quantity and the launcher owns the command line.
+    #[test]
+    fn a_budget_reaches_the_shell_as_the_amount_written() {
+        let (_dir, roster) = roster_on_disk(&with_budget("12.5"), &["workflow/REVIEWER.md"]);
+        let entry = roster.resolve(Some("reviewer")).unwrap();
+        assert_eq!(entry.budget_usd(), Some(12.5));
+        let block = entry.shell_assignments().unwrap();
+        let script = format!(
+            "{block}\nset -u\nprintf '%s' \"${{AGENT_BUDGET_USD:+--spend-cap $AGENT_BUDGET_USD}}\""
+        );
+        let out = std::process::Command::new("sh").arg("-c").arg(&script).output().unwrap();
+        assert!(out.status.success(), "sh refused the emitted block");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "--spend-cap 12.5");
+    }
+
+    /// ⚠⚠ The direction that matters: an unspendable ceiling must not fold
+    /// into "no ceiling". Reading a `0` as absent would answer a request to
+    /// spend less by removing the limit, and nothing downstream would say so.
+    #[test]
+    fn a_budget_that_cannot_be_spent_is_refused_rather_than_read_as_no_ceiling() {
+        for written in ["0", "-5", "0.0", ".nan", ".inf"] {
+            let (_dir, roster) = roster_on_disk(&with_budget(written), &["workflow/REVIEWER.md"]);
+            let err = match roster.resolve(Some("reviewer")) {
+                Err(err) => err,
+                Ok(entry) => panic!("budget_usd: {written} resolved to {:?}", entry.budget_usd()),
+            };
+            assert!(matches!(err, RosterError::InvalidBudget { .. }), "{written}: {err}");
+            assert!(err.to_string().contains(ROSTER_FILE), "the refusal names no file: {err}");
+        }
+    }
+
+    /// ⚠ The guard AGENTS.md names. Every emitted key is written out as a
+    /// literal, so this pins the whole set: a sixth, seventh or eighth cannot
+    /// appear without a line here changing. A count belongs in a test and not
+    /// in prose precisely because this fails when reality moves.
+    #[test]
+    fn the_emitted_keys_are_fixed_not_derived() {
+        let keys = |block: &str| -> Vec<String> {
+            block.lines().filter_map(|l| l.split_once('=').map(|(k, _)| k.to_string())).collect()
+        };
+
+        let (_dir, plain) = roster_on_disk(SAMPLE, &["workflow/REVIEWER.md"]);
+        let block = plain.resolve(Some("reviewer")).unwrap().shell_assignments().unwrap();
+        assert_eq!(
+            keys(&block),
+            ["AGENT_TITLE", "AGENT_NAME", "AGENT_EMAIL", "AGENT_PERSONA", "AGENT_ROSTER"],
+            "an entry configuring nothing optional emits the identity keys and no others"
+        );
+
+        let text = format!("{}\nauth:\n  type: simple\n  path: creds.yaml\n", with_budget("5"));
+        let (_dir2, full) = roster_on_disk(&text, &["workflow/REVIEWER.md"]);
+        let block = full.resolve(Some("reviewer")).unwrap().shell_assignments().unwrap();
+        assert_eq!(
+            keys(&block),
+            [
+                "AGENT_TITLE",
+                "AGENT_NAME",
+                "AGENT_EMAIL",
+                "AGENT_PERSONA",
+                "AGENT_ROSTER",
+                "AGENT_BUDGET_USD",
+                "AGENT_AUTH_TYPE",
+                "AGENT_AUTH_PATH",
+            ],
+            "every optional key configured at once — the widest this block gets"
         );
     }
 }

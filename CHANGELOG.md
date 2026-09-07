@@ -7,6 +7,36 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-roster`: **an entry may carry `budget_usd`, and `agent-env` emits
+  `AGENT_BUDGET_USD` when it does** — what a launcher may spend on one run of
+  that agent. **Absent is no ceiling**, which is what every deployment has
+  today and what it keeps: the key is opted into per entry, and no default is
+  invented here, because a default ceiling would be a blessed number and this
+  crate does not hold those. Available to every title rather than to a role —
+  titles are configured values and nothing here means anything by one.
+
+  ⚠ **A quantity, never a switch.** The reader says how many dollars; which
+  flag carries them belongs to whatever the launcher runs, since the program on
+  the far side is something an adapter speaks to. Putting one tool's spelling
+  in the format would make every other deployment write that tool's command
+  line. The crate's own test uses a stand-in flag for the same reason.
+
+  ⚠⚠ **An unspendable ceiling is refused, not folded into "no ceiling".** `0`,
+  a negative, `.nan` and `.inf` fail at resolve and name the file. Reading any
+  of them as absent would answer a request to *spend less* by removing the
+  limit entirely, with nothing downstream to say so. Absent stays absent from
+  the emitted block rather than empty — like the credential source above it —
+  so a launcher's `${AGENT_BUDGET_USD:+…}` adds its flag only when there is
+  one, and an empty argument never reaches a command line.
+
+- `ferrostep-roster`: **`the_emitted_keys_are_fixed_not_derived` now exists.**
+  [AGENTS.md](AGENTS.md) §Conventions cites it by name as the guard that keeps
+  a new emitted key from appearing quietly — and it had never been written.
+  The prose named an instrument that was not there, which is the failure that
+  section is otherwise about. It pins the whole emitted set in both shapes:
+  nothing optional configured, and every optional key at once. Mutation-checked
+  in both directions against the change that prompted it.
+
 - `ferrostep-roster`: **`Roster::discover` also finds `FerroStep/config.yaml`**
   — the standard deployment folder (`config.yaml`, `workflow/`, `personas/`)
   a consumer repo installs into, checked at every level of the upward walk
