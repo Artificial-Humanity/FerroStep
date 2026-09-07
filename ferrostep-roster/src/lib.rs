@@ -108,6 +108,28 @@ pub struct Agent {
     /// carries one.
     #[serde(default)]
     budget_usd: Option<f64>,
+    /// Whether a launcher records what a run of this agent cost, onto the
+    /// ledger event for the move that run produced.
+    ///
+    /// ⚠ **Off unless asked for, and it is a per-agent question rather than a
+    /// deployment-wide one** — a deployment may want the cost of the actor it
+    /// is trying to bound without keeping it for every other.
+    #[serde(default)]
+    capture_cost: Option<bool>,
+    /// Whether a launcher labels this agent's run so external observation can
+    /// be attributed back to the refereed work it was doing.
+    ///
+    /// ⚠ **Opt-in because it EXPORTS identifiers.** Labelling a run means the
+    /// record and the title leave this deployment and land wherever the
+    /// telemetry goes — which is somebody else's store, on somebody else's
+    /// access rules. That is a reasonable trade and it is not one to make on
+    /// an operator's behalf.
+    ///
+    /// ⚠ **What the label is carried BY is not this crate's business**, the
+    /// same as [`Agent::budget_usd`]: this says whether to label, never which
+    /// mechanism does it.
+    #[serde(default)]
+    tag_runs: Option<bool>,
 }
 
 /// Where an actor's credential comes from.
@@ -410,6 +432,18 @@ impl<'a> Resolved<'a> {
         self.entry.agent.budget_usd
     }
 
+    /// Whether a launcher records what this agent's run cost. `None` is off.
+    pub fn capture_cost(&self) -> bool {
+        self.entry.agent.capture_cost.unwrap_or(false)
+    }
+
+    /// Whether a launcher labels this agent's runs for external observation.
+    /// `None` is off — see [`Agent::tag_runs`] for why the default is not the
+    /// convenient one.
+    pub fn tag_runs(&self) -> bool {
+        self.entry.agent.tag_runs.unwrap_or(false)
+    }
+
     /// The file that supplied this entry, which in a layered roster is not
     /// necessarily the nearest one.
     pub fn defined_in(&self) -> &'a Path {
@@ -474,6 +508,17 @@ impl<'a> Resolved<'a> {
         // empty argument is the shape a spend limit fails open in.
         if let Some(budget) = self.budget_usd() {
             out.push_str(&format!("\nAGENT_BUDGET_USD={}", shell_quote(&budget.to_string())));
+        }
+        // ⚠ Present only when switched on, like the ceiling above and the
+        // credential below. A launcher tests whether the variable arrived.
+        // Emitting `''` for "off" makes every consumer parse a falsy string,
+        // and `AGENT_CAPTURE_COST=''` is one careless `[ -n ]` away from
+        // meaning its opposite.
+        if self.capture_cost() {
+            out.push_str("\nAGENT_CAPTURE_COST='1'");
+        }
+        if self.tag_runs() {
+            out.push_str("\nAGENT_TAG_RUNS='1'");
         }
         // ⚠⚠ The credential source, and never the credential. A password put
         // in the environment is inherited by every subprocess — including one
@@ -1075,6 +1120,40 @@ agents:
         }
     }
 
+    #[test]
+    fn a_switch_is_absent_from_the_block_until_a_roster_turns_it_on() {
+        let (_dir, roster) = roster_on_disk(SAMPLE, &["workflow/REVIEWER.md"]);
+        let entry = roster.resolve(Some("reviewer")).unwrap();
+        assert!(!entry.capture_cost());
+        assert!(!entry.tag_runs());
+        let block = entry.shell_assignments().unwrap();
+        assert!(!block.contains("AGENT_CAPTURE_COST"), "{block}");
+        assert!(!block.contains("AGENT_TAG_RUNS"), "{block}");
+    }
+
+    /// ⚠ The caller's idiom is "did the variable arrive", so what is under
+    /// test is that an off switch leaves nothing behind for `-n` to find —
+    /// not that it emits a falsy string, which is the shape that reads as
+    /// its own opposite one careless test later.
+    #[test]
+    fn a_switch_that_is_on_reaches_the_shell_as_a_variable_that_is_set() {
+        let text = SAMPLE.replace(
+            "    persona: workflow/REVIEWER.md",
+            "    persona: workflow/REVIEWER.md\n    capture_cost: true\n    tag_runs: false",
+        );
+        let (_dir, roster) = roster_on_disk(&text, &["workflow/REVIEWER.md"]);
+        let entry = roster.resolve(Some("reviewer")).unwrap();
+        assert!(entry.capture_cost());
+        assert!(!entry.tag_runs(), "an explicit false is off, like an absent key");
+        let block = entry.shell_assignments().unwrap();
+        let script = format!(
+            "{block}\nset -u\nprintf '%s|%s' \"${{AGENT_CAPTURE_COST:+capture}}\" \"${{AGENT_TAG_RUNS:+tag}}\""
+        );
+        let out = std::process::Command::new("sh").arg("-c").arg(&script).output().unwrap();
+        assert!(out.status.success(), "sh refused the emitted block");
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "capture|");
+    }
+
     /// ⚠ The guard AGENTS.md names. Every emitted key is written out as a
     /// literal, so this pins the whole set: a sixth, seventh or eighth cannot
     /// appear without a line here changing. A count belongs in a test and not
@@ -1093,7 +1172,11 @@ agents:
             "an entry configuring nothing optional emits the identity keys and no others"
         );
 
-        let text = format!("{}\nauth:\n  type: simple\n  path: creds.yaml\n", with_budget("5"));
+        let text = with_budget("5").replace(
+            "    budget_usd: 5",
+            "    budget_usd: 5\n    capture_cost: true\n    tag_runs: true",
+        );
+        let text = format!("{text}\nauth:\n  type: simple\n  path: creds.yaml\n");
         let (_dir2, full) = roster_on_disk(&text, &["workflow/REVIEWER.md"]);
         let block = full.resolve(Some("reviewer")).unwrap().shell_assignments().unwrap();
         assert_eq!(
@@ -1105,6 +1188,8 @@ agents:
                 "AGENT_PERSONA",
                 "AGENT_ROSTER",
                 "AGENT_BUDGET_USD",
+                "AGENT_CAPTURE_COST",
+                "AGENT_TAG_RUNS",
                 "AGENT_AUTH_TYPE",
                 "AGENT_AUTH_PATH",
             ],

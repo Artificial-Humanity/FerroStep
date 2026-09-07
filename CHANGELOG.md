@@ -7,6 +7,26 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-roster`: **two per-agent switches, `capture_cost` and `tag_runs`**, emitted as
+  `AGENT_CAPTURE_COST` / `AGENT_TAG_RUNS` and **present only when on**. `capture_cost` says a
+  launcher records what a run of that agent cost; `tag_runs` says it labels the run so
+  external observation can be attributed back to the refereed work.
+
+  *If your symptom is* "I turned one of these on and my launcher does nothing": these are
+  values for a launcher to read, not behaviour this crate performs. Test whether the variable
+  arrived — `${AGENT_CAPTURE_COST:+...}` — rather than comparing it to a string.
+
+  ⚠ **Off is absent, not empty.** An off switch emits no line at all. Emitting `''` would
+  make every consumer parse a falsy string, and `AGENT_CAPTURE_COST=''` is one careless
+  `[ -n "$AGENT_CAPTURE_COST" ]` away from meaning its opposite. Per-agent rather than
+  deployment-wide, because a deployment may want the cost of the one actor it is bounding and
+  not of every other.
+
+  ⚠ **`tag_runs` defaults off because it EXPORTS identifiers.** Labelling a run sends the
+  record and the title wherever the telemetry goes — another store, under another set of
+  access rules. That can be a good trade; it is not one to make on an operator's behalf, so
+  it is opted into rather than out of.
+
 - `ferrostep-roster`: **an entry may carry `budget_usd`, and `agent-env` emits
   `AGENT_BUDGET_USD` when it does** — what a launcher may spend on one run of
   that agent. **Absent is no ceiling**, which is what every deployment has
