@@ -173,6 +173,13 @@ to argue against, not a constraint — the section says so itself).
 - **Decision JSON is a public contract.** `kind: allow | exhausted | deny` and
   their fields are what every binding and app layer switches on; changing the
   shape is a breaking change and needs a version bump and a changelog entry.
+  ⚠ **A changelog entry has a second audience now, and it is not us** (owner, 2026-09-07).
+  Consumers pull, and a consuming resident hitting a problem is told to check for an update
+  that would fix it *before* reporting anything. `CHANGELOG.md` is what they read to make
+  that call, so an entry is answerable to a reader who has a **symptom** and no knowledge of
+  this tree. An entry that records what changed without letting that reader recognise their
+  own bug in it sends them away to report a defect we already fixed — or, worse, to conclude
+  no fix exists and keep running the broken loop.
   ⚠ **Grow a kind's fields, not the set of kinds**, where the meaning allows
   it: an optional field omitted when empty leaves every existing consumer
   reading byte-identical JSON, while a fourth kind is something every binding

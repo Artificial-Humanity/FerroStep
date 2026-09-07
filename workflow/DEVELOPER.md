@@ -140,9 +140,18 @@ can referee one (owner, 2026-08-20). Until then:
   it. See B9 — its hazards did not go away, they changed hands.
 * ⚠ **Nothing comes back in, and what goes out is asked for** (owner, 2026-09-07). Two halves
   of one arrangement, and they are not symmetric:
-  * **Inbound: nothing is owed.** A consumer takes the latest on their own schedule and is
-    **not required to tell you**. Their residents are welcome to ask you questions, and that
-    traffic is the only signal you get. ⚠⚠ **So you do not know what any deployment is
+  * **Inbound: no notice on a pull, but defects come to you** (owner, 2026-09-07). A
+    consumer takes the latest on their own schedule and is **not required to tell you** it
+    happened. What they *are* told to do is bring you problems: on hitting a FerroStep issue
+    — the examples given were an unbounded review loop and a trigger that never fires,
+    explicitly *not limited to those* — a consuming resident **checks for an update and
+    applies it first**, and comes to you when that does not fix it or when no likely fix
+    exists.
+    ⚠⚠ **A report therefore does NOT mean they are on the latest.** The second half of that
+    trigger fires when no update *looked* relevant — so the reporter may never have updated,
+    and their judgement about relevance was made against a changelog rather than the bug.
+    **Establish the installed version before diagnosing anything**; you cannot know it, and
+    the report will read as though it were current. ⚠⚠ **So you do not know what any deployment is
     running.** Never reason about a consumer's installed version from memory, from this
     repo's HEAD, or from the last time you looked — you are structurally behind on that one
     fact, permanently. It is also the sharpest case for the rule you already hold: a
