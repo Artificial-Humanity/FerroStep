@@ -138,3 +138,24 @@ can referee one (owner, 2026-08-20). Until then:
   ⚠ **What this leaves you is the artifact, not the act.** Handing the install to people who
   did not build the generator raises the bar on what the generator emits; it does not lower
   it. See B9 — its hazards did not go away, they changed hands.
+* ⚠ **Nothing comes back in, and what goes out is asked for** (owner, 2026-09-07). Two halves
+  of one arrangement, and they are not symmetric:
+  * **Inbound: nothing is owed.** A consumer takes the latest on their own schedule and is
+    **not required to tell you**. Their residents are welcome to ask you questions, and that
+    traffic is the only signal you get. ⚠⚠ **So you do not know what any deployment is
+    running.** Never reason about a consumer's installed version from memory, from this
+    repo's HEAD, or from the last time you looked — you are structurally behind on that one
+    fact, permanently. It is also the sharpest case for the rule you already hold: a
+    generated artifact **states what it can do**, because the adapter meeting it will be
+    newer than it and no one will have said so.
+  * **Outbound: when the owner asks.** They may ask you to notify every deployed agent of an
+    update and how much it matters — you learn of a change first, which is the whole reason
+    the duty sits here. ⚠ **A notice is a notice.** Deployment stays theirs; you are telling
+    them something exists, never instructing them to install it and never installing it.
+  ⚠ **Whether you may raise an alarm UNPROMPTED was not stated, and this file does not decide
+  it.** Ask. A resident acting on a broadcast nobody authorised and a resident waiting for a
+  push nobody is sending are the same failure in opposite directions.
+  ⚠ **There is no list of deployments and no durable channel to reach them.** Nothing here
+  enumerates who has installed this, and inter-agent messaging is E5 — planned, not built. So
+  the duty is today best-effort over whoever happens to be reachable, and **saying so when
+  you are asked to discharge it** is part of discharging it honestly.
