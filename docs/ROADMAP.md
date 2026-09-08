@@ -19,7 +19,7 @@ and nothing is published to a registry yet.
 
 ⚠ **What that migration cost the adopter is the tier's most valuable
 output, and it is written down:**
-[`notes/adoption-friction.md`](../notes/adoption-friction.md) is the
+`notes/adoption-friction.md` (private) is the
 evidence file the expansion tier is meant to be argued from, so "a real loop
 needs this" stops being a claim made from memory. Where an entry there
 produced a change, the entry names it — which is how to tell what the
@@ -304,7 +304,7 @@ had an owner. The README now describes the whole product, which was the
 blocker; what it cannot be is the walkthrough.
 
 ⚠ **Write it from the friction file, not from the code.**
-[`notes/adoption-friction.md`](../notes/adoption-friction.md) is a record of
+`notes/adoption-friction.md` (private) is a record of
 what a real migration actually cost, and two of its entries are this document
 in negative: **authoring a definition** (entry 6) is the first thing an
 adopter does and the step with the least support and the quietest failure —
@@ -455,7 +455,7 @@ a polish level, not a venue: it is tested in-house like everything else, but
 its finish belongs to the 1.0.0 line, so it never gates the internal MVP.
 Deliberately discrete from B3 — the
 drafted shape, and why the two items must not blur, is
-[`notes/agent-messaging-and-presence.md`](../notes/agent-messaging-and-presence.md),
+`notes/agent-messaging-and-presence.md` (private),
 which graduates to `docs/` with the item. Presence — the identity-to-address
 claim the messaging routes over — has an in-house consumer of its own and is
 sequenced independently of it.
@@ -472,7 +472,7 @@ written down**, in this file or anywhere else. It surfaced again on
 had been built anyway (the adapter; B2's rendered decision surface, which is
 also what an agent narrates from). The console was not, and the reason is
 worth keeping: the idea was absorbed into a requirement *on the store*
-([`notes/ledger-requirements-and-pocketbase.md`](../notes/ledger-requirements-and-pocketbase.md),
+(`notes/ledger-requirements-and-pocketbase.md` (private),
 requirement 8 — *"the requirement a purpose-built replacement is most likely
 to drop and most likely to regret dropping"*), which PocketBase satisfies and
 SQLite cannot. From there SQLite's lack of a console was reframed as a

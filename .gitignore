@@ -28,3 +28,7 @@ dist/
 .pytest_cache/
 *.egg-info/
 *.so
+
+# Working notes live in the private Notes repo; this is a symlink to
+# ../Notes/FerroStep. The repo is public and a scratchpad is not a deliverable.
+/notes

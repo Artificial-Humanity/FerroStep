@@ -46,6 +46,6 @@ it gets a row when the crate does.
 | `config.yaml` | the repo's *own* agent roster — the format ships (`ferrostep-roster`), this instance of it does not |
 | `xtask/` | repo tooling; `publish = false` in its manifest is the mechanism |
 | `.cargo/` | the cargo alias that invokes xtask |
-| `notes/` | long-term scratchpad |
+| `notes/` | long-term scratchpad — **moved out of this repo 2026-09-08**; it is a private repo reached through a gitignored symlink, so a clone has neither the files nor the path |
 | `AGENTS.md`, `CLAUDE.md` | rules of record and persona routing |
 | `Cargo.toml`, `Cargo.lock`, `.gitignore` | repo plumbing |

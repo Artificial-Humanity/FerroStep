@@ -117,11 +117,14 @@ to argue against, not a constraint — the section says so itself).
   deployment disposition is recorded — what ships, through which channel,
   what never leaves — and the xtask test `deployment_map_covers_the_tree`
   fails when a tracked top-level path is missing from it.
-- `notes/` — the long-term scratchpad (owner, 2026-08-20). **Write a document
-  here when it serves the work rather than the reader**: working thoughts,
-  investigations, drafts. A placeholder README keeps the location present
-  even when it is otherwise empty; a document that graduates moves to
-  `docs/`.
+- `notes/` — **not in this repo, and not tracked** (owner, 2026-09-08). The
+  long-term scratchpad — working thoughts, investigations, drafts — lives in a
+  **private** repo, and `notes/` here is a gitignored symlink into it. A
+  scratchpad is written for the work rather than for a reader, and this repo
+  is public, so the two do not belong together. A document that graduates
+  still moves to `docs/`, which is the half an outside reader is meant to
+  find. ⚠ **A fresh clone has no `notes/` at all** — the symlink is local, so
+  nothing here may depend on that path resolving.
 
 ## Conventions
 
