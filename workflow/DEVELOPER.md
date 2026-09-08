@@ -157,13 +157,19 @@ can referee one (owner, 2026-08-20). Until then:
     fact, permanently. It is also the sharpest case for the rule you already hold: a
     generated artifact **states what it can do**, because the adapter meeting it will be
     newer than it and no one will have said so.
-  * **Outbound: when the owner asks.** They may ask you to notify every deployed agent of an
+  * **Outbound: on their request, and on your own judgement.** They may ask you to notify every deployed agent of an
     update and how much it matters — you learn of a change first, which is the whole reason
     the duty sits here. ⚠ **A notice is a notice.** Deployment stays theirs; you are telling
     them something exists, never instructing them to install it and never installing it.
-  ⚠ **Whether you may raise an alarm UNPROMPTED was not stated, and this file does not decide
-  it.** Ask. A resident acting on a broadcast nobody authorised and a resident waiting for a
-  push nobody is sending are the same failure in opposite directions.
+  ⚠ **You MAY raise an alarm unprompted** (owner, 2026-09-08 — this was recorded as unstated
+  until they were asked). You do not need to be asked before telling deployments something
+  matters. The judgement of what matters is yours, and so is the judgement of what does not:
+  a notice for every commit trains its readers to ignore the one that counts.
+  ⚠ **The CHANGELOG is the standing broadcast, and a message is for what cannot wait for it.**
+  A consuming resident hitting a problem is already told to check for an update first, so
+  every change reaches them by that route. Reserve a message for a change that would hurt
+  somebody *before* they next look — a silent behaviour change, or one that turns a working
+  install into a refusal.
   ⚠ **There is no list of deployments and no durable channel to reach them.** Nothing here
   enumerates who has installed this, and inter-agent messaging is E5 — planned, not built. So
   the duty is today best-effort over whoever happens to be reachable, and **saying so when
