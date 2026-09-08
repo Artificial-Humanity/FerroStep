@@ -7,6 +7,27 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-cli`: **`--version` (also `-V`, `version`)**, answered before anything is
+  required — like `--help`, because asking what the tool *is* must not be parsed as using it.
+
+  *If your symptom is* "I was asked which version I am running and could not tell": that was
+  the whole gap. Two adopters reporting defects hit it — one answered from their own build
+  records, the other could not answer at all.
+
+  ⚠ **It prints the commit, and that is the load-bearing half.** Between releases the
+  workspace carries one pre-release number, so a flag printing only the package version would
+  answer *which build are you running* with a constant — and look like it worked. The line is
+  `ferrostep <version> (<commit>)`.
+
+  ⚠ **A build from a modified tree says so**: `(<commit>+changes)`. A binary built from an
+  edited tree is not any commit, and the difference between a version string and a claim is
+  whether it admits that. Where git is unavailable at build time it reports the commit as
+  unknown rather than inventing one.
+
+  Prompted by an adopter who could not confirm which build they were resolving through, in a
+  session where an installed binary turned out to predate its own fix by sixteen minutes while
+  everything about it looked current.
+
 - `ferrostep-roster`: **a directory that merely shares the deployment folder's name no longer
   shadows a level's own roster**, and **a roster now says how far its agents reach**.
 

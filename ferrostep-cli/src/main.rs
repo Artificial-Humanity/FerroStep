@@ -59,6 +59,7 @@ USAGE:
   ferrostep <awaiting|audit|file|move|rescope|grade|notify|doctor> --workflow <def.json> --store <target> [options]
   ferrostep explain --workflow <def.json> [--map <map.json>]
   ferrostep agent-env [--agent <title>] [--roster <config.yaml>]
+  ferrostep --version | --help
 
 COMMON:
   --workflow <path>     the workflow definition JSON the ledger is refereed by
@@ -143,6 +144,18 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// What this binary is, in the form the fault procedure asks a reporter for.
+///
+/// ⚠⚠ **The commit is the load-bearing half, not the version.** Between
+/// releases every build carries the same pre-release number, so a version flag
+/// printing only that would answer *which build are you running* with a
+/// constant — and look like it worked. Adopters reporting a defect had to read
+/// the commit off their own build records or could not answer at all, which is
+/// what this is for.
+fn version() -> String {
+    format!("ferrostep {} ({})", env!("CARGO_PKG_VERSION"), env!("FERROSTEP_BUILD"))
 }
 
 /// Flags parsed positionally: every flag takes exactly one value, and a flag
@@ -289,6 +302,15 @@ fn run(args: &[String]) -> Result<String, String> {
     // Reported by the first adopter, who worked around it silently.
     if args.iter().any(|a| a == "--help" || a == "-h") || args.first().is_some_and(|a| a == "help") {
         return Ok(USAGE.to_string());
+    }
+    // ⚠ Same shape as --help above, and answered before anything is required
+    // for the same reason: asking what this IS must not be parsed as using it.
+    // Every spelling, because a person who needs this does not know which one
+    // this tool takes.
+    if args.iter().any(|a| a == "--version" || a == "-V")
+        || args.first().is_some_and(|a| a == "version")
+    {
+        return Ok(version());
     }
     let Some(command) = args.first() else {
         return Err(format!("no subcommand given\n\n{USAGE}"));
@@ -2391,6 +2413,29 @@ mod tests {
     /// subcommand or a flag arms this check by existing — nobody has to
     /// remember a list. `ntfy-token` is the one exemption and it is named
     /// rather than filtered by a pattern, so an exemption cannot grow silently.
+    #[test]
+    /// ⚠ Answered before anything is required, like `--help`: "what are you"
+    /// precedes "do what I want", and a person asking it has already admitted
+    /// to not knowing which spelling this tool takes.
+    ///
+    /// ⚠⚠ **The build provenance is the half under test.** The package version
+    /// is a constant between releases, so a line carrying only that cannot
+    /// distinguish two builds — and telling a reporter their version is the
+    /// entire reason this exists.
+    #[test]
+    fn every_spelling_of_version_answers_and_carries_the_build() {
+        for spelling in [["--version"], ["-V"], ["version"]] {
+            let out = run(&argv(&spelling))
+                .unwrap_or_else(|e| panic!("{spelling:?} refused with: {e}"));
+            assert!(out.starts_with("ferrostep "), "{spelling:?} -> {out}");
+            assert!(out.contains(env!("CARGO_PKG_VERSION")), "{spelling:?} -> {out}");
+            assert!(
+                out.contains('(') && out.contains(')'),
+                "{spelling:?} answered without build provenance: {out}"
+            );
+        }
+    }
+
     #[test]
     fn every_accepted_flag_is_named_in_the_usage_text() {
         const COMMANDS: [&str; 8] =
