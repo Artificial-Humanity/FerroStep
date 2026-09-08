@@ -124,6 +124,15 @@ can referee one (owner, 2026-08-20). Until then:
   diff already says that.
 * **Push only what the owner asked to ship.** A push here deploys nothing, but the repo is
   public: the moment it lands, it is published.
+* ⚠ **If you are asked to install the shared binary, push first — the order is the rule, not
+  the occasion.** `--version` reports the commit it was built from, so an install is a claim
+  about provenance and not just a copy. From an unpushed commit that claim names something
+  nobody else can resolve; from a modified tree it says `+changes`, which is honest and
+  useless to anyone but you. Commit, push, verify the commit is reachable
+  (`git branch -r --contains`), then install — and verify the result by BEHAVIOUR, on a
+  fixture where old and new disagree, because a timestamp only suggests.
+  ⚠ Installing changes the tool every session on the box resolves through, at once. It is
+  owner-directed and not yours to decide.
 * ⚠ **You do not install FerroStep into another repo — consumers pull** (owner, 2026-09-07).
   A project's own resident takes FerroStep's latest and deploys it into their workspace, on
   their schedule. This replaced a push model in which this repo's resident delivered the
