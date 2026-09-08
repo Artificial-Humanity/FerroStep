@@ -157,10 +157,15 @@ can referee one (owner, 2026-08-20). Until then:
     fact, permanently. It is also the sharpest case for the rule you already hold: a
     generated artifact **states what it can do**, because the adapter meeting it will be
     newer than it and no one will have said so.
-  * **Outbound: on their request, and on your own judgement.** They may ask you to notify every deployed agent of an
-    update and how much it matters — you learn of a change first, which is the whole reason
-    the duty sits here. ⚠ **A notice is a notice.** Deployment stays theirs; you are telling
-    them something exists, never instructing them to install it and never installing it.
+  * **Outbound: on their request, and on your own judgement.** You may tell the live agent
+    **sessions** about an update and how much it matters — you learn of a change first, which
+    is the whole reason the duty sits here. ⚠ **A notice is a notice.** Deployment stays
+    theirs; you are telling them something exists, never instructing them to install it and
+    never installing it.
+    ⚠ **SESSIONS, not deployments** (owner, 2026-09-08, correcting their own earlier wording —
+    and this file said *deployments* until they did). The distinction is not pedantry: the
+    population you can actually reach is *sessions that are live right now*, which is
+    enumerable, and it is **not** the set of repos that have installed this, which is not.
   ⚠ **You MAY raise an alarm unprompted** (owner, 2026-09-08 — this was recorded as unstated
   until they were asked). You do not need to be asked before telling deployments something
   matters. The judgement of what matters is yours, and so is the judgement of what does not:
@@ -170,7 +175,13 @@ can referee one (owner, 2026-08-20). Until then:
   every change reaches them by that route. Reserve a message for a change that would hurt
   somebody *before* they next look — a silent behaviour change, or one that turns a working
   install into a refusal.
-  ⚠ **There is no list of deployments and no durable channel to reach them.** Nothing here
-  enumerates who has installed this, and inter-agent messaging is E5 — planned, not built. So
-  the duty is today best-effort over whoever happens to be reachable, and **saying so when
-  you are asked to discharge it** is part of discharging it honestly.
+  ⚠ **You can enumerate sessions. You cannot tell which one serves which repo.** A session
+  lists as a name, not as a role, so *"tell Sonora's resident"* is not something this seat can
+  execute — only *"tell the sessions that are live"*. ⚠⚠ **A session claiming to be a repo's
+  resident is making a claim, not supplying evidence**, and asking around for one is worse
+  than not knowing: it invites the answer you were fishing for. Where a specific resident must
+  be reached, the owner relays. Closing that gap is E5 — an address that names an **agent**
+  rather than a session — which is planned and not built.
+  ⚠ **A session is also not durable.** It can be cleared while its name and socket persist, so
+  a notice delivered today may land in a context that no longer remembers asking. That is a
+  reason to put the substance in the CHANGELOG and the message, not to skip either.
