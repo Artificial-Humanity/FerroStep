@@ -17,11 +17,22 @@ entry here is mandatory rather than courtesy.
   roster resolved as that checkout's agent — so a resident following the documented commit
   procedure would sign as somebody else, with nothing going red.
 
-  **What changed, in the order it now decides.** One file at a level is used as before. When
-  *both* exist, the folder counts as a deployment folder only if it looks like one — it holds
-  `personas/`, which the convention already named. If it does, that is two answers for one
-  directory and discovery **refuses, naming both**. If it does not, it is a directory sharing
-  a name and the level's own file answers.
+  **What changed, in the order it now decides.** A folder holding a roster counts as a
+  deployment folder unless it is itself a **repository** — a checkout has `.git`, an installed
+  folder does not. A deployment beside the level's own bare roster is two answers for one
+  directory and discovery **refuses, naming both**; a checkout beside one is not, and the
+  level's own file answers.
+
+  ⚠ **This test was `personas/` for one day and that was wrong.** Keying on what deployment
+  folders were *observed to hold* misclassified a deployment that ships no personas — one
+  whose persona is its repo's own `AGENTS.md`. It resolved anyway, because the marker is only
+  consulted where two rosters compete, so the misclassification was invisible: add a bare
+  roster beside it and the real deployment would have been discarded **silently** in favour of
+  the newcomer. Different identity, no error — the defect this test exists to prevent, one arm
+  over. Named by that deployment's own resident. **"Has the folder" and "is a deployment" are
+  different questions**, and what separates them is not what the folder contains — a
+  convention any deployment may decline — but whether it is a checkout of something else,
+  which is not a convention at all.
 
   ⚠ **This supersedes the earlier entry below** describing the folder as "checked at every
   level of the upward walk before the bare file at that same level". That ranking is gone; the

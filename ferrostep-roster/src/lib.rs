@@ -56,8 +56,26 @@ pub const ROSTER_FILE: &str = "config.yaml";
 /// `FerroStep` inside FerroStep) keeps working unchanged.
 pub const ROSTER_DIR: &str = "FerroStep";
 
-/// What a deployment folder holds besides its roster, and therefore what
-/// tells one from a directory that merely shares the name.
+/// What tells a directory that merely shares the deployment folder's name
+/// from a folder somebody actually installed: a **repository** has this, and
+/// an installed folder does not.
+///
+/// ⚠⚠ **THIS WAS `personas` FOR ONE DAY AND THAT WAS WRONG.** The first fix
+/// keyed on what deployment folders were observed to hold, which classified a
+/// deployment that ships no personas — its persona is the repo's own
+/// `AGENTS.md` — as "a directory sharing a name". It resolved anyway, because
+/// nothing competed with it, so the misclassification was invisible: the arm
+/// where the marker is consulted is only reached when a bare roster sits
+/// beside the folder. Add one and the folder would have been silently
+/// discarded in favour of it — a different identity, no error, which is the
+/// defect this whole test exists to prevent, one arm over. Named by that
+/// deployment's own resident 2026-09-08, reading the rule against a repo it
+/// was not written for.
+///
+/// ⚠ **"Has the folder" and "is a deployment" are different questions**, and
+/// only the second one matters. What separates them is not what the folder
+/// contains — that is a convention each deployment may decline — but whether
+/// it is a checkout of something else, which is not a convention at all.
 ///
 /// ⚠⚠ **THE NAME ALONE IS NOT ENOUGH, AND ASSUMING IT WAS PUT AN AGENT UNDER
 /// SOMEBODY ELSE'S IDENTITY.** A workspace holding several repos side by side
@@ -69,7 +87,7 @@ pub const ROSTER_DIR: &str = "FerroStep";
 /// and exited 0. Reported by an adopter 2026-09-08, from a repo where a
 /// resident following the documented commit procedure would have signed as
 /// somebody else.
-pub const DEPLOYMENT_MARKER: &str = "personas";
+pub const REPO_MARKER: &str = ".git";
 
 /// A parsed roster: every file that contributed to it, and what they said.
 ///
@@ -275,25 +293,24 @@ impl Roster {
             let folder = dir.join(ROSTER_DIR);
             let in_folder = folder.join(ROSTER_FILE);
             let bare = dir.join(ROSTER_FILE);
-            match (in_folder.is_file(), bare.is_file()) {
+            // ⚠ Asked ONCE and used in every arm. The first version of this
+            // consulted the marker only where two rosters competed, which made
+            // the same folder a deployment in one arm and a coincidence in the
+            // other — and the disagreement was unreachable until somebody
+            // added a file.
+            let deployment = in_folder.is_file() && !folder.join(REPO_MARKER).exists();
+            match (deployment, bare.is_file()) {
                 (true, false) => found.push((in_folder, at_start)),
                 (false, true) => found.push((bare, at_start)),
                 (false, false) => {}
                 // ⚠ Both, which the convention said could not happen — "a repo
                 // either has adopted the deployment folder or has not; it does
-                // not have both". True of a repo and false of a workspace that
-                // contains a checkout named like the folder. So the name is
-                // not the test: a deployment folder is one that LOOKS like a
-                // deployment, and a directory that merely shares the name
-                // leaves the level's own file as the answer.
+                // not have both". True of a repo, false of a workspace holding
+                // a checkout named like the folder. An installed deployment
+                // beside the level's own roster is two answers for one
+                // directory and nobody can say which was meant.
                 (true, true) => {
-                    if folder.join(DEPLOYMENT_MARKER).is_dir() {
-                        return Err(RosterError::AmbiguousRoster {
-                            folder: in_folder,
-                            bare,
-                        });
-                    }
-                    found.push((bare, at_start));
+                    return Err(RosterError::AmbiguousRoster { folder: in_folder, bare });
                 }
             }
             at_start = false;
@@ -1044,19 +1061,48 @@ agents:
         // is refused; a folder that does not look like one is not a deployment
         // folder at all, and the level's own file answers.
         let dir = tempfile::tempdir().unwrap();
-        let marked = dir.path().join(ROSTER_DIR).join(DEPLOYMENT_MARKER);
-        std::fs::create_dir_all(&marked).unwrap();
+        let git = dir.path().join(ROSTER_DIR).join(REPO_MARKER);
+        std::fs::create_dir_all(dir.path().join(ROSTER_DIR)).unwrap();
         std::fs::write(dir.path().join("FerroStep/config.yaml"), "default_agent: folder\n").unwrap();
         std::fs::write(dir.path().join(ROSTER_FILE), "default_agent: bare\n").unwrap();
+
+        // An installed folder beside the level's own roster: two answers.
         assert!(matches!(
             Roster::discover(dir.path()).unwrap_err(),
             RosterError::AmbiguousRoster { .. }
         ));
 
-        std::fs::remove_dir(&marked).unwrap();
+        // The same two files where the folder is a CHECKOUT: one answer.
+        std::fs::create_dir_all(&git).unwrap();
         let found = Roster::discover(dir.path()).unwrap();
         assert_eq!(found.source(), dir.path().join(ROSTER_FILE));
         assert_eq!(found.default_title(), Some("bare"));
+    }
+
+    /// ⚠⚠ **THE ARM THE FIRST FIX GOT WRONG, 2026-09-08.** A deployment may
+    /// decline to ship personas — one here uses the repo's own `AGENTS.md` as
+    /// its persona — and keying on that folder's *contents* called it "a
+    /// directory sharing a name". It resolved anyway while nothing competed
+    /// with it, so the misclassification was invisible until a bare roster
+    /// appeared beside it, at which point the real deployment would have been
+    /// discarded silently in favour of the newcomer.
+    #[test]
+    fn a_deployment_that_ships_no_personas_is_still_a_deployment() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join(ROSTER_DIR)).unwrap();
+        std::fs::write(root.join(ROSTER_DIR).join(ROSTER_FILE), SAMPLE).unwrap();
+        std::fs::write(root.join(ROSTER_DIR).join("DEVELOPER.md"), "# dev").unwrap();
+        // No personas/, no .git: an installed folder that ships neither.
+        let found = Roster::discover(root).unwrap();
+        assert_eq!(found.source(), root.join(ROSTER_DIR).join(ROSTER_FILE));
+
+        // And the arm that used to substitute silently now refuses.
+        std::fs::write(root.join(ROSTER_FILE), "default_agent: newcomer\n").unwrap();
+        assert!(
+            matches!(Roster::discover(root).unwrap_err(), RosterError::AmbiguousRoster { .. }),
+            "a bare roster silently displaced a real deployment"
+        );
     }
 
     /// A repo that has not migrated keeps working unchanged — this is the
@@ -1277,9 +1323,11 @@ agents:
     fn a_directory_that_only_shares_the_folder_name_does_not_shadow_the_level_s_own_roster() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        // A checkout that happens to be called FerroStep: a roster, no personas.
+        // A checkout that happens to be called FerroStep. What makes it a
+        // checkout rather than an installed folder is that it is a repository.
         std::fs::create_dir_all(root.join(ROSTER_DIR)).unwrap();
         std::fs::write(root.join(ROSTER_DIR).join(ROSTER_FILE), SAMPLE).unwrap();
+        std::fs::create_dir_all(root.join(ROSTER_DIR).join(REPO_MARKER)).unwrap();
         // The level's own roster, which is the one that means this directory.
         std::fs::write(
             root.join(ROSTER_FILE),
@@ -1306,7 +1354,7 @@ agents:
     fn a_real_deployment_folder_beside_a_bare_roster_refuses_and_names_both() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        std::fs::create_dir_all(root.join(ROSTER_DIR).join(DEPLOYMENT_MARKER)).unwrap();
+        std::fs::create_dir_all(root.join(ROSTER_DIR)).unwrap();
         std::fs::write(root.join(ROSTER_DIR).join(ROSTER_FILE), SAMPLE).unwrap();
         std::fs::write(root.join(ROSTER_FILE), SAMPLE).unwrap();
 
