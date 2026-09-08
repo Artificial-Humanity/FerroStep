@@ -7,6 +7,40 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-roster`: **a directory that merely shares the deployment folder's name no longer
+  shadows a level's own roster**, and **a roster now says how far its agents reach**.
+
+  *If your symptom is* "`agent-env` names an agent in a repo that never declared one, and
+  exits 0": this is it. A workspace holding repos side by side can contain a checkout named
+  `FerroStep/`, which matched the deployment-folder convention while being a repository. It
+  won at that level, the workspace's own roster was skipped, and every sibling without a
+  roster resolved as that checkout's agent — so a resident following the documented commit
+  procedure would sign as somebody else, with nothing going red.
+
+  **What changed, in the order it now decides.** One file at a level is used as before. When
+  *both* exist, the folder counts as a deployment folder only if it looks like one — it holds
+  `personas/`, which the convention already named. If it does, that is two answers for one
+  directory and discovery **refuses, naming both**. If it does not, it is a directory sharing
+  a name and the level's own file answers.
+
+  ⚠ **This supersedes the earlier entry below** describing the folder as "checked at every
+  level of the upward walk before the bare file at that same level". That ranking is gone; the
+  entry describes behaviour that no longer exists.
+
+  **`agents_reach: here | below`** (default `below`). `here` means this roster's *agents*
+  answer for an agent standing in its own directory and are not inherited by repos beneath it
+  — a workspace roster serving somebody not yet pointed at a project. `auth` is unaffected
+  either way: a credential source is not an identity and goes on layering down. The default
+  is the compatible one, not the safe one — every roster written before this key means
+  `below`, because that is what it did.
+
+  ⚠ **Two behaviour changes to check for, not one.** If you have a deployment folder and a
+  bare `config.yaml` at the same level, you now get a refusal where you got a silent choice.
+  And identity inheritance is unchanged *until you set the key* — adding agents to a parent
+  roster still reaches repos below it unless that roster says `here`.
+
+  Reported by an adopter working from a repo with no roster of its own.
+
 - `ferrostep-cli`: **`agent-env --format json` now carries every key the shell form does** —
   `budget_usd`, `capture_cost` and `tag_runs` were emitted by `--format shell` and silently
   absent from `--format json`.

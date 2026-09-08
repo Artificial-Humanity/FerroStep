@@ -56,6 +56,21 @@ pub const ROSTER_FILE: &str = "config.yaml";
 /// `FerroStep` inside FerroStep) keeps working unchanged.
 pub const ROSTER_DIR: &str = "FerroStep";
 
+/// What a deployment folder holds besides its roster, and therefore what
+/// tells one from a directory that merely shares the name.
+///
+/// ⚠⚠ **THE NAME ALONE IS NOT ENOUGH, AND ASSUMING IT WAS PUT AN AGENT UNDER
+/// SOMEBODY ELSE'S IDENTITY.** A workspace holding several repos side by side
+/// can contain a checkout *of FerroStep itself*, and `<workspace>/FerroStep/`
+/// then matches [`ROSTER_DIR`] while being a repository rather than anything
+/// anyone installed. Its roster — the one `docs/deployment-map.md` lists under
+/// *never ships* — won at that level, the workspace's own file was skipped,
+/// and every sibling repo without a roster resolved as FerroStep's own agent
+/// and exited 0. Reported by an adopter 2026-09-08, from a repo where a
+/// resident following the documented commit procedure would have signed as
+/// somebody else.
+pub const DEPLOYMENT_MARKER: &str = "personas";
+
 /// A parsed roster: every file that contributed to it, and what they said.
 ///
 /// **Layered.** A workspace holding several repos can put shared values in a
@@ -74,6 +89,7 @@ pub struct Roster {
     default_agent: Option<String>,
     agents: BTreeMap<String, Entry>,
     auth: Option<Auth>,
+    agents_reach: Reach,
 }
 
 /// One agent's entry, and the file that supplied it.
@@ -81,6 +97,42 @@ pub struct Roster {
 struct Entry {
     agent: Agent,
     source: PathBuf,
+}
+
+/// How far down a roster's *agents* apply.
+///
+/// ⚠ **Identity is the one thing that must not be inherited by accident.**
+/// Shared settings layering down a workspace is the feature; an agent list
+/// doing it is how a repo that never declared an identity answers with
+/// somebody else's. So a roster says which it is, and the answer travels with
+/// the file rather than being guessed from where it sits.
+///
+/// ⚠ Nothing here changes how `auth` layers — a credential *source* is not an
+/// identity, and it goes on reaching every level beneath the file that
+/// declares it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Reach {
+    /// Agents apply at this file's own level and no further. A workspace
+    /// roster serving an agent that has not yet been pointed at a project is
+    /// this: it answers where it sits, and a repo beneath it has to declare
+    /// its own.
+    Here,
+    /// Agents apply to this file's level and everything beneath it — a repo
+    /// roster answering from any of its own subdirectories.
+    Below,
+}
+
+impl Default for Reach {
+    /// ⚠ **`Below`, and the choice is a compatibility one rather than the
+    /// safe one.** Every roster written before this key existed means
+    /// `Below` — that is what it did — so defaulting the other way would
+    /// refuse in repos that work today, including from any subdirectory. The
+    /// fail-open case it leaves is a *new* parent roster nobody marked, and
+    /// that is what `Here` is for.
+    fn default() -> Self {
+        Reach::Below
+    }
 }
 
 /// One agent's entry.
@@ -181,6 +233,8 @@ enum AuthRepr {
 #[derive(Debug, Deserialize)]
 struct RosterFile {
     #[serde(default)]
+    agents_reach: Reach,
+    #[serde(default)]
     default_agent: Option<String>,
     #[serde(default)]
     agents: BTreeMap<String, Agent>,
@@ -214,18 +268,35 @@ impl Roster {
     /// that actually coexist.
     pub fn discover(start: impl AsRef<Path>) -> Result<Roster, RosterError> {
         let start = start.as_ref();
-        let mut found = Vec::new();
+        let mut found: Vec<(PathBuf, bool)> = Vec::new();
         let mut dir = start.to_path_buf();
+        let mut at_start = true;
         loop {
-            let in_folder = dir.join(ROSTER_DIR).join(ROSTER_FILE);
-            if in_folder.is_file() {
-                found.push(in_folder);
-            } else {
-                let bare = dir.join(ROSTER_FILE);
-                if bare.is_file() {
-                    found.push(bare);
+            let folder = dir.join(ROSTER_DIR);
+            let in_folder = folder.join(ROSTER_FILE);
+            let bare = dir.join(ROSTER_FILE);
+            match (in_folder.is_file(), bare.is_file()) {
+                (true, false) => found.push((in_folder, at_start)),
+                (false, true) => found.push((bare, at_start)),
+                (false, false) => {}
+                // ⚠ Both, which the convention said could not happen — "a repo
+                // either has adopted the deployment folder or has not; it does
+                // not have both". True of a repo and false of a workspace that
+                // contains a checkout named like the folder. So the name is
+                // not the test: a deployment folder is one that LOOKS like a
+                // deployment, and a directory that merely shares the name
+                // leaves the level's own file as the answer.
+                (true, true) => {
+                    if folder.join(DEPLOYMENT_MARKER).is_dir() {
+                        return Err(RosterError::AmbiguousRoster {
+                            folder: in_folder,
+                            bare,
+                        });
+                    }
+                    found.push((bare, at_start));
                 }
             }
+            at_start = false;
             if !dir.pop() {
                 break;
             }
@@ -237,13 +308,20 @@ impl Roster {
         // so the nearest is applied last and wins.
         found.reverse();
         let mut layers = Vec::with_capacity(found.len());
-        for path in found {
-            layers.push(Roster::load(path)?);
+        for (path, at_start) in found {
+            layers.push((Roster::load(path)?, at_start));
         }
         Ok(Roster::layer(layers))
     }
 
-    /// Fold rosters together, furthest first, so the last wins.
+    /// Fold rosters together, furthest first, so the last wins. The flag is
+    /// whether that layer was found at the directory discovery *started* in.
+    ///
+    /// ⚠ **A layer that reaches only `Here` contributes agents when it is the
+    /// level you are standing in, and never when it is merely above you.**
+    /// That is the whole difference between a workspace roster answering an
+    /// agent who has not been pointed at a project yet, and the same file
+    /// answering for a repo that never declared anyone.
     ///
     /// ⚠ **`agents` merges per title and `auth` does not merge at all.** A
     /// title is taken from the nearest file that names it, *whole* — entries
@@ -252,20 +330,28 @@ impl Roster {
     /// block for the sharper version of the same reason: a `type` from one
     /// file meeting a `path` meant for another is a configuration nobody
     /// wrote and nobody can debug.
-    fn layer(layers: Vec<Roster>) -> Roster {
+    fn layer(layers: Vec<(Roster, bool)>) -> Roster {
         let mut merged = Roster {
             sources: Vec::new(),
             default_agent: None,
             agents: BTreeMap::new(),
             auth: None,
+            agents_reach: Reach::Below,
         };
-        for layer in layers {
+        for (layer, at_start) in layers {
             merged.sources.extend(layer.sources);
-            if layer.default_agent.is_some() {
-                merged.default_agent = layer.default_agent;
-            }
+            // ⚠ Unconditional, and deliberately so: a credential SOURCE is not
+            // an identity. It says where a deployment keeps credentials, which
+            // is exactly the kind of shared setting a workspace file exists to
+            // state once.
             if layer.auth.is_some() {
                 merged.auth = layer.auth;
+            }
+            if !(at_start || layer.agents_reach == Reach::Below) {
+                continue;
+            }
+            if layer.default_agent.is_some() {
+                merged.default_agent = layer.default_agent;
             }
             for (title, entry) in layer.agents {
                 merged.agents.insert(title, entry);
@@ -303,7 +389,13 @@ impl Roster {
             .into_iter()
             .map(|(title, agent)| (title, Entry { agent, source: source.clone() }))
             .collect();
-        Ok(Roster { sources: vec![source], default_agent: file.default_agent, agents, auth })
+        Ok(Roster {
+            sources: vec![source],
+            default_agent: file.default_agent,
+            agents,
+            auth,
+            agents_reach: file.agents_reach,
+        })
     }
 
     /// The nearest file that contributed — the one a reader thinks of as
@@ -570,6 +662,7 @@ pub enum RosterError {
     IncompleteEntry { title: String, field: &'static str, path: PathBuf },
     MissingPersona { title: String, written: String, resolved: PathBuf, path: PathBuf },
     InvalidBudget { title: String, written: f64, path: PathBuf },
+    AmbiguousRoster { folder: PathBuf, bare: PathBuf },
 }
 
 impl fmt::Display for RosterError {
@@ -603,6 +696,15 @@ impl fmt::Display for RosterError {
             RosterError::IncompleteEntry { title, field, path } => {
                 write!(f, "agent '{title}' has an empty {field} in {}", path.display())
             }
+            RosterError::AmbiguousRoster { folder, bare } => write!(
+                f,
+                "two rosters answer for the same directory and nothing says which is \
+                 meant: {} and {}. One of them is a deployment folder and one is that \
+                 directory's own roster — resolving either way would assign an identity \
+                 nobody chose, so neither is used",
+                folder.display(),
+                bare.display()
+            ),
             RosterError::InvalidBudget { title, written, path } => write!(
                 f,
                 "agent '{title}' in {} sets budget_usd to {written}, which is not an \
@@ -934,15 +1036,27 @@ agents:
     /// *something* rather than an arbitrary directory-read order, so this
     /// pins the folder as the winner.
     #[test]
-    fn the_ferrostep_folder_wins_over_a_bare_file_at_the_same_level() {
+    fn a_deployment_folder_and_a_bare_file_at_one_level_is_refused_not_ranked() {
+        // ⚠ This asserted the opposite until 2026-09-08: that the folder simply
+        // won. That ranking is what let a checkout sharing the name shadow a
+        // workspace's own roster, so it is gone. A folder that looks like a
+        // deployment, beside a bare file, is two answers for one directory and
+        // is refused; a folder that does not look like one is not a deployment
+        // folder at all, and the level's own file answers.
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(dir.path().join("FerroStep")).unwrap();
+        let marked = dir.path().join(ROSTER_DIR).join(DEPLOYMENT_MARKER);
+        std::fs::create_dir_all(&marked).unwrap();
         std::fs::write(dir.path().join("FerroStep/config.yaml"), "default_agent: folder\n").unwrap();
         std::fs::write(dir.path().join(ROSTER_FILE), "default_agent: bare\n").unwrap();
+        assert!(matches!(
+            Roster::discover(dir.path()).unwrap_err(),
+            RosterError::AmbiguousRoster { .. }
+        ));
 
+        std::fs::remove_dir(&marked).unwrap();
         let found = Roster::discover(dir.path()).unwrap();
-        assert_eq!(found.source(), dir.path().join("FerroStep/config.yaml"));
-        assert_eq!(found.default_title(), Some("folder"));
+        assert_eq!(found.source(), dir.path().join(ROSTER_FILE));
+        assert_eq!(found.default_title(), Some("bare"));
     }
 
     /// A repo that has not migrated keeps working unchanged — this is the
@@ -1152,6 +1266,94 @@ agents:
         let out = std::process::Command::new("sh").arg("-c").arg(&script).output().unwrap();
         assert!(out.status.success(), "sh refused the emitted block");
         assert_eq!(String::from_utf8_lossy(&out.stdout), "capture|");
+    }
+
+    /// ⚠⚠ **THE ADOPTER'S CASE, 2026-09-08.** A workspace holding several
+    /// repos side by side contained a checkout named like the deployment
+    /// folder. It matched, it won, the workspace's own roster was skipped, and
+    /// every sibling repo without a roster resolved as that checkout's agent
+    /// and exited 0.
+    #[test]
+    fn a_directory_that_only_shares_the_folder_name_does_not_shadow_the_level_s_own_roster() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        // A checkout that happens to be called FerroStep: a roster, no personas.
+        std::fs::create_dir_all(root.join(ROSTER_DIR)).unwrap();
+        std::fs::write(root.join(ROSTER_DIR).join(ROSTER_FILE), SAMPLE).unwrap();
+        // The level's own roster, which is the one that means this directory.
+        std::fs::write(
+            root.join(ROSTER_FILE),
+            "default_agent: floater\nagents:\n  floater:\n    name: Workspace\n    email: ws@example.com\n    persona: W.md\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("W.md"), "# w").unwrap();
+        let child = root.join("child");
+        std::fs::create_dir_all(&child).unwrap();
+
+        let roster = Roster::discover(&child).unwrap();
+        assert_eq!(
+            roster.resolve(None).unwrap().name(),
+            "Workspace",
+            "the checkout shadowed the workspace's own roster again"
+        );
+    }
+
+    /// ⚠ And the other half: a folder that really is a deployment folder,
+    /// beside a bare file at the same level, is the case the convention said
+    /// could not happen. Nobody can say which was meant, so neither is used —
+    /// an identity nobody chose is the failure this crate exists to refuse.
+    #[test]
+    fn a_real_deployment_folder_beside_a_bare_roster_refuses_and_names_both() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::create_dir_all(root.join(ROSTER_DIR).join(DEPLOYMENT_MARKER)).unwrap();
+        std::fs::write(root.join(ROSTER_DIR).join(ROSTER_FILE), SAMPLE).unwrap();
+        std::fs::write(root.join(ROSTER_FILE), SAMPLE).unwrap();
+
+        let err = Roster::discover(root).unwrap_err();
+        assert!(matches!(err, RosterError::AmbiguousRoster { .. }), "{err}");
+        let said = err.to_string();
+        assert!(said.contains(ROSTER_DIR), "the refusal does not name the folder: {said}");
+        assert!(said.contains(&root.join(ROSTER_FILE).display().to_string()), "{said}");
+    }
+
+    /// ⚠⚠ **Identity does not inherit; a credential SOURCE does.** A roster
+    /// that reaches only its own level answers an agent standing in it and
+    /// refuses for a repo beneath it that declared nobody — while its `auth`
+    /// goes on layering, because where a deployment keeps credentials is not
+    /// an identity.
+    #[test]
+    fn a_roster_that_reaches_here_answers_its_own_level_and_not_the_one_below() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(
+            root.join(ROSTER_FILE),
+            "agents_reach: here\ndefault_agent: floater\nagents:\n  floater:\n    name: Workspace\n    email: ws@example.com\n    persona: W.md\nauth:\n  type: simple\n  path: creds.yaml\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("W.md"), "# w").unwrap();
+        let child = root.join("child");
+        std::fs::create_dir_all(&child).unwrap();
+
+        // Standing in it: answered.
+        assert_eq!(Roster::discover(root).unwrap().resolve(None).unwrap().name(), "Workspace");
+
+        // A directory beneath it that declared nobody: refused, not inherited.
+        let below = Roster::discover(&child).unwrap();
+        assert!(below.resolve(None).is_err(), "identity inherited into a repo that declared none");
+        // ...and the credential source still reached it.
+        assert!(below.auth().is_some(), "auth stopped layering, which is not identity");
+    }
+
+    /// The default is `below`, so everything written before the key existed
+    /// keeps resolving from its own subdirectories.
+    #[test]
+    fn a_roster_that_says_nothing_still_reaches_its_own_subdirectories() {
+        let (dir, roster) = roster_on_disk(SAMPLE, &["workflow/DEVELOPER.md"]);
+        let deep = dir.path().join("a/b/c");
+        std::fs::create_dir_all(&deep).unwrap();
+        let _ = roster;
+        assert_eq!(Roster::discover(&deep).unwrap().resolve(None).unwrap().name(), "Ada");
     }
 
     /// ⚠ The guard AGENTS.md names. Every emitted key is written out as a
