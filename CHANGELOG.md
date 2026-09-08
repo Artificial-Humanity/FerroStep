@@ -7,6 +7,28 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-cli`: **`agent-env --format json` now carries every key the shell form does** —
+  `budget_usd`, `capture_cost` and `tag_runs` were emitted by `--format shell` and silently
+  absent from `--format json`.
+
+  *If your symptom is* "I set a spend ceiling on an agent and my launcher runs without one":
+  this is it, and only if your launcher reads JSON. A shell launcher was never affected. The
+  fix is in the reader, so **rebuild/reinstall `ferrostep`** — nothing in your roster changes.
+
+  ⚠ **How it survived: a test named for the invariant, which never checked it.**
+  `json_carries_the_same_entry_as_the_shell_form` asserted four fields by hand and never
+  compared the two encodings, so every key added to one form was free to skip the other —
+  and `budget_usd` did. The parity claim now runs: both forms are emitted from one entry with
+  every optional key set, and their key sets are compared. Reintroducing the defect leaves the
+  old test green and the new one red.
+
+  ⚠ `ferrostep-roster`'s emitted-key guard did not catch this **and could not**: its
+  population is one emitter and the subject is two. A guard narrower than its subject reports
+  green over the half it cannot see.
+
+  Found by the first adopter to write a non-shell launcher, which is the only way anyone would
+  have found it.
+
 - `ferrostep-roster`: **two per-agent switches, `capture_cost` and `tag_runs`**, emitted as
   `AGENT_CAPTURE_COST` / `AGENT_TAG_RUNS` and **present only when on**. `capture_cost` says a
   launcher records what a run of that agent cost; `tag_runs` says it labels the run so

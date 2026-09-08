@@ -1376,6 +1376,21 @@ fn agent_env(flags: &Flags) -> Result<String, String> {
                 "persona": persona.to_string_lossy(),
                 "roster": agent.roster().source().to_string_lossy(),
             });
+            // ⚠ Present only when set, exactly as the shell form omits them —
+            // the two formats are one entry in two encodings, and a key in one
+            // and not the other is the defect this block was added to fix. A
+            // number stays a number here: the whole point of this format is a
+            // caller that is not a shell, and handing it "3.5" to re-parse
+            // rebuilds the decoding step the format exists to remove.
+            if let Some(budget) = agent.budget_usd() {
+                out["budget_usd"] = serde_json::json!(budget);
+            }
+            if agent.capture_cost() {
+                out["capture_cost"] = serde_json::json!(true);
+            }
+            if agent.tag_runs() {
+                out["tag_runs"] = serde_json::json!(true);
+            }
             // ⚠ The credential SOURCE, never the credential — see
             // `Resolved::shell_assignments`. This format is also the one that
             // needs no environment at all: a caller reading it from a pipe
@@ -3865,6 +3880,82 @@ mod tests {
 
     /// A caller that is not a shell should not have to decode shell quoting
     /// to recover a value the emitter had in hand. Both formats answer from
+    /// ⚠⚠ **THE PARITY CLAIM, MECHANIZED — it was a test NAME and nothing
+    /// else.** `json_carries_the_same_entry_as_the_shell_form` below asserts
+    /// four fields by hand and never compares the two encodings, so every key
+    /// added to one form since has been free to skip the other. It did:
+    /// `budget_usd` shipped to the shell form alone, and a launcher reading
+    /// JSON saw no spend ceiling and no error. Reported by the first adopter
+    /// to write a non-shell launcher, which is the only way anyone would find
+    /// it.
+    ///
+    /// ⚠ The emitted-key guard in `ferrostep-roster` did not catch this and
+    /// could not: its population is one emitter, and the subject is two. A
+    /// guard narrower than its subject reports green over the half it cannot
+    /// see.
+    #[test]
+    fn the_two_formats_carry_the_same_KEYS_or_the_parity_claim_is_only_a_name() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("workflow")).unwrap();
+        std::fs::write(dir.path().join("workflow/REVIEWER.md"), "# reviewer").unwrap();
+        // Every optional key at once — the widest an entry gets, because a
+        // parity check over a minimal entry proves parity of the mandatory
+        // half only, which is the half that never drifts.
+        std::fs::write(
+            dir.path().join("config.yaml"),
+            "default_agent: reviewer\n\
+             agents:\n\
+            \x20 reviewer:\n\
+            \x20   name: Grace\n\
+            \x20   email: grace@example.com\n\
+            \x20   persona: workflow/REVIEWER.md\n\
+            \x20   budget_usd: 3.5\n\
+            \x20   capture_cost: true\n\
+            \x20   tag_runs: true\n\
+             auth:\n\
+            \x20 type: simple\n\
+            \x20 path: creds.yaml\n",
+        )
+        .unwrap();
+        let roster = dir.path().join("config.yaml");
+        let emit = |format: &str| {
+            run(&argv(&[
+                "agent-env",
+                "--roster",
+                roster.to_str().unwrap(),
+                "--format",
+                format,
+            ]))
+            .unwrap()
+        };
+
+        // AGENT_X -> x; the two auth variables are one nested object there.
+        let mut shell: Vec<String> = emit("shell")
+            .lines()
+            .filter_map(|l| l.split_once('=').map(|(k, _)| k.to_string()))
+            .map(|k| {
+                let k = k.trim_start_matches("AGENT_").to_ascii_lowercase();
+                if k.starts_with("auth_") { "auth".to_string() } else { k }
+            })
+            .collect();
+        shell.sort();
+        shell.dedup();
+
+        let parsed: serde_json::Value = serde_json::from_str(&emit("json")).unwrap();
+        let mut json: Vec<String> =
+            parsed.as_object().unwrap().keys().map(|k| k.to_string()).collect();
+        json.sort();
+
+        assert_eq!(
+            shell, json,
+            "the two formats disagree about which keys an entry has:\n  shell {shell:?}\n   json {json:?}"
+        );
+        // And the value survived the encoding — a key present holding the
+        // wrong thing is the next way this goes wrong.
+        assert_eq!(parsed["budget_usd"], 3.5);
+        assert_eq!(parsed["capture_cost"], true);
+    }
+
     /// one resolution, so they cannot disagree about who an agent is.
     #[test]
     fn json_carries_the_same_entry_as_the_shell_form() {
