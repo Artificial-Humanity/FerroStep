@@ -112,7 +112,10 @@ to argue against, not a constraint — the section says so itself).
   preview card.
 - `docs/` — true and proper documentation. **Write a document here when it is
   a deliverable**: finished, public-facing, something an outside reader is
-  meant to find and the README can link into (prior-art lives here). The
+  meant to find and the README can link into. ⚠ The comparison against
+  neighbouring tools **moved out on 2026-09-08** and is private: measuring this
+  project against other offerings is working material, and a candid one is not
+  a deliverable. The
   **deployment map** (`docs/deployment-map.md`) is the single place
   deployment disposition is recorded — what ships, through which channel,
   what never leaves — and the xtask test `deployment_map_covers_the_tree`

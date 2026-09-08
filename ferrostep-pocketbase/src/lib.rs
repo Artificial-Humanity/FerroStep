@@ -270,7 +270,8 @@ pub struct ReleaseHook {
 /// role that principal may act in*. Authentication stays somebody else's job.
 ///
 /// ⚠ **The reason is that the actors are not knowable when a loop is
-/// designed** (`docs/prior-art.md`, requirement 9). Owning an account store
+/// designed**, which is why *bind, don't mint*: this reads a role for a
+/// principal and never creates one. Owning an account store
 /// would mean enumerating them up front, which is the assumption that fails
 /// first: an agent nobody foresaw should be a new principal in a directory
 /// that already exists plus one row naming its role — no release here.

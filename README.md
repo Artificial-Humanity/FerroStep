@@ -86,9 +86,13 @@ editing the database has no single program to resume; in-process state
 machines (Apache Burr) referee an application that owns them. FerroStep is the
 piece none of them ship: a **referee, not a runtime** — the ledger owns the
 loop, and every actor, human included, is just a client of the truth.
-[`docs/prior-art.md`](docs/prior-art.md) works this through tool by tool
-against eight concrete requirements, and says honestly when to use the others
-instead.
+That claim is worked through tool by tool, against a concrete test loop, in a
+comparison kept outside this repo — including the requirement FerroStep does
+*not* win and the cases where one of the others is the right answer. **Reach
+for durable execution (DBOS, Temporal) when one program must survive a crash,
+for Apache Burr when one application is a conversational state machine, and for
+a managed platform when you want agents governed like employees by your
+directory** — those are use-both, not use-instead.
 
 ## Example: a worker/reviewer rework loop
 

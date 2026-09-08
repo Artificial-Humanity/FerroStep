@@ -272,7 +272,7 @@ that the history is no more visible than its subject.
 ✅ **Role-scoped actors — the mechanism landed 2026-08-25.** The write routes
 took `role` from the request body, so any authenticated caller could act as
 any role. It now comes from the authenticated principal and a contradicting
-claim is refused. ⚠ **Bind, don't mint** (prior-art §requirement 9): the
+claim is refused. ⚠ **Bind, don't mint** (private comparison, §requirement 9): the
 binding names an auth collection the deployment already has and reads one
 field on it; it creates no identities, because owning accounts would mean
 enumerating actors at design time and that is the assumption which fails
@@ -428,7 +428,7 @@ store, so a third is demand-gated like everything else in this tier.
 A ledger built for this shape of work — agent actors, a human peer, an
 append-only history — is a plausible sibling project rather than part of this
 one (owner, 2026-08-21). If one arrives it is **an adapter like any other and
-never the assumed deployment**: requirement 8 in [prior-art](prior-art.md) is a
+never the assumed deployment**: requirement 8 of the private comparison (`notes/comparison-projects.md`) is a
 library plus the database you already run, and that stops being true of us the
 moment a server of ours is the default path. Optional and self-hosted keeps it
 clear of the non-goals below, which rule out running anything *for* a user, not
