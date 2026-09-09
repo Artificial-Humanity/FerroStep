@@ -131,6 +131,14 @@ can referee one (owner, 2026-08-20). Until then:
   useless to anyone but you. Commit, push, verify the commit is reachable
   (`git branch -r --contains`), then install — and verify the result by BEHAVIOUR, on a
   fixture where old and new disagree, because a timestamp only suggests.
+  ⚠⚠ **`--version` is a build artifact too, so read it back against HEAD.** Measured
+  2026-09-09: `cargo install --force` relinked the binary and reused a stamp cargo saw no
+  reason to recompute, so the installed tool named a commit it was not built from — an
+  install that looked verified because the one thing trusted to report provenance had none
+  of its own. The input tracking behind that is fixed; the check survives it, because what
+  went wrong was trusting a report instead of comparing it. `ferrostep --version` against
+  `git rev-parse --short=7 HEAD` is the whole check, and a mismatch accuses the stamp, not
+  the binary — rebuild before concluding anything about behaviour.
   ⚠ Installing changes the tool every session on the box resolves through, at once. It is
   owner-directed and not yours to decide.
 * ⚠ **You do not install FerroStep into another repo — consumers pull** (owner, 2026-09-07).
