@@ -24,6 +24,14 @@ entry here is mandatory rather than courtesy.
   whether it admits that. Where git is unavailable at build time it reports the commit as
   unknown rather than inventing one.
 
+  ⚠ **The stamp follows HEAD, and that took a second fix.** A build script naming no input is
+  rerun only when a file in *its own package* changes, so a rebuild across commits that touched
+  no `ferrostep-cli/` file relinked the binary and reused the previous stamp — printing a commit
+  the binary was not built from. *If your symptom is* "`--version` names a commit my build is
+  not from", rebuild once from a checkout carrying this entry; the script now names git's refs
+  among its inputs. The `+changes` marker stays best-effort: it reads the whole workspace, so an
+  uncommitted edit in another crate can be absent from it.
+
   Prompted by an adopter who could not confirm which build they were resolving through, in a
   session where an installed binary turned out to predate its own fix by sixteen minutes while
   everything about it looked current.
