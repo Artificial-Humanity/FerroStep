@@ -6,7 +6,7 @@ It sequences; it does not re-legislate — the standing rules live in
 [AGENTS.md](../AGENTS.md) and the north star, and every milestone below
 inherits them.
 
-**Where it stands (2026-08-25):** the baseline through B5 is built, tested
+**Where it stands, as far as 0.1.0:** the baseline through B5 is built, tested
 and running — the referee core, both ledger adapters with their measured
 batteries, the decision surface and its resolving move, the notification
 boundary with its default, and the audit report. The author's lane has
@@ -16,6 +16,14 @@ collection with generated transactional routes), and real records have run
 the full refereed cycle — claim, escalation, owner release, close —
 including a refereed move between units of work. 0.1.0 is cut on that basis
 and nothing is published to a registry yet.
+
+⚠ **Past that cut, read the milestones themselves — this paragraph does not
+track them.** Work lands inside B6 and B9 between rungs, and a summary here
+that tried to say how much would be a second copy of the ✅ markers below,
+stale the moment either moved. It carried a date until 2026-09-10 for exactly
+that reason, and the date is what went wrong: it described the tree on the day
+0.1.0 was cut and went on reading as a current statement for weeks. What is
+true of a milestone is written in the milestone.
 
 ⚠ **What that migration cost the adopter is the tier's most valuable
 output, and it is written down:**
@@ -254,20 +262,47 @@ varies by store and is not always its access rules — a hook, a constraint, a
 trigger, a rule expression. ⚠ Some stores can enforce nothing at all, and for
 those the engine is the only gate; that is a fact to state plainly in the
 adapter rather than a milestone to fake.
-Two things already known to be wrong belong to this milestone rather than
-waiting for it:
+Two things already known to be wrong were taken ahead of this milestone
+rather than waiting for it. **Both landed on 2026-08-25**, and what remains
+of B6 is the deployment half described under the second of them.
 
-⚠⚠ **A generated history collection must never be more readable than the
-records it describes.** The generated migration hardcodes an
-authenticated-user read rule on the events collection it creates. For a
-deployment using the adapter's own collections that matches; for a **mapped**
-one it does not, because there the refereed records are a collection the
-adopter already had, under whatever rules it already has — commonly stricter.
-The result is an inversion delivered by default and silently: every state
-change, actor, role and human note about records nobody may read, in a
-collection anybody authenticated may. **The generated rules should be derived
-from the records collection rather than assumed**, since the whole point is
-that the history is no more visible than its subject.
+✅ **A generated history no longer outranks the records it describes —
+`10ba035`.** The mapped migration created its events collection with an
+authenticated-user read rule: matching in the generic shape, which creates
+*both* collections and where the two therefore agree by construction, and
+wrong in the mapped one, where the refereed records are a collection the
+adopter already had under rules commonly stricter. That shipped an inversion
+by default and in silence — every state change, actor, role and human note
+about records the reader may not open, in a collection any authenticated
+account may list.
+⚠ **What shipped is not what this milestone proposed, and the reason it is
+not is the useful half.** The proposal here was to *derive* the generated
+rules from the records collection. **The naive derivation is a defect**: a
+rule may reference that collection's own fields (`author =
+@request.auth.id`), and copying it onto a collection that has no such field
+is refused on save — so deriving would trade a silent leak for a broken
+migration. What shipped is **superuser-only**, the only end of the range that
+is right whatever the adopter's rules turn out to say; widening is then their
+deliberate act in the admin UI, and the create-if-absent guard means a later
+regeneration will not undo it. `events_collection_body` is strict for a
+stronger version of the same reason — it is handed a name and nothing else,
+so it can know even less about what it sits beside.
+⚠⚠ **The fix reaches new deployments and no existing one**, and by the same
+guard that protects a widened rule: a store provisioned under the old default
+still carries it, because regeneration will not overwrite a collection that
+is already there. Repairing one is a hand act per deployment, and there is
+nothing in the tool that finds them — a mapped deployment installed before
+`10ba035` is the population, and this seat cannot enumerate it.
+⚠⚠ **This entry read as an open defect for sixteen days after it was fixed**,
+in the present tense, in the file that sequences the work — and it named a
+remedy nobody built, so a reader acting on it would have gone and derived
+rules the adapter had already decided against. The paragraph below it says
+"same line as the read-rule fix above" and has done since the day it landed,
+which is how close the correction was without being made. AGENTS.md carries
+this as a rule already: **a behaviour change invalidates prose, not only
+behaviour.** A milestone's known-wrong list is where that bites hardest,
+because its entries are written to be believed and nothing re-reads them
+when the code moves.
 
 ✅ **Role-scoped actors — the mechanism landed 2026-08-25.** The write routes
 took `role` from the request body, so any authenticated caller could act as

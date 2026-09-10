@@ -824,6 +824,18 @@ entry here is mandatory rather than courtesy.
   guard means a later regeneration will not undo it. `events_collection_body`
   is strict for the same reason and a stronger one — it is handed a name and
   nothing else, so it can know even less about what it sits beside.
+
+  ⚠⚠ **Updating does not repair a store you already provisioned, and nothing
+  will tell you so.** The create-if-absent guard that protects a widened rule
+  protects the lax one identically: regeneration skips a collection that
+  already exists, so a mapped deployment installed before this entry keeps the
+  authenticated-user read rule after you pull, rebuild and re-emit. *If your
+  symptom is* "I read this entry and assumed I was covered" — you are not, and
+  there is no failure to observe, because the defect is a read that succeeds.
+  **Check the events collection's `listRule` and `viewRule` in the admin UI**;
+  if they read `@request.auth.id != ''` rather than empty, set them to
+  superuser-only by hand. That is a per-deployment act and this project has no
+  command that finds or fixes it.
   ⚠ The general shape, and it is not about access rules: **generated output
   that attaches to something the adopter owns cannot carry a constant.** The
   invariant here is relational — *no more visible than its subject* — and one
