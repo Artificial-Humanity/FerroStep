@@ -7,6 +7,68 @@ entry here is mandatory rather than courtesy.
 
 ## Unreleased
 
+- `ferrostep-roster`, `ferrostep-cli`: **an entry may grant an agent directories to read
+  (`file_access`) and permission to work destructively in a worktree (`sandbox`)**, and a file
+  may say what `${PROJECT_ROOT}` means for the entries it declares (`project_root`).
+
+  *If your symptom is* "I want the reviewer to see the repo and its deployed copy, and there
+  was nowhere to write that down": that was the gap. Nothing here is configured for you — the
+  keys exist; which of your actors carry them is your roster's business.
+
+  ```yaml
+  project_root: ..          # this file sits in FerroStep/, so the repo root is one level up
+  agents:
+    reviewer:
+      name: …
+      file_access:
+        - "${PROJECT_ROOT}"
+        - "${PROJECT_ROOT}/../Notes/Thing"
+        - /data/somewhere/else
+      sandbox: true
+  ```
+
+  ⚠ **`file_access` grants READ, and that is the only grant it makes.** There is deliberately
+  no per-path mode: a writable directory outside a worktree would be a second and weaker route
+  to the rights `sandbox` exists to contain.
+
+  ⚠ **`sandbox: true` is a permission, never an instruction.** It says the agent *may* create a
+  worktree in which destructive actions are allowed. It does not say one must be created — the
+  agent judges whether destructive work is needed at all, and most work is not. **A worktree is
+  to be removed when the work that warranted it ends.** ⚠⚠ This crate states that duty and
+  **cannot enforce it**: it holds no IO by rule, so nothing here creates, finds or removes a
+  worktree. A deployment that reads the key without cleaning up will accumulate them silently,
+  and the accumulation is invisible from here.
+
+  ⚠ **`project_root` is declared rather than guessed**, because no rule is right for both
+  layouts: a roster in a deployment folder sits one level below its repo root and writes `..`,
+  while a roster at a repo root says nothing and gets the default of `.`. Deriving it from a
+  marker directory would make this crate git-aware, answer differently inside a worktree, and
+  have no answer at all outside a repository.
+
+  **Three things are refused at load rather than absorbed**, on the standing rule that an
+  artifact must reject what it cannot handle instead of ignoring it: an unknown `${…}` variable
+  (a typo left literal grants a directory that exists nowhere while the reader reports success),
+  a path containing a newline (the shell form is newline-separated, so it would arrive at a
+  launcher as two directories), and an empty `file_access: []` (omit the key to grant nothing —
+  an empty list reads as a configured grant while granting nothing).
+
+- `ferrostep-cli`: **`agent-env` now always emits the list of roster keys this build
+  understands** — `AGENT_ROSTER_KEYS` in the shell form, `roster_keys` in JSON.
+
+  *If your symptom is* "I set a roster key and nothing happened, with no error": read that list
+  first. **An unknown roster key is ignored, not refused**, and every optional key is absent
+  when off — so *off* and *this reader has never heard of the key* reached a caller identically,
+  and there was no way to tell them apart. This is the same rule the generated PocketBase routes
+  already follow: the artifact states what it can do, and the caller asks rather than assuming
+  its own generation's vocabulary.
+
+  ⚠ **Its own absence is the answer.** A build that emits no `AGENT_ROSTER_KEYS` predates the
+  question you are asking it, which is the one case a list of keys cannot state directly.
+
+  ⚠ **These keys are understood by the INSTALLED binary, not by this changelog.** Writing
+  `sandbox: true` against an older `ferrostep` gets you silence. Update the binary, then confirm
+  with `ferrostep agent-env --format json` that `roster_keys` names the key you are relying on.
+
 - `ferrostep-cli`: **`--version` (also `-V`, `version`)**, answered before anything is
   required — like `--help`, because asking what the tool *is* must not be parsed as using it.
 

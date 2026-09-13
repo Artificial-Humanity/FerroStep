@@ -40,7 +40,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use serde::Deserialize;
 
@@ -100,6 +100,39 @@ pub const REPO_MARKER: &str = ".git";
 /// path is resolved against *that* file's directory and against nothing else.
 /// A parent's `workflow/DEVELOPER.md` means the parent's `workflow/`, whether
 /// it is read from the parent or inherited by a repo three levels down.
+/// Every roster key this build understands, sorted.
+///
+/// ⚠⚠ **This exists because an unknown key is IGNORED, not refused.** A
+/// deployment that writes a key this build has never heard of gets silence —
+/// the behaviour it configured does not happen and nothing says so. Worse,
+/// the switches here are absent-means-off, so *off* and *your reader is too
+/// old to know the word* reach a launcher identically.
+///
+/// So the reader states what it understands, the same way a generated
+/// artifact states what it can write, and a launcher asks rather than
+/// assuming its own generation's vocabulary.
+///
+/// ⚠ Hand-written, deliberately. Deriving it would let a roster put an
+/// identifier into a caller's shell, and the caller `eval`s that.
+pub const UNDERSTOOD_KEYS: &[&str] = &[
+    "agents",
+    "agents_reach",
+    "auth",
+    "budget_usd",
+    "capture_cost",
+    "default_agent",
+    "email",
+    "file_access",
+    "name",
+    "persona",
+    "project_root",
+    "sandbox",
+    "tag_runs",
+];
+
+/// The one variable a configured path may name.
+const PROJECT_ROOT_VAR: &str = "PROJECT_ROOT";
+
 #[derive(Debug, Clone)]
 pub struct Roster {
     /// Contributing files, furthest first — so the last is the nearest.
@@ -115,6 +148,10 @@ pub struct Roster {
 struct Entry {
     agent: Agent,
     source: PathBuf,
+    /// `file_access`, expanded and resolved against the file that wrote it.
+    /// Empty is "no grant", which is also what an absent key means — the
+    /// difference between them is refused at load, so it cannot arrive here.
+    granted: Vec<PathBuf>,
 }
 
 /// How far down a roster's *agents* apply.
@@ -200,6 +237,36 @@ pub struct Agent {
     /// mechanism does it.
     #[serde(default)]
     tag_runs: Option<bool>,
+    /// Directories this agent may READ, as written. Resolved through
+    /// [`Resolved::file_access`].
+    ///
+    /// ⚠ **Read is the only grant this key makes.** A writable directory
+    /// outside a worktree would be a second, weaker route to the destructive
+    /// rights [`Agent::sandbox`] exists to contain, so there is deliberately
+    /// no per-path mode.
+    ///
+    /// ⚠ An absent key grants nothing. An EMPTY LIST is refused rather than
+    /// treated the same: it is a half-finished edit far more often than it is
+    /// an intention, and it reads as a configured grant while granting
+    /// nothing.
+    #[serde(default)]
+    file_access: Option<Vec<String>>,
+    /// Whether this agent may create a worktree in which destructive actions
+    /// are allowed.
+    ///
+    /// ⚠ **A permission, never an instruction.** True does not mean a
+    /// worktree must be made; the agent judges whether destructive work is
+    /// needed at all, and most work is not. False — the default — means no
+    /// worktree and no destructive rights anywhere.
+    ///
+    /// ⚠⚠ **A worktree is to be removed when the work that warranted it
+    /// ends.** This crate states that duty and **cannot enforce it**: it
+    /// holds no IO by rule, so nothing here creates, finds or removes a
+    /// worktree. Enforcement belongs to whatever launcher acts on this key,
+    /// and a deployment that reads it without cleaning up will accumulate
+    /// them silently.
+    #[serde(default)]
+    sandbox: Option<bool>,
 }
 
 /// Where an actor's credential comes from.
@@ -258,6 +325,17 @@ struct RosterFile {
     agents: BTreeMap<String, Agent>,
     #[serde(default)]
     auth: Option<AuthRepr>,
+    /// What `${PROJECT_ROOT}` means for the entries THIS file declares,
+    /// resolved against this file's own directory. Absent is `.`.
+    ///
+    /// ⚠ **Declared rather than guessed, because there is no rule that is
+    /// right for both layouts.** A roster in a deployment folder sits one
+    /// level below its repo root and writes `..`; a roster at a repo root
+    /// says nothing and gets the default. Deriving it — from a marker
+    /// directory, say — would make this crate git-aware, answer differently
+    /// inside a worktree, and have no answer at all outside a repository.
+    #[serde(default)]
+    project_root: Option<String>,
 }
 
 impl Roster {
@@ -401,11 +479,16 @@ impl Roster {
         let auth = file.auth.map(|repr| match repr {
             AuthRepr::Simple { path } => Auth::Simple { path: resolve_against(&root, &path) },
         });
-        let agents = file
-            .agents
-            .into_iter()
-            .map(|(title, agent)| (title, Entry { agent, source: source.clone() }))
-            .collect();
+        // ⚠ Normalised, so a grant arrives as the directory it names rather
+        // than as a string with a `..` in it that nothing downstream can
+        // compare against.
+        let project_root =
+            lexical_normalize(&resolve_against(&root, file.project_root.as_deref().unwrap_or(".")));
+        let mut agents = BTreeMap::new();
+        for (title, agent) in file.agents {
+            let granted = resolve_grants(&agent, &title, &project_root, &root, &source)?;
+            agents.insert(title, Entry { agent, source: source.clone(), granted });
+        }
         Ok(Roster {
             sources: vec![source],
             default_agent: file.default_agent,
@@ -504,6 +587,101 @@ fn resolve_against(root: &Path, written: &str) -> PathBuf {
     if written.is_absolute() { written.to_path_buf() } else { root.join(written) }
 }
 
+/// Collapse `.` and `..` lexically, without touching the filesystem.
+///
+/// ⚠ Lexical on purpose: a grant may name a directory that does not exist
+/// yet, and `canonicalize` would refuse it. The cost is that a symlink is not
+/// followed, so a grant written through one names the link's path — which is
+/// the path the operator wrote and the one they will recognise.
+fn lexical_normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Expand `${PROJECT_ROOT}` in a configured path.
+///
+/// ⚠ **Any other variable is refused, never passed through.** A typo left
+/// literal becomes a directory name that exists nowhere, so the grant is
+/// silently empty and the reader reports success — the exact shape this
+/// project refuses elsewhere, where an artifact must reject what it cannot
+/// handle rather than ignore it.
+fn expand_vars(
+    written: &str,
+    project_root: &Path,
+    title: &str,
+    source: &Path,
+) -> Result<String, RosterError> {
+    let mut out = String::new();
+    let mut rest = written;
+    while let Some(at) = rest.find("${") {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 2..];
+        let close = after.find('}').ok_or_else(|| RosterError::UnknownPathVariable {
+            title: title.to_string(),
+            written: written.to_string(),
+            variable: after.to_string(),
+            path: source.to_path_buf(),
+        })?;
+        let name = &after[..close];
+        if name != PROJECT_ROOT_VAR {
+            return Err(RosterError::UnknownPathVariable {
+                title: title.to_string(),
+                written: written.to_string(),
+                variable: name.to_string(),
+                path: source.to_path_buf(),
+            });
+        }
+        out.push_str(&project_root.to_string_lossy());
+        rest = &after[close + 1..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
+/// Validate and resolve one entry's `file_access`.
+fn resolve_grants(
+    agent: &Agent,
+    title: &str,
+    project_root: &Path,
+    root: &Path,
+    source: &Path,
+) -> Result<Vec<PathBuf>, RosterError> {
+    let Some(written) = agent.file_access.as_ref() else {
+        return Ok(Vec::new());
+    };
+    if written.is_empty() {
+        return Err(RosterError::EmptyFileAccess {
+            title: title.to_string(),
+            path: source.to_path_buf(),
+        });
+    }
+    let mut out = Vec::with_capacity(written.len());
+    for one in written {
+        // ⚠ The shell form separates grants by newline, so one inside a path
+        // would arrive at the caller as two directories. Refused here rather
+        // than mangled at emit, because the mangling is silent and this is not.
+        if one.contains('\n') {
+            return Err(RosterError::PathWithNewline {
+                title: title.to_string(),
+                written: one.clone(),
+                path: source.to_path_buf(),
+            });
+        }
+        let expanded = expand_vars(one, project_root, title, source)?;
+        out.push(lexical_normalize(&resolve_against(root, &expanded)));
+    }
+    Ok(out)
+}
+
 /// A title and the complete entry behind it.
 #[derive(Debug, Clone, Copy)]
 pub struct Resolved<'a> {
@@ -551,6 +729,25 @@ impl<'a> Resolved<'a> {
     /// convenient one.
     pub fn tag_runs(&self) -> bool {
         self.entry.agent.tag_runs.unwrap_or(false)
+    }
+
+    /// Directories this agent may READ, expanded and resolved against the
+    /// file that wrote them. Empty is no grant.
+    ///
+    /// ⚠ **A statement of what is permitted, not a mechanism.** Nothing here
+    /// opens, checks or confines anything — this crate holds no IO. Whatever
+    /// launcher acts on this is what makes it true, exactly as with the spend
+    /// ceiling.
+    pub fn file_access(&self) -> Vec<PathBuf> {
+        self.entry.granted.clone()
+    }
+
+    /// Whether this agent may create a worktree in which destructive actions
+    /// are allowed. `None` is off — see [`Agent::sandbox`] for why true is a
+    /// permission rather than an instruction, and for the cleanup duty that
+    /// rides with it.
+    pub fn sandbox(&self) -> bool {
+        self.entry.agent.sandbox.unwrap_or(false)
     }
 
     /// The file that supplied this entry, which in a layered roster is not
@@ -629,6 +826,30 @@ impl<'a> Resolved<'a> {
         if self.tag_runs() {
             out.push_str("\nAGENT_TAG_RUNS='1'");
         }
+        // ⚠ One variable, newline-separated, so the emitted key set stays
+        // FIXED. Indexed keys would make it derived from the file's contents,
+        // which is the property `the_emitted_keys_are_fixed_not_derived`
+        // exists to deny. A path containing a newline is refused at load, so
+        // the separator is unambiguous by construction rather than by hope.
+        if !self.entry.granted.is_empty() {
+            let joined = self
+                .entry
+                .granted
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("\n");
+            out.push_str(&format!("\nAGENT_FILE_ACCESS={}", shell_quote(&joined)));
+        }
+        // Present only when granted, like the switches above.
+        if self.sandbox() {
+            out.push_str("\nAGENT_SANDBOX='1'");
+        }
+        // ⚠⚠ ALWAYS emitted, and that is the point. Every other optional key
+        // is absent when off, so a launcher cannot tell "off" from "this
+        // reader predates the key". This one answers that: its own absence
+        // says the reader is older than the question being asked.
+        out.push_str(&format!("\nAGENT_ROSTER_KEYS={}", shell_quote(&UNDERSTOOD_KEYS.join(" "))));
         // ⚠⚠ The credential source, and never the credential. A password put
         // in the environment is inherited by every subprocess — including one
         // launched to act as somebody *else*, which is how an actor ends up
@@ -679,6 +900,9 @@ pub enum RosterError {
     IncompleteEntry { title: String, field: &'static str, path: PathBuf },
     MissingPersona { title: String, written: String, resolved: PathBuf, path: PathBuf },
     InvalidBudget { title: String, written: f64, path: PathBuf },
+    UnknownPathVariable { title: String, written: String, variable: String, path: PathBuf },
+    PathWithNewline { title: String, written: String, path: PathBuf },
+    EmptyFileAccess { title: String, path: PathBuf },
     AmbiguousRoster { folder: PathBuf, bare: PathBuf },
 }
 
@@ -713,6 +937,26 @@ impl fmt::Display for RosterError {
             RosterError::IncompleteEntry { title, field, path } => {
                 write!(f, "agent '{title}' has an empty {field} in {}", path.display())
             }
+            RosterError::UnknownPathVariable { title, written, variable, path } => write!(
+                f,
+                "agent '{title}' names an unknown variable '${{{variable}}}' in file_access \
+                 path '{written}' ({}). Only ${{{PROJECT_ROOT_VAR}}} is understood; a variable \
+                 left literal would grant a directory that exists nowhere and report success",
+                path.display()
+            ),
+            RosterError::PathWithNewline { title, written, path } => write!(
+                f,
+                "agent '{title}' has a file_access path containing a newline ({}): {written:?}. \
+                 Grants are emitted one per line, so this would arrive at a launcher as two \
+                 directories",
+                path.display()
+            ),
+            RosterError::EmptyFileAccess { title, path } => write!(
+                f,
+                "agent '{title}' has an empty file_access list in {}. Omit the key to grant \
+                 nothing; an empty list reads as a configured grant while granting nothing",
+                path.display()
+            ),
             RosterError::AmbiguousRoster { folder, bare } => write!(
                 f,
                 "two rosters answer for the same directory and nothing says which is \
@@ -1418,13 +1662,24 @@ agents:
         let block = plain.resolve(Some("reviewer")).unwrap().shell_assignments().unwrap();
         assert_eq!(
             keys(&block),
-            ["AGENT_TITLE", "AGENT_NAME", "AGENT_EMAIL", "AGENT_PERSONA", "AGENT_ROSTER"],
+            [
+                "AGENT_TITLE",
+                "AGENT_NAME",
+                "AGENT_EMAIL",
+                "AGENT_PERSONA",
+                "AGENT_ROSTER",
+                // ⚠ Always present, unlike every optional key above. Its own
+                // absence is the signal — it says the reader predates the
+                // question the caller is asking.
+                "AGENT_ROSTER_KEYS",
+            ],
             "an entry configuring nothing optional emits the identity keys and no others"
         );
 
         let text = with_budget("5").replace(
             "    budget_usd: 5",
-            "    budget_usd: 5\n    capture_cost: true\n    tag_runs: true",
+            "    budget_usd: 5\n    capture_cost: true\n    tag_runs: true\n    \
+             file_access: [docs]\n    sandbox: true",
         );
         let text = format!("{text}\nauth:\n  type: simple\n  path: creds.yaml\n");
         let (_dir2, full) = roster_on_disk(&text, &["workflow/REVIEWER.md"]);
@@ -1440,10 +1695,218 @@ agents:
                 "AGENT_BUDGET_USD",
                 "AGENT_CAPTURE_COST",
                 "AGENT_TAG_RUNS",
+                "AGENT_FILE_ACCESS",
+                "AGENT_SANDBOX",
+                "AGENT_ROSTER_KEYS",
                 "AGENT_AUTH_TYPE",
                 "AGENT_AUTH_PATH",
             ],
             "every optional key configured at once — the widest this block gets"
         );
     }
+
+    // ---- reviewer file access, and the sandbox that grants write ----
+
+    /// A roster whose reviewer is granted directories. `project_root: ..`
+    /// is the deployment-folder layout: the file sits in `FerroStep/`, so the
+    /// repo root is one level up from it.
+    const GRANTED: &str = r#"
+project_root: ..
+default_agent: reviewer
+agents:
+  reviewer:
+    name: Grace
+    email: grace@example.com
+    persona: personas/REVIEWER.md
+    sandbox: true
+    file_access:
+      - "${PROJECT_ROOT}"
+      - "${PROJECT_ROOT}/../Notes/Thing"
+      - /data/repos/Thing
+"#;
+
+    #[test]
+    fn project_root_defaults_to_the_directory_of_the_file_that_declared_it() {
+        let text = "
+default_agent: reviewer
+agents:
+  reviewer:
+    name: Grace
+    email: g@example.com
+    persona: personas/REVIEWER.md
+    file_access: ['${PROJECT_ROOT}']
+";
+        let (dir, roster) = roster_on_disk(text, &["personas/REVIEWER.md"]);
+        let granted = roster.resolve(None).unwrap().file_access();
+        assert_eq!(granted, vec![dir.path().to_path_buf()]);
+    }
+
+    #[test]
+    fn project_root_is_resolved_against_the_declaring_file() {
+        // `..` from a roster written at the temp root is that root's parent.
+        let (dir, roster) = roster_on_disk(GRANTED, &["personas/REVIEWER.md"]);
+        let granted = roster.resolve(None).unwrap().file_access();
+        let root = dir.path().parent().unwrap();
+        assert_eq!(granted[0], root, "{granted:?}");
+    }
+
+    #[test]
+    fn an_absolute_file_access_path_is_taken_as_written() {
+        let (_dir, roster) = roster_on_disk(GRANTED, &["personas/REVIEWER.md"]);
+        let granted = roster.resolve(None).unwrap().file_access();
+        assert_eq!(granted[2], PathBuf::from("/data/repos/Thing"), "{granted:?}");
+    }
+
+    #[test]
+    fn a_relative_file_access_path_resolves_like_a_persona_does() {
+        let text = "
+default_agent: reviewer
+agents:
+  reviewer:
+    name: Grace
+    email: g@example.com
+    persona: personas/REVIEWER.md
+    file_access: [docs]
+";
+        let (dir, roster) = roster_on_disk(text, &["personas/REVIEWER.md"]);
+        let granted = roster.resolve(None).unwrap().file_access();
+        assert_eq!(granted, vec![dir.path().join("docs")]);
+    }
+
+    /// ⚠ A typo must not become a directory name. The whole point of naming
+    /// the variable is that the reader knows the vocabulary; an unknown one
+    /// is the case where passing it through silently grants nothing and
+    /// reports success.
+    #[test]
+    fn an_unknown_variable_in_a_file_access_path_is_refused() {
+        let text = "
+agents:
+  reviewer:
+    name: Grace
+    email: g@example.com
+    persona: p.md
+    file_access: ['${PROJECT_ROOTT}/x']
+";
+        let err = Roster::parse(text, "config.yaml").unwrap_err().to_string();
+        assert!(err.contains("PROJECT_ROOTT"), "names the offending variable: {err}");
+    }
+
+    /// The shell form separates grants by newline, so a path containing one
+    /// would arrive at the caller as two directories. Refused at load rather
+    /// than mangled at emit.
+    #[test]
+    fn a_file_access_path_containing_a_newline_is_refused() {
+        let text = "
+agents:
+  reviewer:
+    name: Grace
+    email: g@example.com
+    persona: p.md
+    file_access: [\"one\\ntwo\"]
+";
+        let err = Roster::parse(text, "config.yaml").unwrap_err().to_string();
+        assert!(err.contains("newline"), "says what is wrong with it: {err}");
+    }
+
+    /// "No access" is spelled by omitting the key. An empty list is a
+    /// half-finished edit, and an enumeration over nothing grants nothing
+    /// while reading as a configured grant.
+    #[test]
+    fn an_empty_file_access_list_is_refused() {
+        let text = "
+agents:
+  reviewer:
+    name: Grace
+    email: g@example.com
+    persona: p.md
+    file_access: []
+";
+        let err = Roster::parse(text, "config.yaml").unwrap_err().to_string();
+        assert!(err.contains("file_access"), "{err}");
+    }
+
+    #[test]
+    fn sandbox_is_off_unless_asked_for() {
+        let roster = Roster::parse(SAMPLE, "config.yaml").unwrap();
+        assert!(!roster.resolve(None).unwrap().sandbox());
+        let (_dir, granted) = roster_on_disk(GRANTED, &["personas/REVIEWER.md"]);
+        assert!(granted.resolve(None).unwrap().sandbox());
+    }
+
+    #[test]
+    fn the_shell_form_omits_file_access_and_sandbox_when_unset() {
+        let (_dir, roster) = roster_on_disk(SAMPLE, &["workflow/DEVELOPER.md", "workflow/REVIEWER.md"]);
+        let block = roster.resolve(None).unwrap().shell_assignments().unwrap();
+        assert!(!block.contains("AGENT_FILE_ACCESS"), "{block}");
+        assert!(!block.contains("AGENT_SANDBOX"), "{block}");
+    }
+
+    #[test]
+    fn the_shell_form_carries_every_granted_directory_on_its_own_line() {
+        let (_dir, roster) = roster_on_disk(GRANTED, &["personas/REVIEWER.md"]);
+        let entry = roster.resolve(None).unwrap();
+        let block = entry.shell_assignments().unwrap();
+        assert!(block.contains("AGENT_SANDBOX='1'"), "{block}");
+        // Read the variable back through a shell, which is what a caller does.
+        let script = format!("{block}\nprintf '%s' \"$AGENT_FILE_ACCESS\" | wc -l");
+        let out = std::process::Command::new("sh").arg("-c").arg(&script).output().unwrap();
+        let lines: usize = String::from_utf8_lossy(&out.stdout).trim().parse().unwrap();
+        assert_eq!(
+            lines + 1,
+            entry.file_access().len(),
+            "one line per grant, no trailing newline: {block}"
+        );
+    }
+
+    /// ⚠ The reason this key exists: an older build silently ignores a key it
+    /// has never heard of, so an absent `AGENT_SANDBOX` cannot be told from a
+    /// build that does not know the word. The list is what a launcher asks.
+    #[test]
+    fn the_capability_list_names_the_keys_this_build_understands() {
+        assert_eq!(
+            UNDERSTOOD_KEYS,
+            [
+                "agents", "agents_reach", "auth", "budget_usd", "capture_cost", "default_agent",
+                "email", "file_access", "name", "persona", "project_root", "sandbox", "tag_runs",
+            ],
+            "a key added to the format must be added here, or a launcher cannot ask for it"
+        );
+        let (_dir, roster) = roster_on_disk(GRANTED, &["personas/REVIEWER.md"]);
+        let block = roster.resolve(None).unwrap().shell_assignments().unwrap();
+        for key in UNDERSTOOD_KEYS {
+            assert!(block.contains(key), "the emitted list omits {key}: {block}");
+        }
+    }
+
+    /// ⚠ The list is hand-written, so it can say a word this build does not
+    /// act on. This proves each listed agent-level key actually changes a
+    /// resolved value. ⚠ NOT CHECKED, and stated rather than implied: the
+    /// reverse — a field added to `Agent` and left out of the list.
+    #[test]
+    fn every_agent_key_in_the_capability_list_is_actually_honoured() {
+        let text = "
+default_agent: reviewer
+agents:
+  reviewer:
+    name: Grace
+    email: g@example.com
+    persona: personas/REVIEWER.md
+    budget_usd: 3.5
+    capture_cost: true
+    tag_runs: true
+    sandbox: true
+    file_access: [docs]
+";
+        let (_dir, roster) = roster_on_disk(text, &["personas/REVIEWER.md"]);
+        let e = roster.resolve(None).unwrap();
+        assert_eq!(e.name(), "Grace");
+        assert_eq!(e.email(), "g@example.com");
+        assert_eq!(e.persona(), "personas/REVIEWER.md");
+        assert_eq!(e.budget_usd(), Some(3.5));
+        assert!(e.capture_cost());
+        assert!(e.tag_runs());
+        assert!(e.sandbox());
+        assert_eq!(e.file_access().len(), 1);
+    }
+
 }

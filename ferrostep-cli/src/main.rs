@@ -1413,6 +1413,25 @@ fn agent_env(flags: &Flags) -> Result<String, String> {
             if agent.tag_runs() {
                 out["tag_runs"] = serde_json::json!(true);
             }
+            // ⚠ An ARRAY here, where the shell form has to join on newlines.
+            // A caller that is not a shell should not have to split a string
+            // the emitter had as a list — that is the decoding step this
+            // format exists to remove, and the one place the two encodings
+            // are allowed to differ in shape rather than in content.
+            let granted = agent.file_access();
+            if !granted.is_empty() {
+                out["file_access"] = serde_json::json!(
+                    granted.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>()
+                );
+            }
+            if agent.sandbox() {
+                out["sandbox"] = serde_json::json!(true);
+            }
+            // ⚠⚠ Always present, like the shell form's AGENT_ROSTER_KEYS and
+            // for the same reason: every other key is absent when off, so
+            // nothing else can tell a caller that this reader is simply too
+            // old to know the key being asked about.
+            out["roster_keys"] = serde_json::json!(ferrostep_roster::UNDERSTOOD_KEYS);
             // ⚠ The credential SOURCE, never the credential — see
             // `Resolved::shell_assignments`. This format is also the one that
             // needs no environment at all: a caller reading it from a pipe
@@ -3957,6 +3976,8 @@ mod tests {
             \x20   budget_usd: 3.5\n\
             \x20   capture_cost: true\n\
             \x20   tag_runs: true\n\
+            \x20   sandbox: true\n\
+            \x20   file_access: ['${PROJECT_ROOT}', docs]\n\
              auth:\n\
             \x20 type: simple\n\
             \x20 path: creds.yaml\n",
