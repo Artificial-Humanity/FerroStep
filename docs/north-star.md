@@ -32,8 +32,17 @@ else — which wants nothing to install. Serving both is another reason the ledg
 sits behind an adapter instead of being assumed, and it is why the zero-install
 path is a first-class concern rather than a courtesy to newcomers.
 
-What does not change: the ledger is the memory, the engine is a referee rather
-than a runtime, and the human stays the authority the loop escalates to.
+What does not change: the ledger is the memory, and the human stays the
+authority the loop escalates to.
+
+⚠ **A third clause stood in that sentence until 2026-09-14, and the owner
+removed it**: *"the engine is a referee rather than a runtime"*. Their words for
+why — *it was never truly mine*. It had entered as an agent's inference and was
+then ratified in company with text that genuinely was the owner's, which is
+exactly how an inference acquires an authority nobody granted it. The owner's
+stated goal (2026-09-11) is a light-touch installation — *"I don't care if it's
+a runtime or not"* — so whether this engine is one is not a constraint on the
+product. The rest of this section stands as ratified 2026-08-21.
 
 **Tiebreaker.** The author's own loop decides *what* gets built. Other users
 decide *how it is shaped*: given something worth building, prefer the form a

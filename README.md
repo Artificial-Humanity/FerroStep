@@ -84,8 +84,8 @@ inside their runtime; durable execution (Temporal, DBOS) resumes *a crashed
 program* — but a loop whose actors are independent processes and a human
 editing the database has no single program to resume; in-process state
 machines (Apache Burr) referee an application that owns them. FerroStep is the
-piece none of them ship: a **referee, not a runtime** — the ledger owns the
-loop, and every actor, human included, is just a client of the truth.
+piece none of them ship: the ledger owns the loop, and every actor, human
+included, is just a client of the truth.
 That claim is worked through tool by tool, against a concrete test loop, in a
 comparison kept outside this repo — including the requirement FerroStep does
 *not* win and the cases where one of the others is the right answer. **Reach
