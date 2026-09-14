@@ -44,6 +44,33 @@ stated goal (2026-09-11) is a light-touch installation — *"I don't care if it'
 a runtime or not"* — so whether this engine is one is not a constraint on the
 product. The rest of this section stands as ratified 2026-08-21.
 
+⚠⚠ **THE OWNER RESTATED THE GOAL ON 2026-09-14, AND §1 HAS NOT BEEN
+RE-RATIFIED TO CARRY IT.** Their words:
+
+> *"My goal is a simple/light install. A multi-agent orchestrator agnostic to
+> model vendor, subscription, API key or local models. A code-review loop and
+> agent identities."*
+
+and, on the walls that had accumulated around it:
+
+> *"We need to steer away from hard lines of things that FerroStep is decidedly
+> not. Those walls were never mine."*
+
+Recorded here because this is the section it belongs to, and because a
+statement that lives only in a session is one nobody can check later.
+
+⚠ **It is the owner's to ratify, and an agent must not promote it into the
+Vision above by editing around it.** That is the standing convention for §1, and
+it is also the precise mechanism that put the struck clause here in the first
+place: an inference shelved beside ratified text inherits the ratification. Read
+§1 as ratified 2026-08-21, **plus these two statements, unratified**, until the
+owner closes the gap.
+
+⚠ **What the restatement does not do is license the opposite wall.** "Not a
+runtime" being struck is not "it is a runtime"; a multi-agent orchestrator is
+what the product is *for*, and how much of one it becomes is a question the
+roadmap answers item by item, with sources.
+
 **Tiebreaker.** The author's own loop decides *what* gets built. Other users
 decide *how it is shaped*: given something worth building, prefer the form a
 stranger could reconfigure over the one that hardcodes our arrangement.
@@ -83,9 +110,22 @@ non-goals, and are deliberately not restated here.
 
 ## 3. The one organizing principle
 
-**The ledger is the truth and the engine is a pure function over it.** Anything
-that would make the engine stateful, asynchronous, or a network peer is scope
-creep, however convenient.
+**The ledger is the truth, and `ferrostep-core` is a pure function over it.**
+Every side effect the product needs lives on the far side of an adapter — which
+is a rule about **where code goes**, not a limit on what the product may grow
+into.
+
+⚠ **A second sentence stood here until 2026-09-14, and the owner struck it**:
+*"Anything that would make the engine stateful, asynchronous, or a network peer
+is scope creep, however convenient."* Unattributed, and written as a wall around
+the whole product rather than as the crate rule it actually is.
+
+**The invariant survives; the wall does not.** `ferrostep-core` stays pure —
+that is real, it is what makes every adapter possible, and
+[AGENTS.md](../AGENTS.md) §Layout is where it binds. What was never the owner's
+is the leap from *the core is a pure function* to *the product may not be
+stateful, asynchronous, or reachable over a network* — a leap that would have
+ruled out the light-touch install they actually want, headless process and all.
 
 ## 4. Load-bearing constraints
 

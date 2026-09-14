@@ -642,13 +642,36 @@ milestone, which is why it takes no rung on the ladder.
 - **The referee as commons.** Apache-2.0, no platform, no capture: useful to
   others precisely because it was built for one operator and shared legibly.
 
-## Non-goals — permanent
+## Non-goals
 
-No runtime, scheduler, queue, or hosted anything. No blessed workflows. No
-competing with actor-layer frameworks — agents built on them are actors *in*
-FerroStep loops, not rivals to it. And no vendor's agent tooling gets
-framework-level support (owner, 2026-08-21): it is reached through an agent
-adapter or it is not reached at all.
+⚠ **These are positions with sources, not walls** (owner, 2026-09-14: *"We need
+to steer away from hard lines of things that FerroStep is decidedly not. Those
+walls were never mine."*). This section carried the heading **"permanent"** and
+opened with a prohibition nobody had ruled. An entry that cannot name a source
+and a date is a proposal, and this is not a section where one becomes settled by
+sitting in it.
+
+**No blessed workflows** (owner, 2026-08-20) — fluid configuration, not set
+standards. **And no vendor's agent tooling gets framework-level support**
+(owner, 2026-08-21): it is reached through an agent adapter or it is not reached
+at all. ⚠ That second one is not a wall of the struck kind and it is worth
+saying why: it is what makes the product **agnostic to model vendor,
+subscription, API key or local models** (owner, 2026-09-14) — a capability,
+stated as a refusal.
+
+⚠ **Struck 2026-09-14 (owner): "No runtime, scheduler, queue, or hosted
+anything."** Unattributed, and already false against the owner's own goal — a
+light-touch install with, *"should the user desire, a headless process in a
+systemd service"* (owner, 2026-09-11). It had read as permanent for as long as
+this section existed.
+
+⚠ **Open, and deliberately NOT struck by an agent:** *"No competing with
+actor-layer frameworks — agents built on them are actors in FerroStep loops, not
+rivals to it."* It is positioning rather than a capability wall and may still be
+right, but the owner has since described FerroStep as **a multi-agent
+orchestrator** (2026-09-14), which is the same neighbourhood. That is theirs to
+keep or strike; an agent reading it either way would be inferring exactly the
+kind of line this section just stopped carrying.
 
 ⚠ **"No feature without a consuming loop" was here and was removed by the
 owner on 2026-08-25. Do not restore it.** It had stood as a permanent
