@@ -95,12 +95,18 @@ usually invisible until you are standing in it; adapters are how a small
 project stays cheap to point somewhere new. When that stops being the cheaper
 answer for something, it stops being the answer.
 
-A ledger built by the same hands sits on the rented side for the same reason:
-it would be one more adapter and one more choice. The sequencing is PocketBase
-and SQLite first — PocketBase is in live use and expected to stay that way
-(owner, 2026-08-21) — because a store nobody here controls is what keeps the
-interface honest. The terms are in [ROADMAP.md](ROADMAP.md) §E2, along with the
-non-goals, and are deliberately not restated here.
+A ledger built by the same hands is no longer hypothetical and no longer merely
+one more choice: **FerroTrack is FerroStep's out-of-the-box store as well as a
+product in its own right** (owner, 2026-08-28). ⚠ This paragraph said the
+opposite — that such a ledger *"sits on the rented side… one more adapter and
+one more choice"* — until 2026-09-14, because the ruling that replaced it landed
+in FerroTrack's files and not in these.
+
+The sequencing is still PocketBase and SQLite first — PocketBase is in live use
+and expected to stay that way (owner, 2026-08-21) — and that is not deference to
+history. **A store nobody here controls is what keeps the interface honest, and
+that matters more now that one of the stores is ours**, not less. The terms are
+in [ROADMAP.md](ROADMAP.md) §E2 and are deliberately not restated here.
 
 ## 3. The one organizing principle
 

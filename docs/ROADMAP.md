@@ -487,22 +487,35 @@ The baseline pair already proves the interface is not shaped around a single
 store, so a third is demand-gated like everything else in this tier.
 
 A ledger built for this shape of work — agent actors, a human peer, an
-append-only history — is a plausible sibling project rather than part of this
-one (owner, 2026-08-21). If one arrives it is **an adapter like any other and
-never the assumed deployment**: requirement 8 of the private comparison (`notes/comparison-projects.md`) is a
-library plus the database you already run, and that stops being true of us the
-moment a server of ours is the default path. Optional and self-hosted keeps it
-clear of the non-goals below, which rule out running anything *for* a user, not
-shipping something they can run.
+append-only history — is a sibling project rather than part of this one (owner,
+2026-08-21), and it exists: **FerroTrack is FerroStep's out-of-the-box store as
+well as a product in its own right** (owner, 2026-08-28). What FerroTrack *is*
+is answered by FerroTrack's own `AGENTS.md`; nothing here decides anything for
+it, and this file should point rather than describe.
+
+⚠⚠ **That ruling REPLACED an earlier one, and this document carried the earlier
+one for a fortnight.** Until 2026-09-14 this passage read *"an adapter like any
+other and never the assumed deployment"* (owner, 2026-08-21), reasoning that a
+first-party store stops us being *a library plus the database you already run*
+the moment it becomes the default path. The owner replaced that on 2026-08-28.
+**The replacement was stated to this repo's resident and written into
+FerroTrack's files, and never entered this one** — so planning here ran against
+a superseded rule while both rulings sat in the workspace, each correct in its
+own repo and contradicting the other across the gap. ⚠ **A ruling relayed to a
+seat is not a ruling that landed.** It lands when it is written where the work
+reads it, and the seat that hears it owns putting it there.
 
 ⚠ **It carries a risk the external backends do not.** PocketBase and SQLite
 keep the interface honest precisely because we cannot change them — every
 awkwardness has to be absorbed on our side. A backend the same hands control
 can have the interface bent toward it instead, one convenience at a time, and
-nothing fails while that happens. A first-party ledger earns its adapter
-against the same interface as the others, with no privileges they lack; and
-because it would be built to serve this engine, the adapter interface is the
-requirements document it should be tracking.
+nothing fails while that happens. **FerroTrack earns its adapter against the
+same interface as the others, with no privileges they lack** — that was the
+guard while a first-party store was hypothetical and it is the guard now that
+one is the default, which makes it load-bearing rather than cautionary. Because
+it is built to serve this engine, the adapter interface is the requirements
+document it should be tracking, and the two-adapter floor is what keeps the
+claim testable.
 
 **E3 — TypeScript bindings** when a TypeScript consumer exists to drive the
 API. The workspace has left room since day one.
