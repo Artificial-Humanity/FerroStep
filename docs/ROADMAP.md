@@ -61,7 +61,7 @@ this file's proposal and are moved freely.
 | **0.1.0** ✅ | the internal MVP — the author's lane runs on the referee | B1–B5 |
 | **0.2.0** | **the store enforces, not just the referee** — actors stop authenticating as an administrator, and the rules the engine validates are also applied by the store | B6 |
 | **0.3.0** | **a stranger can adopt it from the documentation alone** *(owner)* | B8, B9 |
-| **0.4.0** | *unassigned* — see the note below | — |
+| **0.4.0** | **the install is light — one binary, fetched and run** *(owner)* | B10 |
 | **0.5.0** | **the zero-install path gets a console** *(owner)* | E6 |
 | **0.6.0 →** | the remaining expansion tier, in whatever order demand arrives | E1–E5, B7 |
 | **1.0.0** | the planned road complete | — |
@@ -79,12 +79,13 @@ waiting for its rung. What a rung fixes is the *outcome that names the
 release*, so a version number means something specific rather than "the
 work that happened to finish."
 
-**On 0.4.0, deliberately empty.** The leading candidate is **registry
-publication** — after 0.3.0 a stranger can read how to adopt it, and being
-unable to install it without cloning is the next thing in their way. That
-is the owner's decision and is not implied by any release here (nor was it
-by 0.1.0), so the rung stays open until they make it. B7 is the other
-candidate and cannot be scheduled: it lands with its first real consumer.
+**On 0.4.0 — assigned 2026-09-14 (owner).** The rung was deliberately empty,
+and its recorded leading candidate was registry publication, on the reasoning
+that *being unable to install it without cloning is the next thing in a
+stranger's way*. That reasoning was right and the artifact was wrong: what the
+owner wants fetched is **one binary**, not eight crates. B10 carries it.
+
+⚠ The old note said the rung stays open "until they make it". They made it.
 
 "Public-release item" on an entry names a polish bar, never a testing
 venue — everything here, the expansion tier included, is exercised in-house
@@ -447,6 +448,31 @@ without being told.
 command each, and the command tells them what will change before it changes
 it.
 
+**B10 — The light-touch install.** *(0.4.0)*
+A single static binary, fetched and run — *"a curl command or unzip and, should
+the user desire, a headless process in a systemd service. Nothing warranting a
+library of admin documentation"* (owner, 2026-09-11; placed on this rung
+2026-09-14).
+
+**What is decided is the outcome, not the design.** Decided: the artifact is one
+binary and a release channel carries it. Not decided, and deliberately not
+invented here: how it is built per target, whether an install script ships or the
+archive is the whole story, and whether a unit file ships at all.
+
+⚠ **It does not replace crates.io publishing.** A library crate serves somebody
+writing an adapter; a binary serves somebody installing the tool. Those are
+different readers and both ship — `docs/deployment-map.md` holds the
+disposition.
+
+⚠ **It re-points B9 rather than retiring it.** B9's hazards are about generated
+files landing in a store somebody else owns, and not one of them is solved by
+making the tool easier to obtain: a store adapter still emits a migration and
+hooks, and the mapped shape still has no installer. What changes is only that
+getting `ferrostep` stops requiring a build.
+
+*Done when:* somebody who has never cloned this repo obtains a working
+`ferrostep` in one command, and runs `agent-env` with it.
+
 ---
 
 ## Expansion — demand-gated, in whatever order demand arrives
@@ -665,13 +691,13 @@ light-touch install with, *"should the user desire, a headless process in a
 systemd service"* (owner, 2026-09-11). It had read as permanent for as long as
 this section existed.
 
-⚠ **Open, and deliberately NOT struck by an agent:** *"No competing with
-actor-layer frameworks — agents built on them are actors in FerroStep loops, not
-rivals to it."* It is positioning rather than a capability wall and may still be
-right, but the owner has since described FerroStep as **a multi-agent
-orchestrator** (2026-09-14), which is the same neighbourhood. That is theirs to
-keep or strike; an agent reading it either way would be inferring exactly the
-kind of line this section just stopped carrying.
+⚠ **Reworded 2026-09-14 (owner), from a non-goal into orientation.** It read
+*"No competing with actor-layer frameworks — agents built on them are actors in
+FerroStep loops, not rivals to it."* The observation is kept and the competitive
+half dropped: **an agent built on an actor-layer framework is an actor in a
+FerroStep loop.** That is how the two fit together, and it says nothing about
+what FerroStep may become — which matters now that the owner has described a
+multi-agent orchestrator, because a line drawn here would have fenced that in.
 
 ⚠ **"No feature without a consuming loop" was here and was removed by the
 owner on 2026-08-25. Do not restore it.** It had stood as a permanent

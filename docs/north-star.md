@@ -2,9 +2,17 @@
 
 ## 1. Vision
 
-> **Ratified by the owner, 2026-08-21.** The owner's own position, given in
-> conversation and read back — not an agent's inference, which both previous
-> drafts were and neither of which was ever signed.
+> **Ratified by the owner, 2026-08-21. Extended and re-ratified by them,
+> 2026-09-14.** The owner's own position, given in conversation and read back —
+> not an agent's inference, which both previous drafts were and neither of which
+> was ever signed.
+
+**What it is** (owner, 2026-09-14): **a multi-agent orchestrator — agnostic to
+model vendor, subscription, API key and local models alike — carrying a
+code-review loop and agent identities, and installed light.** Every word of that
+is a requirement rather than a description: *agnostic* is why no vendor's tooling
+gets framework-level support, *the loop and the identities* are the two things it
+already does, and *light* is the bar an install is measured against.
 
 **The target client is the author, who uses this product.** FerroStep exists so
 its own operator can run serious multi-agent loops — worker/reviewer cycles, QC
@@ -44,32 +52,18 @@ stated goal (2026-09-11) is a light-touch installation — *"I don't care if it'
 a runtime or not"* — so whether this engine is one is not a constraint on the
 product. The rest of this section stands as ratified 2026-08-21.
 
-⚠⚠ **THE OWNER RESTATED THE GOAL ON 2026-09-14, AND §1 HAS NOT BEEN
-RE-RATIFIED TO CARRY IT.** Their words:
+⚠ **How the sentence above got here, because that is the part worth keeping.**
+It was said in conversation on 2026-09-14, recorded here the same day **marked
+unratified**, and ratified by the owner on 2026-09-14 in the same sitting that
+struck the clause. It was deliberately not written straight into the Vision: an
+agent promoting its own record of a remark into ratified text is exactly the
+mechanism that put *"a referee rather than a runtime"* in this section, and the
+gap between recording and ratifying is the only thing that distinguishes them.
 
-> *"My goal is a simple/light install. A multi-agent orchestrator agnostic to
-> model vendor, subscription, API key or local models. A code-review loop and
-> agent identities."*
-
-and, on the walls that had accumulated around it:
-
-> *"We need to steer away from hard lines of things that FerroStep is decidedly
-> not. Those walls were never mine."*
-
-Recorded here because this is the section it belongs to, and because a
-statement that lives only in a session is one nobody can check later.
-
-⚠ **It is the owner's to ratify, and an agent must not promote it into the
-Vision above by editing around it.** That is the standing convention for §1, and
-it is also the precise mechanism that put the struck clause here in the first
-place: an inference shelved beside ratified text inherits the ratification. Read
-§1 as ratified 2026-08-21, **plus these two statements, unratified**, until the
-owner closes the gap.
-
-⚠ **What the restatement does not do is license the opposite wall.** "Not a
-runtime" being struck is not "it is a runtime"; a multi-agent orchestrator is
-what the product is *for*, and how much of one it becomes is a question the
-roadmap answers item by item, with sources.
+⚠ **What the strike does not license is the opposite wall.** "Not a runtime"
+being gone is not "it is a runtime". How much of an orchestrator this becomes is
+answered by the roadmap item by item, with sources — not by reading a removed
+prohibition backwards.
 
 **Tiebreaker.** The author's own loop decides *what* gets built. Other users
 decide *how it is shaped*: given something worth building, prefer the form a

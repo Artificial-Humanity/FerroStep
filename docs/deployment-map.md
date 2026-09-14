@@ -28,6 +28,7 @@ exists to build or govern the product — the repo is public, so everything is
 | `ferrostep-roster/` | Rust crate `ferrostep-roster` — the actor roster a deployment configures: titles, the identity work is signed under, and the persona document a launcher hands an agent | crates.io | not yet published |
 | `ferrostep-cli/` | Rust crate `ferrostep-cli`, installing the `ferrostep` binary — decision surface, move, audit, notify wiring, and `agent-env` (the roster reader, which is how a repo with no Rust toolchain resolves an actor) | crates.io | not yet published |
 | `ferrostep-py/` | Python package `ferrostep` | PyPI | not yet published |
+| the `ferrostep` binary | **one static executable per target**, fetched and run — the light-touch install | a release channel (B10, rung 0.4.0) | planned 2026-09-14; nothing built yet |
 | `ferrostep-github/` | Rust crate/binary `ferrostep-github`, and a registered GitHub App instance per org | crates.io; the App via GitHub registration | scaffold; no App registered yet |
 | `skills/` | actor skills (`SKILL.md` format) | with the product; channel decided with the first skill | empty by design |
 | `examples/` | workflow definitions, copy-and-edit | the repo itself | live |
@@ -37,6 +38,15 @@ exists to build or govern the product — the repo is public, so everything is
 
 Planned but absent: `ferrostep-ts` (npm, when a TypeScript consumer exists) —
 it gets a row when the crate does.
+
+⚠ **A crate and a binary are two channels for two readers, and this file said
+only one of them existed** (corrected 2026-09-14). Every row above was a crate,
+which is right for somebody writing an adapter and useless to somebody who just
+wants the tool: it left "install it" meaning "clone it and build eight crates".
+The owner's goal is a curl or an unzip, so the artifact row now exists ahead of
+the artifact — **the status column is what says it is not built yet**, and that
+is the honest way round. An absent row would have read as a decision nobody
+made.
 
 ## Never ships
 
